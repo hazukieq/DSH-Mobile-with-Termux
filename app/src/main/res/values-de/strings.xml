@@ -480,4 +480,21 @@ Sie können auch ohne Update fortfahren, die Oberfläche wird dann aber nicht an
     <string name="setting_linux_sub">Alpine oder Ubuntu (proot) installieren und dessen Shell öffnen</string>
     <string name="setting_linux_none">Keine</string>
     <string name="setting_linux_count">%1$d installiert</string>
+
+    <!-- Runtime-Hot-Update (2026-10-18): der Agent tauscht die Runtime per dsh-update-Gate; -->
+    <!-- diese Zeile zeigt nur den Status an. -->
+    <string name="setting_runtime_update">Runtime-Aktualisierung</string>
+    <string name="setting_runtime_update_sub">Agent-Runtime im laufenden Betrieb tauschen, ohne Neuinstallation</string>
+    <string name="setting_runtime_ver_staged">%1$s · bereit: %2$s</string>
+    <string name="setting_runtime_ver_rollback">%1$s · Rollback möglich</string>
+    <string name="setting_runtime_dialog_title">Runtime-Aktualisierung</string>
+    <string name="setting_runtime_dialog_body">Installiert: %1$s\nQuelle: %2$s\nBereit: %3$s\nRollback: %4$s\nEngine: %5$s</string>
+    <string name="setting_runtime_none">keine</string>
+    <string name="setting_runtime_apply">Jetzt anwenden</string>
+    <string name="setting_runtime_rollback_action">Zurückrollen</string>
+    <string name="setting_runtime_started">Runtime-Aktualisierung gestartet; die Engine wird neu gestartet</string>
+    <string name="setting_runtime_rollback_started">Rollback gestartet; die Engine wird neu gestartet</string>
+    <string name="setting_runtime_busy">Eine andere Runtime-Aktion läuft bereits</string>
+    <string name="setting_runtime_source_assets">werkseitig</string>
+    <string name="setting_runtime_source_external">Hot-Update</string>
 </resources>

@@ -48,7 +48,37 @@ class RuntimeInstaller(private val ctx: Context) {
      *  → MODULE_NOT_FOUND 反复重启。故改为【版本匹配 + 关键资产存在】双重条件，
      *  任一关键资产缺失即视为安装不完整，删除重装。 */
     fun ensureInstalled(onProgress: (Float) -> Unit = {}) {
+        // ── 热更新中断恢复（2026-10-18）──────────────────────────────────────
+        // apply/rollback 中间被系统杀进程会留下半交换的目录布局（engine 缺失、
+        // engine.old 还在…）。必须先把它修成可启动状态，再做版本判断 —— 否则下面
+        // 的解压重装会把用户的运行时目录结构彻底改写。幂等、极廉价。
+        RuntimeUpdater.recoverIfNeeded(ctx)
+
         val manifest = readManifest()
+
+        // ── 热更新保护（2026-10-18）──────────────────────────────────────────
+        // 背景：agent/用户可以在运行时把新的 runtime 树换进 engine/（RuntimeUpdater），
+        // 换完 engine/.runtime-version 与 assets/runtime/MANIFEST.json 的版本**必然不同**
+        // —— 旧逻辑据此判定「版本变了，该重装」，下一次 App 启动就会把热更新静默回退成
+        // APK 内置版本（用户视角：明明更新成功了，重启又变回去）。
+        //
+        // 因此：带 .runtime-source=external 标记的树不再参与和各 assets 的版本比对，
+        // 只做完整性探针（该探针本来就是防「半解压空壳」的，热更新的树同样需要）。
+        // 探针失败 = 这棵外部树已经不可用：清掉标记落回下面的 assets 重装兜底，
+        // 保证「宁可回到出厂运行时，也不留一个起不来的引擎」。
+        if (File(root, RuntimeUpdater.SOURCE_MARKER).isFile) {
+            if (isRootComplete()) {
+                Log.i(
+                    TAG,
+                    "runtime ${stampVersion()} is externally installed (hot update); " +
+                        "skipping asset reinstall (assets ${manifest.version})",
+                )
+                return
+            }
+            Log.w(TAG, "externally installed runtime is incomplete; falling back to asset install")
+            File(root, RuntimeUpdater.SOURCE_MARKER).delete()
+        }
+
         if (EngineConfig.nodeBin(ctx).exists() &&
             stampFile.exists() && stampFile.readText().trim() == manifest.version &&
             isRootComplete()
@@ -64,25 +94,51 @@ class RuntimeInstaller(private val ctx: Context) {
         install(manifest, onProgress)
     }
 
+    /** engine/.runtime-version 的当前值（诊断日志用；不抛异常） */
+    private fun stampVersion(): String =
+        runCatching { if (stampFile.isFile) stampFile.readText().trim() else "?" }
+            .getOrDefault("?")
+
     /**
-     * 完整性探针：校验最容易被部分解压吞掉的【引擎入口 JS】与【关键动态库】存在。
-     * 只查「必须存在」的锚点文件，避免与运行时裁剪的解耦（不校验具体数量）。
-     * @return true 表示本次安装是完整的
+     * 运行时根目录完整性探针（任意目标目录版）。
+     *
+     * 原实现写死 [EngineConfig.engineRoot]，热更新需要对 engine.staging / engine.new
+     * 做同样的探针（解压完先验一遍再发布，别把半截树 swap 进 engine/）。
+     * 判定内容与原实现**逐条一致**，只是把根目录改成参数：
+     *  - 引擎入口 bin.js
+     *  - bash 依赖的 readline SONAME 别名
+     *  - node 本体可执行位（restoreExecBits 之后应为 true）
+     *  - @deepseek-ai 作用域下至少 MIN_DSH_AI_FILES 个真实文件（空壳检测）
      */
-    private fun isRootComplete(): Boolean {
+    fun probeRootComplete(dir: File): Boolean {
         // 1) 引擎入口 bin.js（MODULE_NOT_FOUND 的直接案发现场）
-        if (!EngineConfig.dshEntry(ctx).isFile) return false
+        if (!File(dir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js").isFile) return false
         // 2) bash 依赖闭环：readline SONAME 别名（m1.5 事故）
-        val lib = File(root, "lib")
-        if (!File(lib, "libreadline.so.8").isFile) return false
+        if (!File(dir, "lib/libreadline.so.8").isFile) return false
         // 3) node 本体可执行位（安装器 restoreExecBits 之后应为 true）
-        if (!EngineConfig.nodeBin(ctx).canExecute()) return false
+        if (!File(dir, "bin/node").canExecute()) return false
         // 4) @deepseek-ai 作用域下至少要有一批真实文件（空壳=部分解压）
-        val dshAi = File(root, "lib/node_modules/@deepseek-ai")
+        val dshAi = File(dir, "lib/node_modules/@deepseek-ai")
         val fileCount = dshAi.walkTopDown().filter { it.isFile }.count()
         if (fileCount < MIN_DSH_AI_FILES) return false
         return true
     }
+
+    /**
+     * 解压一份 runtime.zip 到 target（含解压后的可执行位恢复）。
+     *
+     * 抽出来的动机：热更新（[RuntimeUpdater]）暂存的包与 APK 内置包是**同一种格式**，
+     * 里面同样有 `LINK:` 注释去重条目、同样不保存 Unix 权限位。让热更新复用这里
+     * 而不是复制一份解压逻辑，才能保证两条安装路径的语义永远一致（否则会出现
+     * 「内置包装得上、热更新包装上却 CANNOT LINK」这类割裂）。
+     */
+    fun extractZip(zip: File, target: File, onProgress: (Float) -> Unit = {}) {
+        target.mkdirs()
+        unzip(zip, target, onProgress)
+        restoreExecBits(target)
+    }
+
+    private fun isRootComplete(): Boolean = probeRootComplete(root)
 
     private fun install(manifest: Manifest, onProgress: (Float) -> Unit) {
         Log.i(TAG, "installing runtime ${manifest.version}")
@@ -142,9 +198,13 @@ class RuntimeInstaller(private val ctx: Context) {
                 File(root, top).deleteRecursively()
             }
 
-            unzip(assetZip, root, onProgress)
-            restoreExecBits(root)
+            // 解压 + 恢复可执行位（与热更新共用 extractZip，见其注释）
+            extractZip(assetZip, root, onProgress)
             stampFile.writeText(manifest.version)
+            // 出厂安装的树没有 .runtime-source 标记：语义上「来源=assets」。
+            // 若上一棵树是热更新（external），走到这里说明它已被判定不可用并回退，
+            // 标记在 ensureInstalled 里已删除，这里再保险清一次。
+            File(root, RuntimeUpdater.SOURCE_MARKER).delete()
             assetZip.delete()
             Log.i(TAG, "runtime installed at $root (kept top dirs: ${topDirs.joinToString()})")
         } finally {

@@ -263,3 +263,154 @@ Alpine card shows this note.
 | `apt` says `Release file ... not valid yet` | device clock is wrong; proot shares the host clock |
 | install stuck at 0% | mirror unreachable; retry on another network — install is idempotent (temp dir + atomic publish) |
 | garbled output | `TERM=xterm-256color` is injected automatically; check the remote program's terminfo |
+
+## 7. Rebuilding the runtime under the app's own package name (added 2026-10-18)
+
+### Why
+
+Termux binaries hard-code `/data/data/com.termux/files/usr` at compile time:
+bash's `SYS_BASHRC`/`SYS_PROFILE`, openssl's default config dir, git's
+`git-core`/templates, python's stdlib path.
+
+- text files can be rewritten at install time (`ExtensionManager.rewriteTermuxPaths`);
+- **strings inside ELF cannot**: our path
+  `/data/data/app.dsh.mobile/files/engine` (37 chars) is longer than Termux's (31),
+  so an equal-length in-place patch is impossible;
+- the rest can be pinned with env vars (`OPENSSL_CONF` / `GIT_EXEC_PATH` /
+  `PYTHONHOME`), but **bash's system bashrc has no env override** — on a device that
+  also has Termux installed every interactive shell printed
+  `bash: /data/data/com.termux/files/usr/etc/bash.bashrc: Permission denied`
+  (seen on a real device; the emulator hides it because that path does not exist).
+
+### Approach
+
+Build the path-sensitive packages from source with termux-packages, with the package
+name and prefix pointed at this app, then overlay them onto the runtime collected from
+Termux:
+
+```
+TERMUX_APP__PACKAGE_NAME=app.dsh.mobile
+TERMUX__PREFIX_SUBDIR=engine
+→ PREFIX = /data/data/app.dsh.mobile/files/engine
+```
+
+`scripts/build-runtime-app-prefix.sh` automates the whole pipeline (it uses `bwrap` to
+provide a writable `/data`, so no root is required):
+
+```bash
+./scripts/build-runtime-app-prefix.sh --abi x86_64 \
+    --base-runtime runtime-collected-x86_64.zip --out runtime-app-prefix-x86_64.zip
+./scripts/build-runtime-app-prefix.sh --abi arm64-v8a \
+    --base-runtime runtime-collected-arm64.zip --out runtime-app-prefix-arm64.zip
+```
+
+By default only `bash` is rebuilt (which pulls `libandroid-support`, `libiconv`,
+`readline`, `ncurses`); pass `--pkgs "bash openssl git"` for more.
+
+### Host patches applied to termux-packages (all under `[dsh-patch]`, applied idempotently)
+
+| File | Patch | Reason |
+|---|---|---|
+| `scripts/build/termux_step_setup_variables.sh` | build markers under `$TERMUX_TOPDIR` | host has no `/data/data` |
+| `scripts/build/termux_step_handle_buildarch.sh` | arch marker likewise + writable-`/data` guard | same |
+| `scripts/properties.sh` | package name / prefix dir overridable; usr-merge validation off by default | our layout is `<rootfs>/engine` |
+| `scripts/build/toolchain/termux_setup_toolchain_30.sh` | copy toolchain when `fuse-overlayfs` is absent | installing it needs root |
+| `scripts/build/termux_download.sh` | GitHub archive → `codeload.github.com` | `github.com/.../archive` returns 429 |
+| `packages/ncurses/build.sh` | drop the foot terminfo source | codeberg returns 429 from this network |
+| `packages/bash/build.sh` | no `termux-tools` dependency; `CC_FOR_BUILD=gcc` | that dependency drags in pkg/coreutils; host has only gcc |
+
+Requirements: Linux x86_64 host, `bwrap`, NDK r30 (termux supports r30/r23c only),
+`gcc/patch/make/zip/unzip/dpkg-deb/python3`. No Android SDK needed.
+
+### Packaging contract: **no symlinks inside runtime.zip**
+
+`RuntimeInstaller` extracts zip entries as regular files, so links must be
+**materialised** (that is what `scripts/collect-termux-runtime.sh` does). Using
+`zip -y` keeps symlinks and the installed `lib/libreadline.so.8` ends up 18 bytes long
+(the link target string), failing at exec:
+
+```
+CANNOT LINK EXECUTABLE ".../lib/libreadline.so.8" is too small to be an ELF executable: only found 18 bytes
+```
+
+The script deliberately packs **without** `-y` (zip dereferences links by default).
+
+### Measured (2026-10-18)
+
+| | x86_64 emulator | arm64 phone (Redmi K40 / Android 16) |
+|---|---|---|
+| runtime version | `v1.3.1-app-prefix-x86_64` | `v1.3.1-app-prefix-arm64` |
+| `strings bin/bash \| grep com.termux` | **0** | **0** |
+| `bash --version` | 5.3.20 (x86_64-pc-linux-android) | 5.3.20 (aarch64-unknown-linux-android) |
+| interactive shell | normal prompt, no bashrc error | same (the phone has Termux; before the rebuild it printed `Permission denied` every time) |
+| rc | read from `$PREFIX/etc/bash.bashrc`, caller PS1 preserved | same |
+
+The temporary `bash --norc` workaround in `ShellProfiles` has therefore been removed in
+favour of plain `bash -i`.
+
+### Limits
+
+- **node is still collected from Termux**: rebuilding it means cross-compiling ICU and
+  OpenSSL (tens of minutes) while its path-sensitive bits are already pinned by env vars;
+- **extensions (python/git/…) still use the runtime prefix rewrite**: they install into
+  per-extension directories (`files/extensions/<id>`), where a compile-time prefix is
+  meaningless;
+- rebuilt packages target API 26 (matching `minSdk 26`; bash's `mblen` needs 26+);
+- the script overlays rebuilt packages onto a collected base runtime; it does not build
+  all 19 packages from scratch.
+
+## 8. Runtime hot-update (added 2026-10-18)
+
+The dsh runtime can be replaced **without reinstalling the APK**, and the agent can do it
+itself.
+
+### Mechanism
+
+```
+filesDir/
+  engine/            live tree (what EngineSupervisor starts)
+  engine.staging/    extraction in progress
+  engine.new/        complete staged tree (+ .runtime-version)
+  engine.old/        previous tree (rollback; reclaimed on a later healthy boot)
+  .runtime-swap      write-ahead note for crash recovery
+  .runtime-reclaim   "engine.old may be reclaimed" marker (2-minute age gate)
+```
+
+- `stage` only writes `engine.new` and **never touches the live tree**; it validates
+  sha256, the zip layout (must contain `bin/node` and
+  `lib/node_modules/@deepseek-ai/dsh/lib/bin.js`), the ELF ABI (so a package for the
+  wrong architecture cannot replace a working runtime) and free space;
+- `apply` writes the write-ahead note → stops the engine → `engine→engine.old`,
+  `engine.new→engine` → starts it → waits for `:3080` health (90 s); if unhealthy it
+  **automatically swaps back** and restarts the old runtime;
+- `engine/.runtime-source=external` makes `RuntimeInstaller` skip the assets version
+  check on later launches (otherwise the bundled `runtime.zip` would silently undo the
+  update on the next start);
+- `rollback` swaps `engine.old` back in and restarts; the rollback point survives one
+  boot, then is reclaimed.
+
+### Agent entry point: the `dsh-update` gate
+
+```
+dsh-update status                   # version / source / staged / rollback / engine / phase / last_*
+dsh-update stage <zip|url> [sha256] # stage a local path or http(s) archive (optional checksum)
+dsh-update apply                    # switch to the staged runtime and restart the engine
+dsh-update rollback                 # go back to the previous tree
+dsh-update restart                  # restart the engine only
+```
+
+Underneath it uses new routes on the in-app HTTP bridge (`127.0.0.1:3083`, same token
+auth as notify/scr): `/runtime/stage|apply|rollback|status` and `/engine/restart`.
+Actions are **async 202 + status polling**: `apply` kills the engine process the agent
+runs in, so the response is sent first and the restart happens in the app process — even
+if the calling shell dies, the update completes.
+
+Settings gained a "Runtime update" row showing the installed/staged versions with
+APPLY NOW / ROLL BACK actions.
+
+### Measured (x86_64 emulator)
+
+stage 14 s → apply 4.3 s (engine PID changed, `:3080` healthy) → after `am force-stop` the
+new version persists (asset guard) → rollback 6.3 s returns to the old version → applying
+a deliberately broken runtime times out after 90 s and **auto-rolls back** with the engine
+healthy → a simulated kill mid-swap is recovered from the write-ahead note on next start.

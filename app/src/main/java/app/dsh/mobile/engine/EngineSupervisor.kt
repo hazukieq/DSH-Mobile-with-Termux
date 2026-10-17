@@ -315,6 +315,11 @@ class EngineSupervisor(private val ctx: Context) {
                     _state.value =
                         if (safe) State.SafeMode(EngineConfig.DEFAULT_PORT, tokenUrl)
                         else State.Healthy(EngineConfig.DEFAULT_PORT, tokenUrl)
+                    // 运行时热更新（2026-10-18）：健康启动的这一刻回收上一版 engine.old
+                    // （apply 成功时登记的 .runtime-reclaim 决定要不要真删）。放在这里而不是
+                    // apply 自己的健康等待里 —— apply 那次不能删，回滚点必须活到下一次启动。
+                    // 内部 runCatching，任何异常都不影响启动。
+                    RuntimeUpdater.onEngineHealthy(ctx)
                     // Shizuku 模式：引擎就绪后启动 ADB 级访问桥（shz 包装器回呼用）；其他模式自动关停
                     withContext(Dispatchers.IO) {
                         ShizukuHttpBridge.start(ctx, EngineConfig.DEFAULT_PORT)

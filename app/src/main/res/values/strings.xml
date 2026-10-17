@@ -471,4 +471,20 @@ You can still continue without updating, but the interface will not display.</st
     <string name="setting_linux_sub">Install Alpine or Ubuntu (proot) and open its shell</string>
     <string name="setting_linux_none">None</string>
     <string name="setting_linux_count">%1$d installed</string>
+
+    <!-- 运行时热更新（2026-10-18）：agent 用 dsh-update 门脚本换运行时，这里只做状态展示 -->
+    <string name="setting_runtime_update">Runtime update</string>
+    <string name="setting_runtime_update_sub">Hot-swap the agent runtime, no APK reinstall</string>
+    <string name="setting_runtime_ver_staged">%1$s · staged %2$s</string>
+    <string name="setting_runtime_ver_rollback">%1$s · rollback available</string>
+    <string name="setting_runtime_dialog_title">Runtime update</string>
+    <string name="setting_runtime_dialog_body">installed: %1$s\nsource: %2$s\nstaged: %3$s\nrollback: %4$s\nengine: %5$s</string>
+    <string name="setting_runtime_none">none</string>
+    <string name="setting_runtime_apply">Apply now</string>
+    <string name="setting_runtime_rollback_action">Roll back</string>
+    <string name="setting_runtime_started">Runtime update started; the engine will restart</string>
+    <string name="setting_runtime_rollback_started">Rollback started; the engine will restart</string>
+    <string name="setting_runtime_busy">Another runtime operation is in progress</string>
+    <string name="setting_runtime_source_assets">factory</string>
+    <string name="setting_runtime_source_external">hot update</string>
 </resources>

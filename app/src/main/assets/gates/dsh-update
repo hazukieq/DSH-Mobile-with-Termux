@@ -1,0 +1,264 @@
+#!/system/bin/sh
+# [dsh-android] dsh-update: hot-update the dsh runtime (no APK reinstall, no data loss).
+#
+# 自举到引擎 bash（与 notify/scr/linux 同一套 preamble）：
+#   - shebang 机制不传环境变量，必须显式设 LD_LIBRARY_PATH 再 exec（引擎 bash 是 bionic）；
+#   - _DSH_REEXEC 标记防止 exec "$0" 无限递归。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+#
+# 用法:
+#   dsh-update status                 version / source / staged / rollback / engine state
+#   dsh-update stage <zip-path|url> [sha256]
+#   dsh-update apply                  swap staged runtime in, restart engine, health check
+#   dsh-update rollback               go back to the previous runtime (engine.old)
+#   dsh-update restart                restart the engine without touching any file
+#
+# 实现：所有动作都走 AgentBridge（127.0.0.1:3083，_dsh_http.sh）：
+#   POST /runtime/stage | /runtime/apply | /runtime/rollback | /engine/restart  → 202
+#   GET  /runtime/status?format=line                                          → key: value
+# 动作类端点都是「立即受理 + 后台执行」，所以这里受理后轮询 status 直到 phase: idle。
+#
+# 输出约定（全 ASCII，机器可 grep）：
+#   成功/进度行：  <verb>: <state>        例 "apply: started" / "phase: applying"
+#   终态状态行：   key: value             例 "version: 0.2.0-rc.2+ab12cd34"
+#   失败：         <verb>: rejected|failed + "error: <reason>"
+# 退出码：0 = 成功 / 1 = 被拒绝或失败 / 2 = 用法错误 / 3 = 环境错误（桥不可达等）
+
+DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+. "$DIR/_dsh_http.sh"
+
+# 轮询间隔与各动作超时（秒）。stage 含下载 + 解压 500MB；apply/rollback 含两次
+# 90s 健康窗口（新树失败 → 自动回滚 → 再等旧树起来）。
+_POLL_SECS=2
+_STAGE_TIMEOUT=900
+_SWAP_TIMEOUT=360
+
+_die() {
+  echo "dsh-update: $*" >&2
+  exit 3
+}
+
+_usage() {
+  cat >&2 <<'USAGE'
+usage: dsh-update status
+       dsh-update stage <zip-path|url> [sha256]
+       dsh-update apply
+       dsh-update rollback
+       dsh-update restart
+USAGE
+  exit 2
+}
+
+# ── 解析 status 的 "key: value" 行（纯 bash，不 fork grep/sed）────────────────
+_jget() {
+  local text="$1" key="$2" line
+  while IFS= read -r line; do
+    [ "${line%%: *}" = "$key" ] || continue
+    [ "$line" != "${line#*: }" ] || continue
+    printf '%s' "${line#*: }"
+    return 0
+  done <<< "$text"
+  return 1
+}
+
+# 拉一次状态；失败时打印可操作的 ASCII 原因并返回非 0
+_status_text() {
+  local text rc
+  text=$(dsh_http GET "/runtime/status?format=line" 2>/dev/null)
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    case "$rc" in
+      2) echo "dsh-update: status failed: bridge unreachable (is the app running?)" >&2 ;;
+      3) echo "dsh-update: status failed: bridge timeout" >&2 ;;
+      *) echo "dsh-update: status failed: bridge rejected (http rc=$rc)" >&2 ;;
+    esac
+    return 1
+  fi
+  printf '%s' "$text"
+}
+
+# 打印终态里 agent 最关心的几行（阶段/结果/错误）
+_show_final() {
+  local text="$1" k v
+  for k in version source staged rollback engine phase last_action last_ok; do
+    v=$(_jget "$text" "$k") || continue
+    echo "$k: $v"
+  done
+  v=$(_jget "$text" last_detail) || v=""
+  [ -n "$v" ] && echo "last_detail: $v"
+  v=$(_jget "$text" error) || v=""
+  [ -n "$v" ] && echo "error: $v"
+  return 0
+}
+
+# 轮询直到 phase: idle（动作在 App 进程里异步执行，可能与引擎重启重叠）
+# $1 = 动作名（仅用于提示）  $2 = 超时秒数；结果文本放进全局 _FINAL
+_wait_idle() {
+  local action="$1" limit="$2" start=$SECONDS text phase seen rc
+  seen=""
+  while [ $((SECONDS - start)) -lt "$limit" ]; do
+    text=$(dsh_http GET "/runtime/status?format=line" 2>/dev/null)
+    rc=$?
+    if [ "$rc" != 0 ] || [ -z "$text" ]; then
+      # 引擎正在重启时桥仍属于 App 进程，正常可达；这里只是防御式重试
+      echo "$action: waiting for bridge"
+      sleep "$_POLL_SECS"
+      continue
+    fi
+    phase=$(_jget "$text" phase) || phase=""
+    if [ "$phase" != "$seen" ]; then
+      echo "phase: ${phase:-unknown}"
+      seen="$phase"
+    fi
+    if [ "$phase" = "idle" ]; then
+      _FINAL="$text"
+      return 0
+    fi
+    sleep "$_POLL_SECS"
+  done
+  echo "$action: wait timed out after ${limit}s (operation may still be running; run 'dsh-update status')"
+  return 1
+}
+
+# 动作被拒（http 409）时的统一输出：$1=verb $2=rc $3=响应体
+# 响应体是 JSON（{"ok":false,"action":"...","error":"..."}），用纯 bash 取 error 字段
+# （不用 jq，也不用 _jget —— 那个只认 status 的 "key: value" 行格式）。
+_rejected() {
+  local verb="$1" rc="$2" body="$3" err
+  echo "$verb: rejected"
+  case "$rc" in
+    2) echo "error: bridge unreachable (is the app running?)"; return 1 ;;
+    3) echo "error: bridge timeout"; return 1 ;;
+  esac
+  case "$body" in
+    *'"error":"'*)
+      err="${body#*\"error\":\"}"
+      err="${err%%\"*}"
+      ;;
+    *) err="" ;;
+  esac
+  if [ -n "$err" ]; then
+    echo "error: $err"
+  else
+    echo "error: bridge returned http rc=$rc"
+  fi
+  return 1
+}
+
+# 轮询一个动作直到终态，并打印结果。$1=verb $2=timeout
+_finish_action() {
+  local verb="$1" limit="$2" ok detail
+  _wait_idle "$verb" "$limit" || return 1
+  ok=$(_jget "$_FINAL" last_ok) || ok=""
+  if [ "$ok" = "true" ]; then
+    echo "$verb: ok"
+  else
+    echo "$verb: failed"
+  fi
+  _show_final "$_FINAL"
+  [ "$ok" = "true" ] || return 1
+  return 0
+}
+
+# ── 子命令 ────────────────────────────────────────────────────────────────
+
+_cmd_status() {
+  local text
+  text=$(_status_text) || exit 3
+  printf '%s\n' "$text"
+  exit 0
+}
+
+_cmd_stage() {
+  local src="${1:-}" sha="${2:-}" body out rc
+  [ -n "$src" ] || _usage
+  case "$src" in
+    http://*|https://*)
+      body="{\"url\":\"$(_dsh_json_escape "$src")\""
+      ;;
+    *)
+      # 相对路径 → 绝对路径：bridge 跑在 App 进程里，cwd 不是 agent 的 cwd
+      case "$src" in
+        /*) ;;
+        *)
+          local d
+          d=$(cd "$(dirname "$src")" 2>/dev/null && pwd) || _die "path not found: $src"
+          src="$d/$(basename "$src")"
+          ;;
+      esac
+      [ -f "$src" ] || _die "file not found: $src"
+      body="{\"path\":\"$(_dsh_json_escape "$src")\""
+      ;;
+  esac
+  [ -n "$sha" ] && body="$body,\"sha256\":\"$(_dsh_json_escape "$sha")\""
+  body="$body}"
+
+  out=$(dsh_http POST /runtime/stage "$body" 2>/dev/null)
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    _rejected stage "$rc" "$out"
+    exit 1
+  fi
+  echo "stage: started"
+  _finish_action stage "$_STAGE_TIMEOUT"
+  exit $?
+}
+
+_cmd_apply() {
+  local out rc
+  out=$(dsh_http POST /runtime/apply "" 2>/dev/null)
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    _rejected apply "$rc" "$out"
+    exit 1
+  fi
+  echo "apply: started (the engine will stop and restart; this shell may be cut off)"
+  _finish_action apply "$_SWAP_TIMEOUT"
+  exit $?
+}
+
+_cmd_rollback() {
+  local out rc
+  out=$(dsh_http POST /runtime/rollback "" 2>/dev/null)
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    _rejected rollback "$rc" "$out"
+    exit 1
+  fi
+  echo "rollback: started"
+  _finish_action rollback "$_SWAP_TIMEOUT"
+  exit $?
+}
+
+_cmd_restart() {
+  local out rc
+  out=$(dsh_http POST /engine/restart "" 2>/dev/null)
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    _rejected restart "$rc" "$out"
+    exit 1
+  fi
+  echo "restart: started"
+  exit 0
+}
+
+main() {
+  local sub="${1:-}"
+  if [ $# -gt 0 ]; then shift; fi
+  case "$sub" in
+    status)   _cmd_status ;;
+    stage)    _cmd_stage "$@" ;;
+    apply)    _cmd_apply ;;
+    rollback) _cmd_rollback ;;
+    restart)  _cmd_restart ;;
+    help|-h|--help) _usage ;;
+    '')       _usage ;;
+    *)        _die "unknown subcommand: $sub (try 'dsh-update help')" ;;
+  esac
+}
+
+main "$@"

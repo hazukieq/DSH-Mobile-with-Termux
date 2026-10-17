@@ -35,6 +35,13 @@ import java.nio.charset.StandardCharsets
  *   GET  /ext/list      → 扩展清单+三态 JSON（v1.2.1）
  *   POST /ext/install   body: {"id":"python"}                        → 自助安装环境扩展（v1.2.1）
  *
+ * 运行时热更新（2026-10-18，配套 engine/bin/dsh-update 门脚本）：
+ *   GET  /runtime/status   [?format=line] → 运行时版本/来源/暂存/回滚/引擎状态
+ *   POST /runtime/stage    body: {"path":"/abs/x.zip"} 或 {"url":"https://…","sha256":"…"} → 202
+ *   POST /runtime/apply    → 202（停引擎 → 换目录 → 启动 → 健康检查，失败自动回滚）
+ *   POST /runtime/rollback → 202（回到 engine.old）
+ *   POST /engine/restart   → 202（等价于设置页「重启引擎」）
+ *
  * 配套注入 engine/bin 的 `notify` 与 `scr` 包装器（EngineConfig.applyAgentGates）。
  */
 object AgentBridge {
@@ -406,9 +413,78 @@ object AgentBridge {
             method == "POST" && path == "/say" -> say(ctx, body)
             method == "GET" && path == "/say" -> sayGet(ctx, query)
             method == "POST" && path == "/ext/install" -> extInstall(ctx, body)
+            // 运行时热更新（2026-10-18）：门脚本 dsh-update 驱动的五个端点
+            method == "GET" && path == "/runtime/status" -> runtimeStatus(ctx, query)
+            method == "POST" && path == "/runtime/stage" -> runtimeStage(ctx, body)
+            method == "POST" && path == "/runtime/apply" -> runtimeApply(ctx)
+            method == "POST" && path == "/runtime/rollback" -> runtimeRollback(ctx)
+            method == "POST" && path == "/engine/restart" -> engineRestart(ctx)
             else -> 404 to """{"ok":false,"error":"unknown route"}"""
         }
     }
+
+    // ── 运行时热更新（2026-10-18）────────────────────────────────────────────
+    //
+    // 这组端点的共同约定：
+    //  - 动作类（stage/apply/rollback/restart）一律 **202 + 立即返回**：apply 要停引擎、
+    //    换 500MB 目录、再等健康检查，几十秒起步；同步做会撞翻 `_dsh_http.sh` 的读超时。
+    //    真正结果在 /runtime/status 的 phase（回到 idle）+ last_action/last_ok/error 里。
+    //  - 拒绝（忙 / 参数错 / 无暂存）返回 **409** + {"ok":false,"error":"..."}，
+    //    错误文本是 ASCII、可读、可 grep（门脚本直接打给 agent）。
+    //  - 鉴权沿用 handle() 里统一的 X-DSH-Token 校验，这组端点不另开门。
+
+    /** GET /runtime/status [?format=line] → 状态 JSON；format=line 时返回 key: value 行（给 bash 门脚本） */
+    private fun runtimeStatus(ctx: Context, query: String): Pair<Int, String> {
+        return try {
+            val st = RuntimeUpdater.status(ctx)
+            if (query.split('&').any { it == "format=line" }) 200 to st.toLine()
+            else 200 to st.toJson()
+        } catch (e: Exception) {
+            500 to JSONObject().put("ok", false).put("error", e.message ?: "status failed").toString()
+        }
+    }
+
+    /** POST /runtime/stage body {"path":"/abs/x.zip"} 或 {"url":"https://…","sha256":"…"} */
+    private fun runtimeStage(ctx: Context, body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
+            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
+        val path = obj.optString("path").takeIf { it.isNotBlank() }
+        val url = obj.optString("url").takeIf { it.isNotBlank() }
+        val src = path ?: url
+        if (src == null) {
+            return 400 to JSONObject().put("ok", false)
+                .put("error", "missing 'path' or 'url'").toString()
+        }
+        val sha = obj.optString("sha256").takeIf { it.isNotBlank() }
+        val err = RuntimeUpdater.stage(ctx, src, sha, isUrl = path == null)
+        return acceptedOrRejected("stage", err)
+    }
+
+    /** POST /runtime/apply → 202（Async: stop → swap → start → health check → auto rollback） */
+    private fun runtimeApply(ctx: Context): Pair<Int, String> {
+        val err = RuntimeUpdater.apply(ctx)
+        return acceptedOrRejected("apply", err)
+    }
+
+    /** POST /runtime/rollback → 202 */
+    private fun runtimeRollback(ctx: Context): Pair<Int, String> {
+        val err = RuntimeUpdater.rollback(ctx)
+        return acceptedOrRejected("rollback", err)
+    }
+
+    /** POST /engine/restart → 202（等价设置页「重启引擎」） */
+    private fun engineRestart(ctx: Context): Pair<Int, String> {
+        val err = RuntimeUpdater.restart(ctx)
+        return acceptedOrRejected("restart", err)
+    }
+
+    /** 202 = 已受理；409 = 被拒绝（忙 / 无暂存 / 无旧版 …），错误文本原样给调用方 */
+    private fun acceptedOrRejected(action: String, err: String?): Pair<Int, String> =
+        if (err == null) {
+            202 to JSONObject().put("ok", true).put("action", action).put("accepted", true).toString()
+        } else {
+            409 to JSONObject().put("ok", false).put("action", action).put("error", err).toString()
+        }
 
     /** GET /ext/list → 扩展清单与三态（red/yellow/green），AI 判断环境是否可用的唯一入口 */
     /**

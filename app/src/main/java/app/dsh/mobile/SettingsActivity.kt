@@ -19,6 +19,7 @@ import android.widget.Toast
 import app.dsh.mobile.engine.ExtensionManager
 import app.dsh.mobile.engine.PrivMode
 import app.dsh.mobile.engine.Privilege
+import app.dsh.mobile.engine.RuntimeUpdater
 import app.dsh.mobile.engine.TtsManager
 import app.dsh.mobile.engine.LanWebProxy
 
@@ -241,6 +242,13 @@ class SettingsActivity : Activity() {
             startActivity(Intent(this, app.dsh.mobile.linux.LinuxEnvActivity::class.java))
         }
 
+        // —— 运行时热更新（2026-10-18）：当前运行时版本 + 暂存/回滚状态 ——
+        // 暂存（stage）是 agent 侧动作（`dsh-update stage <zip|url>`），这里只做
+        // 「看状态 + 一键应用/回滚」；不做文件选择器，避免把 160MB 包的导入路径搬进 UI。
+        findViewById<LinearLayout>(R.id.rowRuntimeUpdate).setOnClickListener {
+            showRuntimeDialog()
+        }
+
         // 语音服务（v1.2.78）：识别 + 合成合并入口，归入扩展中心分组
         findViewById<LinearLayout>(R.id.rowVoiceService).setOnClickListener {
             startActivity(Intent(this, app.dsh.mobile.VoiceServiceActivity::class.java))
@@ -348,7 +356,117 @@ class SettingsActivity : Activity() {
         refreshMicRow()
         refreshExt()
         refreshLinux()
+        refreshRuntime()
         // 缩放副标题文案无需变；图标着色按打开时状态由静态 XML 决定
+    }
+
+    // ================= 运行时热更新（2026-10-18） =================
+
+    /**
+     * 运行时行：`<版本>`，有暂存/回滚时追加状态字。
+     *
+     * 只读标记文件（engine/.runtime-version、engine.new/、engine.old/），不扫全树，
+     * 所以放在 onResume 的 refreshAll 里是安全的（<5ms）。
+     */
+    private fun refreshRuntime() {
+        val v = findViewById<TextView>(R.id.valRuntime)
+        val st = runCatching { RuntimeUpdater.status(this) }.getOrNull()
+        if (st == null) {
+            v.text = getString(R.string.setting_runtime_none)
+            v.setTextColor(0xFF8A94A3.toInt())
+            return
+        }
+        val none = getString(R.string.setting_runtime_none)
+        val installed = st.installedVersion.ifBlank { none }
+        v.text = when {
+            st.stagedVersion != null ->
+                getString(R.string.setting_runtime_ver_staged, installed, st.stagedVersion)
+            st.rollbackVersion != null ->
+                getString(R.string.setting_runtime_ver_rollback, installed)
+            else -> installed
+        }
+        v.setTextColor(
+            when {
+                st.phase != "idle" -> 0xFFFFB74D.toInt()      // 进行中：琥珀
+                st.stagedVersion != null -> 0xFF6EE7B7.toInt() // 有待应用的新版：绿
+                else -> 0xFF8A94A3.toInt()
+            }
+        )
+    }
+
+    /**
+     * 运行时详情对话框：已安装/来源/暂存/回滚/引擎状态 + 两个动作。
+     *
+     * 动作只有「应用暂存版」和「回滚」两个 —— 这正是 agent 侧 `dsh-update apply/rollback`
+     * 的 UI 等价物（暂存需要传 160MB 包，属于 agent/终端侧的事，不进 UI）。
+     */
+    private fun showRuntimeDialog() {
+        val st = runCatching { RuntimeUpdater.status(this) }.getOrNull() ?: return
+        val none = getString(R.string.setting_runtime_none)
+        val source = when (st.source) {
+            "external" -> getString(R.string.setting_runtime_source_external)
+            "assets" -> getString(R.string.setting_runtime_source_assets)
+            else -> st.source
+        }
+        val body = getString(
+            R.string.setting_runtime_dialog_body,
+            st.installedVersion.ifBlank { none },
+            source,
+            st.stagedVersion ?: none,
+            st.rollbackVersion ?: none,
+            if (st.phase == "idle") st.engine else st.engine + " (" + st.phase + ")",
+        )
+        val idle = st.phase == "idle"
+        val builder = AlertDialog.Builder(this)
+            .setTitle(R.string.setting_runtime_dialog_title)
+            .setMessage(body)
+            .setNegativeButton(android.R.string.cancel, null)
+        if (idle && st.stagedVersion != null) {
+            builder.setPositiveButton(R.string.setting_runtime_apply) { _, _ -> runRuntimeAction(apply = true) }
+        }
+        if (idle && st.rollbackVersion != null) {
+            builder.setNeutralButton(R.string.setting_runtime_rollback_action) { _, _ ->
+                runRuntimeAction(apply = false)
+            }
+        }
+        builder.showStyled()
+    }
+
+    /** 触发 apply/rollback：立即返回，随后轮询刷新这一行（动作本身几十秒） */
+    private fun runRuntimeAction(apply: Boolean) {
+        val err = if (apply) RuntimeUpdater.apply(this) else RuntimeUpdater.rollback(this)
+        Toast.makeText(
+            this,
+            if (err == null) {
+                getString(if (apply) R.string.setting_runtime_started else R.string.setting_runtime_rollback_started)
+            } else {
+                getString(R.string.setting_runtime_busy)
+            },
+            Toast.LENGTH_LONG,
+        ).show()
+        refreshRuntime()
+        if (err == null) scheduleRuntimeRefresh()
+    }
+
+    /**
+     * 应用/回滚后的状态轮询：动作在 App 进程里异步跑（停引擎 → 换目录 → 重启 →
+     * 健康检查），用户停在设置页时应当看到 applying → idle 的变化。
+     * 只在本页存活时轮询，最多 3 分钟。
+     */
+    private fun scheduleRuntimeRefresh() {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val start = System.currentTimeMillis()
+        val tick = object : Runnable {
+            override fun run() {
+                if (isFinishing || isDestroyed) return
+                refreshRuntime()
+                val phase = runCatching { RuntimeUpdater.status(this@SettingsActivity).phase }
+                    .getOrDefault("idle")
+                if (phase == "idle" || System.currentTimeMillis() - start > 180_000L) return
+                handler.postDelayed(this, 2_000)
+            }
+        }
+        handler.postDelayed(tick, 1_500)
     }
 
     /** 扩展中心入口：显示已激活扩展数（>0 变绿提示已并入引擎） */

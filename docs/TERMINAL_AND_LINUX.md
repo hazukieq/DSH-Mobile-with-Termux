@@ -253,3 +253,140 @@ Alpine 卡片显示该限制说明。
 | `apt` 报 `Release file ... not valid yet` | 设备时间不对；proot 内 `date` 跟宿主机一致 |
 | 安装卡在 0% | 镜像不可达；换网络重试，安装是幂等的（临时目录 + 原子发布） |
 | 终端显示乱码 | 确认 `TERM=xterm-256color`；App 内固定注入 |
+
+## 七、运行时按本 App 包名重编译（2026-10-18 新增）
+
+### 为什么
+
+Termux 的二进制把 `/data/data/com.termux/files/usr` **编译期写死**：
+`bash` 的 `SYS_BASHRC`/`SYS_PROFILE`、`openssl` 的默认配置目录、`git` 的
+`git-core`/templates、`python` 的 stdlib 路径都在 ELF 里。
+
+- 文本文件可以运行时改写（`ExtensionManager.rewriteTermuxPaths`）；
+- **ELF 里的字符串改不了**：我们的路径
+  `/data/data/app.dsh.mobile/files/engine`（37 字符）比 Termux 的（31 字符）长，
+  无法等长替换；
+- 其余路径可以靠环境变量兜（`OPENSSL_CONF` / `GIT_EXEC_PATH` / `PYTHONHOME`），
+  但 **bash 的系统 bashrc 没有环境变量可覆盖** —— 设备上装过 Termux 时，每个交互
+  shell 都会打一行 `bash: /data/data/com.termux/files/usr/etc/bash.bashrc: Permission denied`
+  （真机实测；模拟器因为该路径不存在而静默，所以早期只在真机暴露）。
+
+### 做法
+
+用 termux-packages 的构建体系，把包名与前缀换成我们自己的，从源码重编
+「对路径敏感」的包，再覆盖进从 Termux 收集的运行时：
+
+```
+TERMUX_APP__PACKAGE_NAME=app.dsh.mobile
+TERMUX__PREFIX_SUBDIR=engine
+→ PREFIX = /data/data/app.dsh.mobile/files/engine
+```
+
+`scripts/build-runtime-app-prefix.sh` 把整条流程固化下来（宿主 bwrap 造可写 `/data`，
+不需要 root）：
+
+```bash
+./scripts/build-runtime-app-prefix.sh --abi x86_64 \
+    --base-runtime runtime-collected-x86_64.zip --out runtime-app-prefix-x86_64.zip
+./scripts/build-runtime-app-prefix.sh --abi arm64-v8a \
+    --base-runtime runtime-collected-arm64.zip --out runtime-app-prefix-arm64.zip
+```
+
+缺省只重编 `bash`（会递归带出 `libandroid-support` / `libiconv` / `readline` / `ncurses`），
+需要更多包时用 `--pkgs "bash openssl git"`。
+
+### 对 termux-packages 打的宿主补丁（都在 `[dsh-patch]` 注释下，脚本幂等应用）
+
+| 位置 | 补丁 | 原因 |
+|---|---|---|
+| `scripts/build/termux_step_setup_variables.sh` | 构建标记放 `$TERMUX_TOPDIR` | 宿主没有 `/data/data` |
+| `scripts/build/termux_step_handle_buildarch.sh` | arch 标记同上 + 判断 `/data` 可写 | 同上 |
+| `scripts/properties.sh` | 包名/前缀目录可被环境覆盖；usr-merge 校验默认关闭 | 我们是 `<rootfs>/engine`，不是 usr-merge |
+| `scripts/build/toolchain/termux_setup_toolchain_30.sh` | 无 `fuse-overlayfs` 时复制 toolchain | 装它要 root |
+| `scripts/build/termux_download.sh` | GitHub archive → `codeload.github.com` | `github.com/.../archive` 常被 429 |
+| `packages/ncurses/build.sh` | 去掉 foot 的 terminfo 源 | codeberg 对本网络返回 429 |
+| `packages/bash/build.sh` | 不依赖 `termux-tools`；`CC_FOR_BUILD=gcc` | 依赖链会拉 pkg/coreutils 一大串；宿主只有 gcc |
+
+前置：Linux x86_64 宿主、`bwrap`、NDK r30（termux 工具链只认 r30/r23c）、
+`gcc/patch/make/zip/unzip/dpkg-deb/python3`。SDK 不需要。
+
+### 一个必须遵守的打包契约：**runtime.zip 里不能有符号链接**
+
+`RuntimeInstaller` 把 zip 条目当普通文件解，链接必须**物化**成真实文件
+（`scripts/collect-termux-runtime.sh` 就是这么做的）。用 `zip -y` 保留符号链接会让
+安装后的 `lib/libreadline.so.8` 只有 18 字节（内容就是链接目标字符串），启动时报：
+
+```
+CANNOT LINK EXECUTABLE ".../lib/libreadline.so.8" is too small to be an ELF executable: only found 18 bytes
+```
+
+本脚本的打包步骤刻意**不加 `-y`**（zip 默认解引用）。
+
+### 实测（2026-10-18）
+
+| 项 | x86_64 模拟器 | arm64 真机（Redmi K40 / Android 16） |
+|---|---|---|
+| 运行时版本 | `v1.3.1-app-prefix-x86_64` | `v1.3.1-app-prefix-arm64` |
+| `strings bin/bash \| grep com.termux` | **0** | **0** |
+| `bash --version` | 5.3.20 (x86_64-pc-linux-android) | 5.3.20 (aarch64-unknown-linux-android) |
+| 交互 shell | 提示符正常、无 bashrc 报错 | 同左（真机装过 Termux，改前每次必报 Permission denied） |
+| rc 读取 | 正常（`$PREFIX/etc/bash.bashrc`，且不覆盖调用方传入的 PS1） | 同左 |
+
+因此 `ShellProfiles` 里临时的 `bash --norc` 兜底已删除，恢复 `bash -i`。
+
+### 边界
+
+- **node 仍从 Termux 收集**：重编 node 要连 ICU/OpenSSL 一起交叉编译（数十分钟），
+  而它的路径敏感项（openssl 配置、证书）已由环境变量钉死，暂时不重编；
+- **扩展（python/git/…）仍用运行时前缀改写**：它们装到 `files/extensions/<id>`
+  这类**每个扩展都不同**的目录，编译期固定前缀无意义；
+- 重编的包以 API 26 为目标（与 App `minSdk 26` 一致；bash 的 `mblen` 需要 26+）；
+- 脚本产出的是「基础运行时 + 覆盖」，不是从零构建全部 19 个包。
+
+## 八、运行时热更新（2026-10-18 新增）
+
+app 安装后**不用重新装 APK** 也能换 dsh 运行时，并且 agent 自己能做这件事。
+
+### 机制
+
+```
+filesDir/
+  engine/            live（EngineSupervisor 启动的那棵树）
+  engine.staging/    解压中
+  engine.new/        已就绪的暂存树（带 .runtime-version）
+  engine.old/        上一棵（回滚用；下次健康启动后回收）
+  .runtime-swap      write-ahead 记录，崩溃后据此恢复
+  .runtime-reclaim   engine.old 可回收标记（2 分钟年龄门槛，避免刚 apply 就删掉回滚点）
+```
+
+- `stage` 只写 `engine.new`，**从不碰 live 树**；校验：sha256、zip 结构
+  （必须含 `bin/node` + `lib/node_modules/@deepseek-ai/dsh/lib/bin.js`）、
+  ELF ABI（与设备匹配，防止拿错架构的包顶掉可用运行时）、剩余空间；
+- `apply` = 写 write-ahead → 停引擎 → `engine→engine.old`、`engine.new→engine` →
+  启动 → 等 `:3080` 健康（90 s）→ 成功；不健康则**自动换回**并重启旧运行时；
+- `engine/.runtime-source=external` 让 `RuntimeInstaller` 下次启动**不会**用 APK 内置
+  `runtime.zip` 覆盖热更新结果（否则一重启就“回滚”）；
+- `rollback` 换回 `engine.old` 再启动；回滚点只保留一次启动，之后回收。
+
+### 给 agent 的入口：`dsh-update` 门脚本
+
+```
+dsh-update status                   # version / source / staged / rollback / engine / phase / last_*
+dsh-update stage <zip|url> [sha256] # 暂存（本地路径或 http(s)，可带校验）
+dsh-update apply                    # 切换到暂存运行时并重启引擎
+dsh-update rollback                 # 回到上一棵
+dsh-update restart                  # 只重启引擎
+```
+
+底层是 app 内 HTTP 桥（`127.0.0.1:3083`，与 notify/scr 同一套 token 鉴权）新增的
+`/runtime/stage|apply|rollback|status` 与 `/engine/restart`。动作是**异步 202 + 轮询
+status**：apply 会杀掉 agent 所在引擎进程，所以响应先返回、重启在 app 进程里完成，
+shell 被杀死也不影响更新结果。
+
+设置页新增「运行时更新」一行：显示当前版本/暂存版本，点开可 APPLY NOW / ROLL BACK。
+
+### 实测（x86_64 模拟器）
+
+stage 14 s → apply 4.3 s（引擎 PID 更换、`:3080` 健康）→ `am force-stop` 后重启仍保持
+新版本（asset 守卫生效）→ rollback 6.3 s 回到旧版 → 故意放一个坏运行时 apply 会在
+90 s 超时后**自动回滚**并保持引擎可用 → 模拟“换树中途被杀”后启动能据 write-ahead 恢复。

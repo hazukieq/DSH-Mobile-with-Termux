@@ -60,12 +60,11 @@ object ShellProfiles {
         val spec = if (bash.isFile && bash.canExecute()) {
             ShellSpec(
                 cmd = bash.absolutePath,
-                // `--norc`：Termux 版 bash 把系统级 bashrc 路径**编译期写死**成
-                // /data/data/com.termux/files/usr/etc/bash.bashrc。设备装过 Termux 时
-                // 该路径存在但本 App 无权穿越 → 每个交互 shell 都多打一行
-                // "Permission denied"（真机实测，模拟器因路径不存在而静默）。
-                // 我们已经在环境里注入 PS1，rc 里没有我们需要的配置，故直接跳过。
-                args = listOf("--norc", "-i"),
+                // 2026-10-18：运行时的 bash 已改为**按本 App 包名重编译**
+                // （SYS_BASHRC = /data/data/app.dsh.mobile/files/engine/etc/bash.bashrc），
+                // 所以直接 `bash -i` 就能读到自己那份 rc，不再需要 `--norc` 兜底。
+                // rc 里只有在 PS1 仍是 bash 默认值时才覆盖的守卫，我们注入的 PS1 会保留。
+                args = listOf("-i"),
                 cwd = cwd,
                 env = engineEnv + extra,
                 title = "Android",
