@@ -91,10 +91,6 @@
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <!-- 扩展中心（v1.2.0）：环境扩展下载/激活管理 -->
-        <activity
-            android:name=".ExtensionStoreActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <!-- 终端（2026-10-18）：原生 VT100/xterm 终端 + PTY 会话。
              注册为**第二个 LAUNCHER 入口**：它本身就是一个完整的终端 App

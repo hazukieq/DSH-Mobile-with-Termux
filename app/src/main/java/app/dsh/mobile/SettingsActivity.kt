@@ -222,11 +222,6 @@ class SettingsActivity : Activity() {
         refreshMicRow()
 
 
-        // —— 扩展中心 ——
-        findViewById<LinearLayout>(R.id.rowExt).setOnClickListener {
-            startActivity(Intent(this, ExtensionStoreActivity::class.java))
-        }
-
         // —— 社区插件（v1.2.113）：一键安装 dsh 生态插件 ——
         findViewById<LinearLayout>(R.id.rowPlugin).setOnClickListener {
             startActivity(Intent(this, PluginStoreActivity::class.java))
@@ -354,7 +349,6 @@ class SettingsActivity : Activity() {
         refreshTtsRow()
         refreshNotifRow()
         refreshMicRow()
-        refreshExt()
         refreshLinux()
         refreshRuntime()
         // 缩放副标题文案无需变；图标着色按打开时状态由静态 XML 决定
@@ -561,14 +555,6 @@ class SettingsActivity : Activity() {
             }
         }
         handler.postDelayed(tick, 1_500)
-    }
-
-    /** 扩展中心入口：显示已激活扩展数（>0 变绿提示已并入引擎） */
-    private fun refreshExt() {
-        val count = ExtensionManager(this).activeCount()
-        val v = findViewById<TextView>(R.id.valExt)
-        v.text = getString(R.string.setting_ext_active_count, count)
-        v.setTextColor(if (count > 0) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
     }
 
     /** Linux 环境入口：显示已安装发行版数量（0 时提示"未安装"） */

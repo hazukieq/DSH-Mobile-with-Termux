@@ -653,9 +653,6 @@ object EngineConfig {
         // 限定在 linux/darwin/win32，android 直接抛 "terminal inspection is unsupported
         // on platform android" → WebUI 侧边栏终端打不开。Android 有 /proc，检查器可用。
         patchEngineForAndroid(root)
-        // v1.2.0 扩展环境：已激活扩展的 bin/lib 并入 PATH/LD_LIBRARY_PATH
-        // （顺序：engine 自带 → 扩展 → 系统，保证 su/notify/scr 闸门优先级不被扩展覆盖）
-        val extRoots = ExtensionManager.activeRoots(ctx)
         // ── Linux 环境（2026-10-18）────────────────────────────────────────────
         // 终端 + proot 发行版上线后，AI 侧也要能用：`linux run <id> <cmd>` 门脚本
         // 直接 exec `<home>/proot/bin/proot`。这里注入路径与 PROOT_* 三件套，
@@ -666,17 +663,9 @@ object EngineConfig {
         val linuxProotBin = java.io.File(linuxHome, "proot/bin")
         val linuxProotLib = java.io.File(linuxHome, "proot/lib")
         val linuxProotReady = java.io.File(linuxProotBin, "proot").isFile
-        // JVM 扩展（openjdk 等）：Termux 的 java 入口靠 postinst 建链接（解包器不执行），
-        // 本体在 lib/jvm/<ver>/bin —— 整段并入 PATH，java/javac/jar 全工具一次到位
-        val jvmBins = extRoots.flatMap { ext ->
-            File(ext, "lib/jvm").takeIf { it.isDirectory }
-                ?.listFiles()?.mapNotNull { File(it, "bin").takeIf { b -> b.isDirectory } }
-                ?: emptyList()
-        }
         val env = mutableListOf(
             "PATH=" + (
-                listOf(File(root, "bin"), File(root, "usr/bin")) +
-                    extRoots.map { File(it, "bin") } + jvmBins +
+                listOf(File(root, "bin")) +
                     listOfNotNull(linuxProotBin.takeIf { linuxProotReady }) +
                     listOf("/system/bin", "/system/xbin")
                 ).joinToString(":"),
@@ -685,8 +674,7 @@ object EngineConfig {
             // 第三方 App 拿不到 → 无法调用读屏/点击/通知等设备能力。
             "DSH_BRIDGE_TOKEN=${AgentBridge.currentToken().orEmpty()}",
             "LD_LIBRARY_PATH=" + (
-                listOf(File(root, "lib"), File(root, "usr/lib")) +
-                    extRoots.map { File(it, "lib") } +
+                listOf(File(root, "lib")) +
                     listOfNotNull(linuxProotLib.takeIf { linuxProotReady })
                 ).joinToString(":"),
             "PREFIX=$root",
@@ -730,63 +718,6 @@ object EngineConfig {
                 app.dsh.mobile.linux.LinuxEnv.installedIds(ctx).firstOrNull().orEmpty()
             }.getOrDefault(""),
         )
-        // Perl/Ruby：编译期 @INC/$LOAD_PATH 硬编码 Termux 前缀（重写 shebang 碰不到），
-        // 注入扩展内的库路径（Agent 实测注入后 json/openssl 等模块恢复正常）
-        val perlLibs = extRoots.flatMap { ext ->
-            File(ext, "lib/perl5").takeIf { it.isDirectory }
-                ?.listFiles()?.filter { it.isDirectory }?.map { it.absolutePath } ?: emptyList()
-        }
-        val rubyLibs = extRoots.flatMap { ext ->
-            // 真实布局 lib/ruby/<ver>/{,aarch64-linux-android}（Agent 实测：只注入
-            // lib/ruby 不够 —— json.rb 在版本子目录下，且 json/ext/parser 在 arch 子目录）
-            File(ext, "lib/ruby").takeIf { it.isDirectory }?.listFiles()
-                ?.filter { it.isDirectory }
-                ?.flatMap { ver ->
-                    listOfNotNull(
-                        ver.absolutePath,
-                        File(ver, "aarch64-linux-android").takeIf { it.isDirectory }?.absolutePath,
-                    )
-                } ?: emptyList()
-        }
-        if (perlLibs.isNotEmpty()) env.add("PERL5LIB=" + perlLibs.joinToString(":"))
-        if (rubyLibs.isNotEmpty()) env.add("RUBYLIB=" + rubyLibs.joinToString(":"))
-        // git：编译期硬编码的系统级 gitconfig 指向 Termux 前缀 → 跳过（实测修复 git init）
-        env.add("GIT_CONFIG_NOSYSTEM=1")
-        // git 子命令查找路径（2026-10-05，Issue 反馈「git-remote-https 找不到」的根因）：
-        // git 找 git-<cmd> 不靠 PATH，而靠编译期写死的 GIT_EXEC_PATH。Termux 包把它指向
-        // /data/data/com.termux/files/usr/libexec/git-core —— 扩展装到别处后该目录不存在，
-        // 于是 git-remote-https/http、git-upload-pack 等全部找不到（ELF 二进制内的路径
-        // rewriteTermuxPaths 明确跳过，改不了）。GIT_EXEC_PATH 是官方支持的重定位机制
-        // （git 文档 --exec-path："can also be controlled by setting the GIT_EXEC_PATH
-        // environment variable"），一处注入即修复全部子命令。
-        extRoots.firstOrNull { it.name == "git" }?.let { ext ->
-            File(ext, "libexec/git-core").takeIf { it.isDirectory }?.let {
-                env += "GIT_EXEC_PATH=${it.absolutePath}"
-            }
-            // 模板与系统配置同样硬编码 Termux 前缀：缺模板时 git init/clone 会告警或行为异常
-            File(ext, "share/git-core/templates").takeIf { it.isDirectory }?.let {
-                env += "GIT_TEMPLATE_DIR=${it.absolutePath}"
-            }
-            // 证书：git 经 libcurl 走 HTTPS，Termux 的 libcurl 编译期指向 Termux 证书路径。
-            // 扩展闭包含 ca-certificates（git → openssl → ca-certificates），指向实装位置即可
-            // （引擎侧 cert.pem 只在 runtime 根，扩展不共享）
-            listOf("etc/tls/cert.pem", "etc/ssl/certs/ca-certificates.crt", "etc/ca-certificates.crt")
-                .map { File(ext, it) }.firstOrNull { it.isFile }?.let {
-                    env += "GIT_SSL_CAINFO=${it.absolutePath}"
-                    env += "CURL_CA_BUNDLE=${it.absolutePath}"
-                }
-        }
-        // ImageMagick：内置配置路径指向 Termux 前缀 → colors.xml 找不到，每次运行刷
-        // "UnableToOpenConfigureFile `colors.xml'" 警告（Agent 实测：加此变量即干净 ✓）
-        extRoots.firstOrNull { it.name == "imagemagick" }?.let { ext ->
-            val etc = File(ext, "etc/ImageMagick-7")
-            if (etc.isDirectory) env.add("MAGICK_CONFIGURE_PATH=" + etc.absolutePath)
-        }
-        // Python 扩展：Termux 二进制编译期 prefix 硬编码 /data/data/com.termux/files/usr，
-        // 装进扩展根后找不到 stdlib，须显式指 PYTHONHOME=<扩展根>。
-        // ⚠️ 只认扩展 id=python：imagemagick/lib 里是完整 stdlib 副本（连 os.py 都有，
-        // 目录名/os.py 判据全被骗——PYTHONHOME 错指 imagemagick 实测事故）
-        extRoots.firstOrNull { it.name == "python" }?.let { env += "PYTHONHOME=$it" }
         // 包管理器镜像（2026-10-05，Issue 反馈「pnpm 连不上 GitHub」）：
         // runtime 内没有任何 .npmrc，corepack/npm 默认走 registry.npmjs.org —— 国内直连常
         // 超时或被重置。三个变量覆盖三条路径，缺一不可：
@@ -804,16 +735,9 @@ object EngineConfig {
         //   clang 内置的 $PREFIX 头路径是编译期硬编码、指向已不存在的 Termux 前缀
         // - RUSTFLAGS：rustc 传给 rust-lld 的额外 -L（LIBRARY_PATH 对 lld 不生效）
         tmpDir(ctx).takeIf { it.isDirectory }?.let { env += "GOTMPDIR=$it" }
-        val libPaths = (listOf(File(root, "lib")) + extRoots.map { File(it, "lib") })
-            .filter { it.isDirectory }.joinToString(":")
+        // 扩展中心已移除（Termux 原生 pkg/apt 取代）：只保留前缀自身的库路径。
+        val libPaths = listOf(File(root, "lib")).filter { it.isDirectory }.joinToString(":")
         if (libPaths.isNotEmpty()) env += "LIBRARY_PATH=$libPaths"
-        val incPaths = extRoots.flatMap { ext ->
-            listOf(File(ext, "include"), File(ext, "include/aarch64-linux-android"))
-        }.filter { it.isDirectory }.joinToString(":")
-        if (incPaths.isNotEmpty()) env += "CPATH=$incPaths"
-        extRoots.firstOrNull { it.name == "rust" }?.let {
-            env += "RUSTFLAGS=-C link-arg=-L${it.absolutePath}/lib"
-        }
         File(root, "etc/tls/openssl.cnf").takeIf { it.isFile }?.let { env += "OPENSSL_CONF=$it" }
         File(root, "etc/tls/cert.pem").takeIf { it.isFile }?.let { env += "SSL_CERT_FILE=$it" }
         return env.toTypedArray()
