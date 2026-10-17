@@ -103,6 +103,12 @@ object RuntimeUpdater {
 
     data class Status(
         val installedVersion: String,
+        /**
+         * 运行时里 dsh 引擎的真实版本（`@deepseek-ai/dsh` 的 package.json），例如
+         * `0.2.0-rc.2`。与 [installedVersion]（运行时标签，出厂时是 `v1.3.x-…`、
+         * 热更新后是 `0.2.x+sha8`）是两件事：前者决定「要不要更新」，后者只是标识。
+         */
+        val dshVersion: String,
         val source: String,
         val stagedVersion: String?,
         val stagedSha: String?,
@@ -121,6 +127,7 @@ object RuntimeUpdater {
         fun toJson(): String = org.json.JSONObject()
             .put("ok", true)
             .put("version", installedVersion)
+            .put("dsh_version", dshVersion)
             .put("source", source)
             .put("staged", stagedVersion.orEmpty())
             .put("staged_sha", stagedSha.orEmpty())
@@ -146,6 +153,7 @@ object RuntimeUpdater {
         fun toLine(): String = buildString {
             appendLine("ok: true")
             appendLine("version: $installedVersion")
+            appendLine("dsh: $dshVersion")
             appendLine("source: $source")
             appendLine("staged: ${stagedVersion.orEmpty()}")
             // 行格式只给前 16 位（终端里 64 位会换行成噪音）；完整值在 JSON 里
@@ -197,6 +205,7 @@ object RuntimeUpdater {
         val stagedMeta = readMeta(newD)
         return Status(
             installedVersion = readVersion(live) ?: "unknown",
+            dshVersion = RuntimeFeed.liveDshVersion(ctx).orEmpty(),
             source = readSource(live),
             stagedVersion = readVersion(newD),
             stagedSha = stagedMeta?.optString("sha256")?.takeIf { it.isNotBlank() },
@@ -281,6 +290,105 @@ object RuntimeUpdater {
             doStage(appCtx, src, sha256?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }, isUrl)
         }, "runtime-stage").apply { isDaemon = true; start() }
         return null
+    }
+
+    // ── feed（按 dsh 版本拉取）──────────────────────────────────────────────
+
+    /** `GET /runtime/feed` 的实现：只读查询，不触发任何文件改动 */
+    fun feedCheck(ctx: Context, manifestUrl: String?): RuntimeFeed.Check =
+        RuntimeFeed.check(ctx, manifestUrl)
+
+    /**
+     * 从 feed 拉取「最新 dsh 版本」（或 [version] 指定的版本）的运行时并**暂存**。
+     *
+     * 语义边界（这是用户纠正过的重点）：比较的是运行时里 `@deepseek-ai/dsh` 的版本，
+     * 不是 APK 版本、也不是 APK 内置 runtime.zip 的标签版本 —— 那两者只能随 APK 走。
+     *
+     * 三个阶段：下载（带 SHA-256 边下边校验）→ 复用 [doStage] 的校验/解压/发布
+     * → 落进 engine.new。**不自动换树**：换树会停引擎，必须由调用方显式
+     * `apply`（门脚本的 `pull --apply` 就是 pull 完成后紧接着 apply）。
+     *
+     * @return null = 已受理（202，后台执行）；非空 = 拒绝原因（ASCII，直接回给调用方）
+     */
+    fun pull(ctx: Context, version: String?, manifestUrl: String?): String? {
+        val ver = version?.trim()?.takeIf { it.isNotEmpty() }
+        val mf = manifestUrl?.trim()?.takeIf { it.isNotEmpty() }
+        lock.withLock {
+            if (phase != Phase.IDLE) return "busy: ${phase.id} in progress"
+            enterPhase(Phase.STAGING)
+            progress = 0f
+            lastError = ""
+        }
+        val appCtx = ctx.applicationContext
+        Thread({ doPull(appCtx, ver, mf) }, "runtime-pull").apply {
+            isDaemon = true
+            start()
+        }
+        return null
+    }
+
+    /**
+     * pull 的后台实现：feed 清单 → 选当前 ABI 的包 → 下载校验 → 交给 doStage。
+     *
+     * 下载目标放 cacheDir（[doStage] 成功后由 doStage 自己的 finally 删临时文件；
+     * 这里再兜一次底），避免和 engine.staging 抢空间。
+     */
+    private fun doPull(ctx: Context, wantVersion: String?, manifestUrl: String?) {
+        var zip: File? = null
+        try {
+            progress = 0.02f
+            val url = manifestUrl ?: RuntimeFeed.manifestUrl()
+            val manifest = RuntimeFeed.fetchManifest(url)
+            Log.i(TAG, "pull: feed has dsh ${manifest.dshVersion} (built ${manifest.builtAt}) from $url")
+            if (wantVersion != null && wantVersion != manifest.dshVersion) {
+                throw StageFailure("feed only has dsh ${manifest.dshVersion} (requested $wantVersion)")
+            }
+            val abi = RuntimeFeed.currentAbi()
+            val asset = manifest.assetFor(abi)
+                ?: throw StageFailure("feed has no $abi asset (dsh ${manifest.dshVersion})")
+            val live = RuntimeFeed.liveDshVersion(ctx).orEmpty()
+            if (live.isNotEmpty() && live == manifest.dshVersion) {
+                // 同版本不重复拉：省一次 170MB 下载，也避免把已经打好补丁的树换成
+                // 语义等价的另一棵（无意义的风险）。
+                lastError = ""
+                last = LastResult(
+                    "pull",
+                    true,
+                    "already on latest dsh $live (feed ${manifest.dshVersion})",
+                    System.currentTimeMillis(),
+                )
+                return
+            }
+            val need = (asset.size.takeIf { it > 0 } ?: 0L) + 256L * 1024 * 1024
+            val usable = ctx.filesDir.usableSpace
+            if (usable > 0 && usable < need) {
+                throw StageFailure("not enough space: need ${mb(need)}MB, free ${mb(usable)}MB")
+            }
+            val dest = File(ctx.cacheDir, "runtime-pull-" + manifest.dshVersion + ".zip")
+            runCatching { dest.delete() }
+            zip = dest
+            RuntimeFeed.download(asset, dest) { p -> progress = 0.02f + p * 0.18f }
+            progress = 0.2f
+            // 后续全部复用 stage 的同一套逻辑：sha256 / ABI / zip 结构 / 空间 / 完整性探针
+            doStage(ctx, dest.path, asset.sha256, isUrl = false)
+            if (last?.ok != true) throw StageFailure(lastError.ifBlank { "stage failed" })
+            last = LastResult(
+                "pull",
+                true,
+                "pulled dsh ${manifest.dshVersion} (${asset.sha256.take(8)}) into engine.new",
+                System.currentTimeMillis(),
+            )
+            lastError = ""
+            Log.i(TAG, "pull: dsh ${manifest.dshVersion} staged (run apply to switch)")
+        } catch (e: Exception) {
+            val msg = e.message ?: e.javaClass.simpleName
+            lastError = msg
+            last = LastResult("pull", false, msg, System.currentTimeMillis())
+            Log.w(TAG, "pull failed: $msg")
+        } finally {
+            runCatching { zip?.delete() }
+            lock.withLock { enterPhase(Phase.IDLE) }
+        }
     }
 
     /** 应用已暂存的运行时（202 立即返回；停引擎 → 换目录 → 启动 → 健康检查 → 必要时自动回滚） */

@@ -488,13 +488,25 @@ Sie können auch ohne Update fortfahren, die Oberfläche wird dann aber nicht an
     <string name="setting_runtime_ver_staged">%1$s · bereit: %2$s</string>
     <string name="setting_runtime_ver_rollback">%1$s · Rollback möglich</string>
     <string name="setting_runtime_dialog_title">Runtime-Aktualisierung</string>
-    <string name="setting_runtime_dialog_body">Installiert: %1$s\nQuelle: %2$s\nBereit: %3$s\nRollback: %4$s\nEngine: %5$s</string>
+    <string name="setting_runtime_dialog_body">Installiert: %1$s
+dsh: %2$s
+Quelle: %3$s
+Bereit: %4$s
+Rollback: %5$s
+Engine: %6$s</string>
     <string name="setting_runtime_none">keine</string>
     <string name="setting_runtime_apply">Jetzt anwenden</string>
     <string name="setting_runtime_rollback_action">Zurückrollen</string>
     <string name="setting_runtime_started">Runtime-Aktualisierung gestartet; die Engine wird neu gestartet</string>
     <string name="setting_runtime_rollback_started">Rollback gestartet; die Engine wird neu gestartet</string>
-    <string name="setting_runtime_busy">Eine andere Runtime-Aktion läuft bereits</string>
+    <string name="setting_runtime_busy">Runtime beschäftigt: %1$s</string>
     <string name="setting_runtime_source_assets">werkseitig</string>
     <string name="setting_runtime_source_external">Hot-Update</string>
+    <string name="setting_runtime_check_update">dsh-Update prüfen</string>
+    <string name="setting_runtime_check_title">dsh-Version</string>
+    <string name="setting_runtime_check_body">Installiertes dsh: %1$s\nnpm aktuell: %2$s\nRuntime-Feed: %3$s\nABI: %4$s</string>
+    <string name="setting_runtime_checking">dsh-Versionen werden geprüft…</string>
+    <string name="setting_runtime_check_failed">Prüfung fehlgeschlagen: %1$s</string>
+    <string name="setting_runtime_pull">Laden und anwenden</string>
+    <string name="setting_runtime_pulling">dsh-Runtime wird geladen…</string>
 </resources>

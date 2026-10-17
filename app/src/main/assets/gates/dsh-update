@@ -11,11 +11,20 @@ if [ -z "$_DSH_REEXEC" ]; then
 fi
 #
 # 用法:
-#   dsh-update status                 version / source / staged / rollback / engine state
-#   dsh-update stage <zip-path|url> [sha256]
-#   dsh-update apply                  swap staged runtime in, restart engine, health check
-#   dsh-update rollback               go back to the previous runtime (engine.old)
-#   dsh-update restart                restart the engine without touching any file
+#   dsh-update check [--manifest URL]         installed dsh version vs npm latest vs runtime feed
+#   dsh-update pull [version] [--apply]       fetch the *dsh runtime* for the latest dsh version
+#   dsh-update status                         version / dsh / source / staged / rollback / engine
+#   dsh-update stage <zip-path|url> [sha256]  stage a specific runtime zip
+#   dsh-update apply                          swap staged runtime in, restart engine, health check
+#   dsh-update rollback                       go back to the previous runtime (engine.old)
+#   dsh-update restart                        restart the engine without touching any file
+#
+# 版本语义（重要，别搞混）：
+#   * APK 版本            v1.3.1           → 只能重装 APK
+#   * 运行时资产标签      v1.3.1-app-prefix-arm64 → 随 APK 走
+#   * **dsh 版本**        0.2.0-rc.2       → `check`/`pull` 以它为准，可独立升级
+# `pull` 拉的是「为最新 dsh 版本预先构建并打好 Android 补丁的运行时包」，
+# 不是最新 APK，也不是 APK 内置的那份 runtime.zip。
 #
 # 实现：所有动作都走 AgentBridge（127.0.0.1:3083，_dsh_http.sh）：
 #   POST /runtime/stage | /runtime/apply | /runtime/rollback | /engine/restart  → 202
@@ -36,6 +45,8 @@ DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 _POLL_SECS=2
 _STAGE_TIMEOUT=900
 _SWAP_TIMEOUT=360
+# pull = 下载（170MB 级）+ 解压 + 完整性探针；慢网/低端机都要留足
+_PULL_TIMEOUT=1800
 
 _die() {
   echo "dsh-update: $*" >&2
@@ -44,7 +55,9 @@ _die() {
 
 _usage() {
   cat >&2 <<'USAGE'
-usage: dsh-update status
+usage: dsh-update check [--manifest <url>]
+       dsh-update pull [dsh-version] [--manifest <url>] [--apply]
+       dsh-update status
        dsh-update stage <zip-path|url> [sha256]
        dsh-update apply
        dsh-update rollback
@@ -84,7 +97,7 @@ _status_text() {
 # 打印终态里 agent 最关心的几行（阶段/结果/错误）
 _show_final() {
   local text="$1" k v
-  for k in version source staged rollback engine phase last_action last_ok; do
+  for k in version dsh source staged rollback engine phase last_action last_ok; do
     v=$(_jget "$text" "$k") || continue
     echo "$k: $v"
   done
@@ -165,6 +178,83 @@ _finish_action() {
 }
 
 # ── 子命令 ────────────────────────────────────────────────────────────────
+
+# 解析 --manifest URL 与位置参数；结果写进全局 _MANIFEST / _POSITIONAL
+_parse_common_args() {
+  _MANIFEST=""
+  _POSITIONAL=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --manifest)
+        [ -n "${2:-}" ] || _usage
+        _MANIFEST="$2"; shift 2 ;;
+      --manifest=*)
+        _MANIFEST="${1#--manifest=}"; shift ;;
+      --apply)
+        _APPLY=1; shift ;;
+      -*)
+        _die "unknown option: $1" ;;
+      *)
+        _POSITIONAL="$1"; shift ;;
+    esac
+  done
+}
+
+# check：装了什么 dsh / 上游最新 / feed 能装什么。只读，不下载。
+_cmd_check() {
+  _APPLY=0
+  _parse_common_args "$@"
+  local path="/runtime/feed?format=line" text rc
+  if [ -n "$_MANIFEST" ]; then
+    path="$path&manifest=$(_dsh_urlenc "$_MANIFEST")"
+  fi
+  text=$(dsh_http GET "$path" 2>/dev/null)
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    _rejected check "$rc" "$text"
+    exit 1
+  fi
+  printf '%s\n' "$text"
+  exit 0
+}
+
+# pull：拉「最新 dsh 版本」对应的运行时包并暂存；--apply 则接着换树重启。
+_cmd_pull() {
+  _APPLY=0
+  _parse_common_args "$@"
+  local version="$_POSITIONAL" body out rc
+  body="{}"
+  if [ -n "$version" ] || [ -n "$_MANIFEST" ]; then
+    body="{"
+    [ -n "$version" ] && body="$body\"version\":\"$(_dsh_json_escape "$version")\""
+    if [ -n "$_MANIFEST" ]; then
+      [ "$body" != "{" ] && body="$body,"
+      body="$body\"manifest\":\"$(_dsh_json_escape "$_MANIFEST")\""
+    fi
+    body="$body}"
+  fi
+  out=$(dsh_http POST /runtime/pull "$body" 2>/dev/null)
+  rc=$?
+  if [ "$rc" != 0 ]; then
+    _rejected pull "$rc" "$out"
+    exit 1
+  fi
+  echo "pull: started"
+  _finish_action pull "$_PULL_TIMEOUT" || exit 1
+  if [ "$_APPLY" = "1" ]; then
+    out=$(dsh_http POST /runtime/apply "" 2>/dev/null)
+    rc=$?
+    if [ "$rc" != 0 ]; then
+      _rejected apply "$rc" "$out"
+      exit 1
+    fi
+    echo "apply: started (the engine will stop and restart; this shell may be cut off)"
+    _finish_action apply "$_SWAP_TIMEOUT" || exit 1
+  else
+    echo "next: dsh-update apply   (or rerun with --apply)"
+  fi
+  exit 0
+}
 
 _cmd_status() {
   local text
@@ -250,6 +340,8 @@ main() {
   local sub="${1:-}"
   if [ $# -gt 0 ]; then shift; fi
   case "$sub" in
+    check)    _cmd_check "$@" ;;
+    pull)     _cmd_pull "$@" ;;
     status)   _cmd_status ;;
     stage)    _cmd_stage "$@" ;;
     apply)    _cmd_apply ;;

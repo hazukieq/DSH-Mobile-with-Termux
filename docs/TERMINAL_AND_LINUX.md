@@ -343,9 +343,49 @@ CANNOT LINK EXECUTABLE ".../lib/libreadline.so.8" is too small to be an ELF exec
 - 重编的包以 API 26 为目标（与 App `minSdk 26` 一致；bash 的 `mblen` 需要 26+）；
 - 脚本产出的是「基础运行时 + 覆盖」，不是从零构建全部 19 个包。
 
-## 八、运行时热更新（2026-10-18 新增）
+## 八、运行时热更新：按 **dsh 版本**拉取（2026-10-18 新增，同日修正语义）
 
-app 安装后**不用重新装 APK** 也能换 dsh 运行时，并且 agent 自己能做这件事。
+### 先分清三个「版本」（这是第一版跑偏的地方）
+
+| 名字 | 例子 | 谁决定 | 怎么升级 |
+|---|---|---|---|
+| **APK 版本** | `v1.3.1` | 本仓库 release | 重装 APK |
+| **运行时资产标签** | `v1.3.1-app-prefix-arm64` | APK 内置 `assets/runtime.zip` | 随 APK |
+| **dsh 版本** | `0.2.0-rc.2` | 上游 `@deepseek-ai/dsh` | **`dsh-update check/pull`** |
+
+`dsh-update` 管的是最后一列：**拉最新 dsh 运行时，不是最新 APK**。第一版只接受
+「你给的 zip」，且状态里只有运行时标签，看起来才像在升 App —— 现在改成以 dsh 版本为准。
+
+### 为什么不在手机上直接 `npm install @deepseek-ai/dsh@latest`
+
+Android 兼容补丁是在**构建期**打进 dsh 依赖树的：`openPath/openTextFile` 内联读文件、
+旧 WebView polyfill、`koffi`/`node-pty` 打桩、`@deepseek-ai/node-addon-system` 的
+flock 兜底（这条缺了会让引擎陷入重启循环）。设备上没有 python3、也不该在现场重跑
+这套补丁；直接装上游包 = 装一个起不来的引擎。所以实现是「**拉一份针对该 dsh 版本
+预先构建并打过补丁的运行时包**」。
+
+### feed（运行时源）
+
+清单 `runtime-manifest.json` 以 **dsh 版本**为键：
+
+```json
+{
+  "schema": 1,
+  "dsh_version": "0.2.1",
+  "built_at": "2026-10-18T02:00:00Z",
+  "assets": {
+    "arm64-v8a": {"url": "https://…/runtime-arm64-v8a.zip", "sha256": "…", "size": 172961543},
+    "x86_64":    {"url": "…", "sha256": "…", "size": 176352302}
+  }
+}
+```
+
+- 默认地址：本仓库 release 的滚动 tag `dsh-runtime-latest`；
+- 覆盖方式：环境变量 `DSH_RUNTIME_MANIFEST`，或 `dsh-update check|pull --manifest <url>`
+  （自建镜像、镜像站、本地测试都走这个）；
+- 清单由 `.github/workflows/dsh-runtime.yml` 产出：每天查一次 npm、有新 dsh 版本就
+  用该版本重跑 `scripts/collect-termux-runtime.sh`（打补丁）、双架构构建、发
+  `dsh-runtime-<ver>` 归档 release 并更新 `dsh-runtime-latest`。
 
 ### 机制
 
@@ -356,37 +396,51 @@ filesDir/
   engine.new/        已就绪的暂存树（带 .runtime-version）
   engine.old/        上一棵（回滚用；下次健康启动后回收）
   .runtime-swap      write-ahead 记录，崩溃后据此恢复
-  .runtime-reclaim   engine.old 可回收标记（2 分钟年龄门槛，避免刚 apply 就删掉回滚点）
+  .runtime-reclaim   engine.old 可回收标记（2 分钟年龄门槛）
 ```
 
-- `stage` 只写 `engine.new`，**从不碰 live 树**；校验：sha256、zip 结构
-  （必须含 `bin/node` + `lib/node_modules/@deepseek-ai/dsh/lib/bin.js`）、
-  ELF ABI（与设备匹配，防止拿错架构的包顶掉可用运行时）、剩余空间；
-- `apply` = 写 write-ahead → 停引擎 → `engine→engine.old`、`engine.new→engine` →
-  启动 → 等 `:3080` 健康（90 s）→ 成功；不健康则**自动换回**并重启旧运行时；
+- `pull`：取清单 → 按 ABI 选包 → 下载（边下边校验 SHA-256 与大小）→ 复用 `stage`
+  的校验/解压/发布（zip 结构、ELF ABI、空间、完整性探针）→ 落进 `engine.new`。
+  **同版本不重复拉**（省 170MB，也避免换一棵语义相同的树）。
+- `apply`：写 write-ahead → 停引擎 → `engine→engine.old`、`engine.new→engine` →
+  启动 → 等 `:3080` 健康（90 s）→ 成功；不健康则**自动换回**并重启旧运行时。
 - `engine/.runtime-source=external` 让 `RuntimeInstaller` 下次启动**不会**用 APK 内置
-  `runtime.zip` 覆盖热更新结果（否则一重启就“回滚”）；
+  `runtime.zip` 覆盖热更新结果（否则一重启就“回滚”）。
 - `rollback` 换回 `engine.old` 再启动；回滚点只保留一次启动，之后回收。
 
 ### 给 agent 的入口：`dsh-update` 门脚本
 
 ```
-dsh-update status                   # version / source / staged / rollback / engine / phase / last_*
-dsh-update stage <zip|url> [sha256] # 暂存（本地路径或 http(s)，可带校验）
-dsh-update apply                    # 切换到暂存运行时并重启引擎
-dsh-update rollback                 # 回到上一棵
-dsh-update restart                  # 只重启引擎
+dsh-update check [--manifest <url>]     # 本机 dsh / npm 最新 / feed 可装（只读，不下载）
+dsh-update pull [dsh-version] [--apply] # 拉最新 dsh 运行时并暂存；--apply 接着换树重启
+dsh-update status                       # 含 version（运行时标签）+ dsh（引擎真实版本）
+dsh-update stage <zip|url> [sha256]     # 手工指定运行时包（离线/灰度）
+dsh-update apply | rollback | restart
 ```
 
-底层是 app 内 HTTP 桥（`127.0.0.1:3083`，与 notify/scr 同一套 token 鉴权）新增的
-`/runtime/stage|apply|rollback|status` 与 `/engine/restart`。动作是**异步 202 + 轮询
-status**：apply 会杀掉 agent 所在引擎进程，所以响应先返回、重启在 app 进程里完成，
-shell 被杀死也不影响更新结果。
+底层是 app 内 HTTP 桥（`127.0.0.1:3083`，与 notify/scr 同一套 token 鉴权）的
+`/runtime/feed`、`/runtime/pull`、`/runtime/stage|apply|rollback|status` 与
+`/engine/restart`。动作是**异步 202 + 轮询 status**：apply 会杀掉 agent 所在引擎进程，
+所以响应先返回、重启在 app 进程里完成，shell 被杀死也不影响结果。
 
-设置页新增「运行时更新」一行：显示当前版本/暂存版本，点开可 APPLY NOW / ROLL BACK。
+设置页「运行时更新」一行：显示运行时标签与 dsh 版本；点开可选「检查 dsh 更新」，
+有新版时给出「拉取并应用」（= `pull --apply` 的 UI 等价物）。
 
-### 实测（x86_64 模拟器）
+### 实测（2026-10-18）
 
-stage 14 s → apply 4.3 s（引擎 PID 更换、`:3080` 健康）→ `am force-stop` 后重启仍保持
-新版本（asset 守卫生效）→ rollback 6.3 s 回到旧版 → 故意放一个坏运行时 apply 会在
-90 s 超时后**自动回滚**并保持引擎可用 → 模拟“换树中途被杀”后启动能据 write-ahead 恢复。
+| 项 | 环境 | 结果 |
+|---|---|---|
+| `check` | arm64 真机 + 本地 feed | 打印 live `0.2.0-rc.2` / npm 最新 / feed `0.2.1` / `update_available: true` |
+| `pull` | arm64 真机（173 MB 包，adb reverse 本地源） | **19.6 s** 完成下载+校验+解压进 `engine.new` |
+| `pull --apply` | arm64 真机 | 26 s 全流程，`apply: ok`，引擎健康、回滚点保留 |
+| 同版本保护 | arm64 真机 | `already on latest dsh 0.2.0-rc.2 (feed …)`，不重复下载 |
+| 模拟器（第一版） | x86_64 | stage 14 s / apply 4.3 s / rollback 6.3 s；坏包 90 s 超时自动回滚；换树中途被杀可恢复 |
+
+### 边界
+
+- feed 是「按 dsh 版本预先构建」的：npm 上一发新版本，要等 CI 产出对应运行时包才能
+  安装（`check` 会同时显示 npm 最新值，能看出这个差距）；
+- 运行时包 ~170 MB/架构，`pull` 与 `apply` 期间磁盘峰值约 equal to「下载包 + 新树 +
+  旧树」，`pull` 前会检查剩余空间；
+- rollback 窗口只有一次启动；之后 `engine.old` 被回收，`rollback` 返回 409；
+- 仍是热更新 → 只换运行时，不动 APK、`dsh-home`、`workspaces`、会话。

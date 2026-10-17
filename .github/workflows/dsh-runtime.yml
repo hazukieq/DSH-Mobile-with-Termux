@@ -1,0 +1,212 @@
+name: dsh-runtime
+
+# dsh 运行时发布流水线（与 APK 版本解耦）
+#
+# 为什么单独一条流水线：
+#   `dsh-update check/pull` 拉的是「**dsh 版本**」（@deepseek-ai/dsh）的运行时而**不是**
+#   APK。dsh 上游发版后，只要按该版本重跑一次 collect-termux-runtime.sh（它会把
+#   Android 补丁打到依赖树里），把产物挂到 release 上，手机上 `dsh-update pull`
+#   就能升级引擎，完全不用重装 APK。
+#
+# 产出（滚动 tag `dsh-runtime-latest`，客户端默认从这个 URL 读清单）：
+#   runtime-manifest.json
+#   runtime-arm64-v8a.zip
+#   runtime-x86_64.zip
+# 同时为每个 dsh 版本留一个不可变 release（tag `dsh-runtime-<version>`）作为归档。
+#
+# 触发：每天查一次上游；也可手动 dispatch 指定 dsh_version（回滚/补发）。
+# ⚠️ Fork 后 workflow 会被置为 disabled_fork，需要在 Actions 页面手动 Enable。
+# ⚠️ 发布需要 contents: write；下面的 publish job 用 github.repository 硬门禁，
+#    只在本仓库运行（fork 里默认跳过，避免把产物发到别人仓库）。
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # 每日 11:17 Asia/Shanghai（错开 APK 构建高峰）
+  workflow_dispatch:
+    inputs:
+      dsh_version:
+        description: "指定 dsh 版本（留空 = 查 npm latest）"
+        required: false
+        default: ""
+      publish:
+        description: "是否发布到 Releases（false = 只构建产物）"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-runtime
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      need_build: ${{ steps.pick.outputs.need_build }}
+    steps:
+      - name: 解析目标 dsh 版本
+        id: pick
+        env:
+          INPUT_VERSION: ${{ inputs.dsh_version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VER="$INPUT_VERSION"
+          if [ -z "$VER" ]; then
+            # 先 npmmirror（国内/海外都稳），失败再官方 registry
+            VER=$(curl -fsSL --max-time 20 https://registry.npmmirror.com/@deepseek-ai/dsh/latest \
+                  | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])') \
+              || VER=$(curl -fsSL --max-time 20 https://registry.npmjs.org/@deepseek-ai/dsh/latest \
+                  | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          fi
+          [ -n "$VER" ] || { echo "::error::无法解析 dsh 版本"; exit 1; }
+          echo "目标 dsh 版本: $VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          # 该版本已有归档 release 就跳过构建（除非手动 dispatch 指定 publish）
+          if gh release view "dsh-runtime-$VER" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "dsh-runtime-$VER 已存在，跳过"
+            echo "need_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "need_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.need_build == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - termux_arch: aarch64
+            abi: arm64-v8a
+          - termux_arch: x86_64
+            abi: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建 dsh ${{ needs.resolve.outputs.version }} 运行时（${{ matrix.abi }}）
+        env:
+          DSH_VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt dpkg-dev zip
+          chmod +x scripts/collect-termux-runtime.sh
+          ./scripts/collect-termux-runtime.sh "runtime-${{ matrix.abi }}.zip" "${{ matrix.termux_arch }}"
+
+      # 与 android-build.yml 的 collect-runtime 校验保持一致：运行时是「命令闭包」，
+      # 少一个库或错的架构，apply 之后引擎直接起不来。
+      - name: 校验运行时闭包（${{ matrix.abi }}）
+        run: |
+          set -euo pipefail
+          rm -rf check && mkdir check
+          unzip -q "runtime-${{ matrix.abi }}.zip" -d check
+          test -x check/bin/bash
+          test -x check/bin/node
+          test -x check/bin/rg
+          test -f check/lib/node_modules/@deepseek-ai/dsh/package.json
+          grep -q "\"version\": \"${{ needs.resolve.outputs.version }}\"" \
+            check/lib/node_modules/@deepseek-ai/dsh/package.json \
+            || { echo "::error::运行时里的 dsh 版本与目标不一致"; exit 1; }
+          # 禁止符号链接（RuntimeInstaller 把 zip 条目当普通文件解）
+          if find check -type l -print -quit | grep -q .; then
+            echo "::error::runtime 含符号链接（必须物化成真实文件）"; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-runtime-${{ matrix.abi }}
+          path: runtime-${{ matrix.abi }}.zip
+          retention-days: 3
+
+  publish:
+    needs: [resolve, build]
+    if: |
+      always() &&
+      needs.resolve.outputs.need_build == 'true' &&
+      needs.build.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.publish) &&
+      github.repository == 'Soodok/Deepseek-Harness-Local-Android'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: 生成 runtime-manifest.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, datetime
+          ver = os.environ["DSH_VERSION"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          assets = {}
+          for abi in ("arm64-v8a", "x86_64"):
+              p = pathlib.Path("dl") / f"dsh-runtime-{abi}" / f"runtime-{abi}.zip"
+              if not p.is_file():
+                  continue
+              h = hashlib.sha256()
+              with p.open("rb") as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b""):
+                      h.update(chunk)
+              assets[abi] = {
+                  "url": f"https://github.com/{repo}/releases/download/dsh-runtime-{ver}/runtime-{abi}.zip",
+                  "sha256": h.hexdigest(),
+                  "size": p.stat().st_size,
+              }
+          manifest = {
+              "schema": 1,
+              "dsh_version": ver,
+              "built_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "assets": assets,
+          }
+          pathlib.Path("runtime-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+        env:
+          DSH_VERSION: ${{ needs.resolve.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: 发布不可变版本 release（归档）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VER="${{ needs.resolve.outputs.version }}"
+          TAG="dsh-runtime-$VER"
+          gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes
+          gh release create "$TAG" \
+            --title "dsh runtime $VER" \
+            --notes "dsh $VER 的 Android 运行时（arm64-v8a / x86_64），由 dsh-runtime workflow 构建。手机端：dsh-update check → dsh-update pull。" \
+            dl/dsh-runtime-arm64-v8a/runtime-arm64-v8a.zip \
+            dl/dsh-runtime-x86_64/runtime-x86_64.zip \
+            runtime-manifest.json
+
+      - name: 更新滚动 release dsh-runtime-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="dsh-runtime-latest"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag
+          fi
+          gh release create "$TAG" \
+            --prerelease \
+            --title "dsh runtime (latest)" \
+            --notes "滚动指针：始终指向最新 dsh 版本的运行时。客户端按 runtime-manifest.json 拉取。当前：dsh ${{ needs.resolve.outputs.version }}" \
+            dl/dsh-runtime-arm64-v8a/runtime-arm64-v8a.zip \
+            dl/dsh-runtime-x86_64/runtime-x86_64.zip \
+            runtime-manifest.json
+
+      - name: 汇总
+        run: |
+          echo "### dsh runtime ${{ needs.resolve.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat runtime-manifest.json >> "$GITHUB_STEP_SUMMARY"

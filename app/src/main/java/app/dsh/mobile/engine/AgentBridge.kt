@@ -37,6 +37,8 @@ import java.nio.charset.StandardCharsets
  *
  * 运行时热更新（2026-10-18，配套 engine/bin/dsh-update 门脚本）：
  *   GET  /runtime/status   [?format=line] → 运行时版本/来源/暂存/回滚/引擎状态
+ *   GET  /runtime/feed     [?format=line][&manifest=url] → dsh 版本检查（本机 / npm 最新 / feed）
+ *   POST /runtime/pull     body: {"version":"0.2.1","manifest":"https://…"} → 202（按 dsh 版本拉取）
  *   POST /runtime/stage    body: {"path":"/abs/x.zip"} 或 {"url":"https://…","sha256":"…"} → 202
  *   POST /runtime/apply    → 202（停引擎 → 换目录 → 启动 → 健康检查，失败自动回滚）
  *   POST /runtime/rollback → 202（回到 engine.old）
@@ -415,6 +417,8 @@ object AgentBridge {
             method == "POST" && path == "/ext/install" -> extInstall(ctx, body)
             // 运行时热更新（2026-10-18）：门脚本 dsh-update 驱动的五个端点
             method == "GET" && path == "/runtime/status" -> runtimeStatus(ctx, query)
+            method == "GET" && path == "/runtime/feed" -> runtimeFeed(ctx, query)
+            method == "POST" && path == "/runtime/pull" -> runtimePull(ctx, body)
             method == "POST" && path == "/runtime/stage" -> runtimeStage(ctx, body)
             method == "POST" && path == "/runtime/apply" -> runtimeApply(ctx)
             method == "POST" && path == "/runtime/rollback" -> runtimeRollback(ctx)
@@ -458,6 +462,40 @@ object AgentBridge {
         val sha = obj.optString("sha256").takeIf { it.isNotBlank() }
         val err = RuntimeUpdater.stage(ctx, src, sha, isUrl = path == null)
         return acceptedOrRejected("stage", err)
+    }
+
+    /**
+     * GET /runtime/feed [?format=line][&manifest=<url>] → dsh 版本检查。
+     *
+     * 回答三个问题：装的是哪个 dsh 版本、上游 npm 最新是哪个、feed 能为当前 ABI 提供哪个。
+     * 只读：不发任何文件改动，也不触发下载（下载只在 /runtime/pull 里做）。
+     */
+    private fun runtimeFeed(ctx: Context, query: String): Pair<Int, String> {
+        return try {
+            val params = parseQuery(query)
+            val check = RuntimeUpdater.feedCheck(ctx, params["manifest"])
+            if (params["format"] == "line") 200 to check.toLine()
+            else 200 to check.toJson()
+        } catch (e: Exception) {
+            500 to JSONObject().put("ok", false).put("error", e.message ?: "feed check failed").toString()
+        }
+    }
+
+    /**
+     * POST /runtime/pull body {"version":"0.2.1","manifest":"https://…"} → 202。
+     *
+     * 注意语义：比较与拉取都以 **dsh 版本**（@deepseek-ai/dsh）为准，与 APK 版本无关。
+     * 下载 + 解压耗时几十秒到几分钟，因此和 stage 一样是「立即受理 + 轮询 status」。
+     */
+    private fun runtimePull(ctx: Context, body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
+            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
+        val err = RuntimeUpdater.pull(
+            ctx,
+            obj.optString("version").takeIf { it.isNotBlank() },
+            obj.optString("manifest").takeIf { it.isNotBlank() },
+        )
+        return acceptedOrRejected("pull", err)
     }
 
     /** POST /runtime/apply → 202（Async: stop → swap → start → health check → auto rollback） */

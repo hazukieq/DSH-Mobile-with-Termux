@@ -167,3 +167,22 @@ dsh_http() {
     *) return 1 ;;
   esac
 }
+
+# URL 百分号编码（query 值用）。只保留 unreserved 字符，其余按**字节**转 %XX。
+#
+# 为什么自己写：门脚本没有任何外部依赖（不保证有 python/perl/node），而
+# `dsh-update check --manifest https://…` 必须把 : / ? & 之类编码进 query。
+# ⚠️ 按字节处理（LC_ALL=C）：多字节 UTF-8 逐字节转义后服务端 URLDecoder 还原一致；
+#    若在 UTF-8 locale 下按 ${s:i:1} 取字符再 printf，多字节字符会被截断成乱码。
+_dsh_urlenc() {
+  local s="$1" out="" c i
+  LC_ALL=C
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out="$out$c" ;;
+      *) out="$out$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
+}

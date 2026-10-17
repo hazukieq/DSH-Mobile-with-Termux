@@ -478,13 +478,25 @@
     <string name="setting_runtime_ver_staged">%1$s · 已暂存 %2$s</string>
     <string name="setting_runtime_ver_rollback">%1$s · 可回滚</string>
     <string name="setting_runtime_dialog_title">运行时热更新</string>
-    <string name="setting_runtime_dialog_body">已安装：%1$s\n来源：%2$s\n已暂存：%3$s\n可回滚：%4$s\n引擎：%5$s</string>
+    <string name="setting_runtime_dialog_body">已安装：%1$s
+dsh：%2$s
+来源：%3$s
+暂存：%4$s
+回滚：%5$s
+引擎：%6$s</string>
     <string name="setting_runtime_none">无</string>
     <string name="setting_runtime_apply">立即应用</string>
     <string name="setting_runtime_rollback_action">回滚</string>
     <string name="setting_runtime_started">已开始热更新，引擎将重启</string>
     <string name="setting_runtime_rollback_started">已开始回滚，引擎将重启</string>
-    <string name="setting_runtime_busy">另一个运行时操作正在进行</string>
+    <string name="setting_runtime_busy">运行时忙：%1$s</string>
     <string name="setting_runtime_source_assets">出厂内置</string>
     <string name="setting_runtime_source_external">热更新</string>
+    <string name="setting_runtime_check_update">检查 dsh 更新</string>
+    <string name="setting_runtime_check_title">dsh 版本</string>
+    <string name="setting_runtime_check_body">已安装 dsh：%1$s\nnpm 最新：%2$s\n运行时源：%3$s\nABI：%4$s</string>
+    <string name="setting_runtime_checking">正在检查 dsh 版本…</string>
+    <string name="setting_runtime_check_failed">检查失败：%1$s</string>
+    <string name="setting_runtime_pull">拉取并应用</string>
+    <string name="setting_runtime_pulling">正在拉取 dsh 运行时…</string>
 </resources>

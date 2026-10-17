@@ -359,10 +359,51 @@ favour of plain `bash -i`.
 - the script overlays rebuilt packages onto a collected base runtime; it does not build
   all 19 packages from scratch.
 
-## 8. Runtime hot-update (added 2026-10-18)
+## 8. Runtime hot-update: pulled by **dsh version** (added 2026-10-18, semantics fixed same day)
 
-The dsh runtime can be replaced **without reinstalling the APK**, and the agent can do it
-itself.
+### Three different "versions" (the first cut conflated them)
+
+| Name | Example | Decided by | How to upgrade |
+|---|---|---|---|
+| **APK version** | `v1.3.1` | this repo's releases | reinstall the APK |
+| **runtime asset label** | `v1.3.1-app-prefix-arm64` | `assets/runtime.zip` inside the APK | follows the APK |
+| **dsh version** | `0.2.0-rc.2` | upstream `@deepseek-ai/dsh` | **`dsh-update check/pull`** |
+
+`dsh-update` manages the last column: **the latest dsh runtime, not the latest APK**.
+The first implementation only staged a zip you handed it and its status only showed the
+runtime label, which made it look like an app update — it now keys on the dsh version.
+
+### Why not `npm install @deepseek-ai/dsh@latest` on the device
+
+The Android compatibility patches are applied to the dependency tree **at build time**:
+inline `openPath/openTextFile` reader, old-WebView polyfills, `koffi`/`node-pty` stubs,
+and the `@deepseek-ai/node-addon-system` flock fallback (without which the engine ends up
+in a restart loop). The device has no python3 and should not re-run that patch set in the
+field; installing the upstream package as-is gives you an engine that will not start.
+So the implementation **pulls a runtime package pre-built and pre-patched for that dsh
+version**.
+
+### Feed (`runtime-manifest.json`), keyed by dsh version
+
+```json
+{
+  "schema": 1,
+  "dsh_version": "0.2.1",
+  "built_at": "2026-10-18T02:00:00Z",
+  "assets": {
+    "arm64-v8a": {"url": "https://…/runtime-arm64-v8a.zip", "sha256": "…", "size": 172961543},
+    "x86_64":    {"url": "…", "sha256": "…", "size": 176352302}
+  }
+}
+```
+
+- Default location: this repo's rolling release tag `dsh-runtime-latest`;
+- Override with `DSH_RUNTIME_MANIFEST`, or `dsh-update check|pull --manifest <url>`
+  (mirrors, self-hosted feeds, local testing);
+- Produced by `.github/workflows/dsh-runtime.yml`: daily npm check, rebuild the runtime for
+  the new dsh version with `scripts/collect-termux-runtime.sh` (which applies the Android
+  patches), publish both ABIs as an immutable `dsh-runtime-<ver>` release and move
+  `dsh-runtime-latest`.
 
 ### Mechanism
 
@@ -376,41 +417,55 @@ filesDir/
   .runtime-reclaim   "engine.old may be reclaimed" marker (2-minute age gate)
 ```
 
-- `stage` only writes `engine.new` and **never touches the live tree**; it validates
-  sha256, the zip layout (must contain `bin/node` and
-  `lib/node_modules/@deepseek-ai/dsh/lib/bin.js`), the ELF ABI (so a package for the
-  wrong architecture cannot replace a working runtime) and free space;
-- `apply` writes the write-ahead note → stops the engine → `engine→engine.old`,
-  `engine.new→engine` → starts it → waits for `:3080` health (90 s); if unhealthy it
-  **automatically swaps back** and restarts the old runtime;
-- `engine/.runtime-source=external` makes `RuntimeInstaller` skip the assets version
-  check on later launches (otherwise the bundled `runtime.zip` would silently undo the
-  update on the next start);
-- `rollback` swaps `engine.old` back in and restarts; the rollback point survives one
-  boot, then is reclaimed.
+- `pull`: fetch the manifest → pick the current ABI → download (verifying SHA-256 and size
+  while streaming) → reuse the `stage` validation/extraction/publish path (zip layout, ELF
+  ABI, free space, integrity probe) → land in `engine.new`. **Same version is not
+  re-pulled** (saves 170 MB and avoids swapping in a semantically identical tree).
+- `apply`: write-ahead note → stop engine → `engine→engine.old`, `engine.new→engine` →
+  start → wait for `:3080` health (90 s) → success; on failure **swap back automatically**
+  and restart the previous runtime.
+- `engine/.runtime-source=external` makes `RuntimeInstaller` skip the assets version check
+  on later launches (otherwise the bundled `runtime.zip` would silently undo the update).
+- `rollback` swaps `engine.old` back in and restarts; the rollback point survives one boot.
 
 ### Agent entry point: the `dsh-update` gate
 
 ```
-dsh-update status                   # version / source / staged / rollback / engine / phase / last_*
-dsh-update stage <zip|url> [sha256] # stage a local path or http(s) archive (optional checksum)
-dsh-update apply                    # switch to the staged runtime and restart the engine
-dsh-update rollback                 # go back to the previous tree
-dsh-update restart                  # restart the engine only
+dsh-update check [--manifest <url>]      # local dsh / npm latest / what the feed offers (read-only)
+dsh-update pull [dsh-version] [--apply]  # stage the latest dsh runtime; --apply also swaps
+dsh-update status                        # includes version (runtime label) + dsh (engine version)
+dsh-update stage <zip|url> [sha256]      # manual package (offline / canary)
+dsh-update apply | rollback | restart
 ```
 
-Underneath it uses new routes on the in-app HTTP bridge (`127.0.0.1:3083`, same token
-auth as notify/scr): `/runtime/stage|apply|rollback|status` and `/engine/restart`.
-Actions are **async 202 + status polling**: `apply` kills the engine process the agent
-runs in, so the response is sent first and the restart happens in the app process — even
-if the calling shell dies, the update completes.
+Underneath: new routes on the in-app bridge (`127.0.0.1:3083`, same token auth as
+ notify/scr): `/runtime/feed`, `/runtime/pull`, `/runtime/stage|apply|rollback|status`,
+`/engine/restart`. Actions are **async 202 + status polling**: `apply` kills the engine
+process the agent runs in, so the response is sent first and the restart happens in the app
+process — the calling shell dying does not affect the outcome.
 
-Settings gained a "Runtime update" row showing the installed/staged versions with
-APPLY NOW / ROLL BACK actions.
+Settings' "Runtime update" row shows the runtime label and the dsh version; tapping it offers
+"Check dsh update", and when a newer dsh runtime exists, "Pull and apply" (the UI equivalent
+of `pull --apply`).
 
-### Measured (x86_64 emulator)
+### Measured (2026-10-18)
 
-stage 14 s → apply 4.3 s (engine PID changed, `:3080` healthy) → after `am force-stop` the
-new version persists (asset guard) → rollback 6.3 s returns to the old version → applying
-a deliberately broken runtime times out after 90 s and **auto-rolls back** with the engine
-healthy → a simulated kill mid-swap is recovered from the write-ahead note on next start.
+| Item | Environment | Result |
+|---|---|---|
+| `check` | arm64 phone + local feed | live `0.2.0-rc.2` / npm latest / feed `0.2.1` / `update_available: true` |
+| `pull` | arm64 phone (173 MB, local source via adb reverse) | **19.6 s** for download + verify + extract into `engine.new` |
+| `pull --apply` | arm64 phone | 26 s end-to-end, `apply: ok`, engine healthy, rollback point kept |
+| same-version guard | arm64 phone | `already on latest dsh 0.2.0-rc.2 (feed …)`, no re-download |
+| emulator (first cut) | x86_64 | stage 14 s / apply 4.3 s / rollback 6.3 s; broken runtime auto-rolled back after 90 s; kill mid-swap recovered |
+
+### Limits
+
+- The feed is **pre-built per dsh version**: after npm publishes, the matching runtime
+  bundle must be produced by CI first (`check` also prints the npm latest so the gap is
+  visible);
+- a runtime bundle is ~170 MB per ABI; peak disk during pull/apply is roughly
+  "downloaded zip + new tree + old tree", and free space is checked before pulling;
+- the rollback window lasts one boot; afterwards `engine.old` is reclaimed and `rollback`
+  returns 409;
+- it is still a runtime-only update: the APK, `dsh-home`, `workspaces` and sessions are
+  untouched.

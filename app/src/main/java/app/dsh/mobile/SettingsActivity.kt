@@ -395,10 +395,11 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * 运行时详情对话框：已安装/来源/暂存/回滚/引擎状态 + 两个动作。
+     * 运行时详情对话框：已安装/来源/暂存/回滚/引擎状态 + 动作列表。
      *
-     * 动作只有「应用暂存版」和「回滚」两个 —— 这正是 agent 侧 `dsh-update apply/rollback`
-     * 的 UI 等价物（暂存需要传 160MB 包，属于 agent/终端侧的事，不进 UI）。
+     * 2026-10-18 修正语义：这里管的是 **dsh 运行时（引擎）**，与 APK 版本无关。
+     * 「检查更新」走 [RuntimeUpdater.feedCheck]（feed 以 dsh 版本为键，见 RuntimeFeed），
+     * 「拉取并应用」= `dsh-update pull --apply` 的 UI 等价物。
      */
     private fun showRuntimeDialog() {
         val st = runCatching { RuntimeUpdater.status(this) }.getOrNull() ?: return
@@ -411,25 +412,118 @@ class SettingsActivity : Activity() {
         val body = getString(
             R.string.setting_runtime_dialog_body,
             st.installedVersion.ifBlank { none },
+            st.dshVersion.ifBlank { none },
             source,
             st.stagedVersion ?: none,
             st.rollbackVersion ?: none,
             if (st.phase == "idle") st.engine else st.engine + " (" + st.phase + ")",
         )
         val idle = st.phase == "idle"
-        val builder = AlertDialog.Builder(this)
+        val canApply = idle && st.stagedVersion != null
+        val canRollback = idle && st.rollbackVersion != null
+        val items = ArrayList<String>()
+        items.add(getString(R.string.setting_runtime_check_update))
+        if (canApply) items.add(getString(R.string.setting_runtime_apply))
+        if (canRollback) items.add(getString(R.string.setting_runtime_rollback_action))
+        AlertDialog.Builder(this)
             .setTitle(R.string.setting_runtime_dialog_title)
             .setMessage(body)
+            .setItems(items.toTypedArray()) { _, which ->
+                when {
+                    which == 0 -> checkRuntimeUpdate()
+                    canApply && which == 1 -> runRuntimeAction(apply = true)
+                    else -> runRuntimeAction(apply = false)
+                }
+            }
             .setNegativeButton(android.R.string.cancel, null)
-        if (idle && st.stagedVersion != null) {
-            builder.setPositiveButton(R.string.setting_runtime_apply) { _, _ -> runRuntimeAction(apply = true) }
+            .showStyled()
+    }
+
+    /**
+     * 检查 dsh 更新：后台查「本机 dsh / npm 最新 / feed 可装」，把结果摆出来。
+     * 网络与解析都在 [RuntimeUpdater.feedCheck] 里，失败带原因（不静默）。
+     */
+    private fun checkRuntimeUpdate() {
+        Toast.makeText(this, R.string.setting_runtime_checking, Toast.LENGTH_SHORT).show()
+        Thread {
+            val c = runCatching { RuntimeUpdater.feedCheck(this, null) }.getOrNull()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val none = getString(R.string.setting_runtime_none)
+                if (c == null) {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.setting_runtime_check_failed, "feed check crashed"),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    return@runOnUiThread
+                }
+                var text = getString(
+                    R.string.setting_runtime_check_body,
+                    c.liveDsh.ifBlank { none },
+                    c.npmLatest.ifBlank { none },
+                    c.feedDsh.ifBlank { none },
+                    c.abi,
+                )
+                if (c.error.isNotBlank()) text += "\n" + c.error
+                val builder = AlertDialog.Builder(this)
+                    .setTitle(R.string.setting_runtime_check_title)
+                    .setMessage(text)
+                    .setNegativeButton(android.R.string.cancel, null)
+                if (c.ok && c.updateAvailable) {
+                    builder.setPositiveButton(R.string.setting_runtime_pull) { _, _ -> pullRuntimeUpdate() }
+                }
+                builder.showStyled()
+            }
+        }.start()
+    }
+
+    /** 拉取最新 dsh 运行时；完成后自动 apply（用户点这一下就是「升级 dsh」的完整意图） */
+    private fun pullRuntimeUpdate() {
+        val err = RuntimeUpdater.pull(this, null, null)
+        if (err != null) {
+            Toast.makeText(
+                this,
+                getString(R.string.setting_runtime_busy, err),
+                Toast.LENGTH_LONG,
+            ).show()
+            return
         }
-        if (idle && st.rollbackVersion != null) {
-            builder.setNeutralButton(R.string.setting_runtime_rollback_action) { _, _ ->
-                runRuntimeAction(apply = false)
+        Toast.makeText(this, R.string.setting_runtime_pulling, Toast.LENGTH_LONG).show()
+        refreshRuntime()
+        awaitPullThenApply()
+    }
+
+    /**
+     * pull（下载 + 解压，几十秒~几分钟）结束后自动 apply。
+     * 轮询 RuntimeUpdater.status：phase 回到 idle 就检查 last action 是否 pull 成功；
+     * 失败则不动现场（engine 未被动过），成功才调 apply()。
+     */
+    private fun awaitPullThenApply() {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val start = System.currentTimeMillis()
+        val tick = object : Runnable {
+            override fun run() {
+                if (isFinishing || isDestroyed) return
+                refreshRuntime()
+                val st = runCatching { RuntimeUpdater.status(this@SettingsActivity) }.getOrNull()
+                if (st != null && st.phase == "idle" && st.lastAction == "pull") {
+                    if (st.lastOk) {
+                        runRuntimeAction(apply = true)
+                    } else {
+                        Toast.makeText(
+                            this@SettingsActivity,
+                            getString(R.string.setting_runtime_check_failed, st.error.ifBlank { st.lastDetail }),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    return
+                }
+                if (System.currentTimeMillis() - start > 1_800_000L) return
+                handler.postDelayed(this, 2_000)
             }
         }
-        builder.showStyled()
+        handler.postDelayed(tick, 2_000)
     }
 
     /** 触发 apply/rollback：立即返回，随后轮询刷新这一行（动作本身几十秒） */
@@ -440,7 +534,7 @@ class SettingsActivity : Activity() {
             if (err == null) {
                 getString(if (apply) R.string.setting_runtime_started else R.string.setting_runtime_rollback_started)
             } else {
-                getString(R.string.setting_runtime_busy)
+                getString(R.string.setting_runtime_busy, err ?: "")
             },
             Toast.LENGTH_LONG,
         ).show()

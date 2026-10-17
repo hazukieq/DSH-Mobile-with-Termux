@@ -478,13 +478,25 @@ You can still continue without updating, but the interface will not display.</st
     <string name="setting_runtime_ver_staged">%1$s · staged %2$s</string>
     <string name="setting_runtime_ver_rollback">%1$s · rollback available</string>
     <string name="setting_runtime_dialog_title">Runtime update</string>
-    <string name="setting_runtime_dialog_body">installed: %1$s\nsource: %2$s\nstaged: %3$s\nrollback: %4$s\nengine: %5$s</string>
+    <string name="setting_runtime_dialog_body">installed: %1$s
+dsh: %2$s
+source: %3$s
+staged: %4$s
+rollback: %5$s
+engine: %6$s</string>
     <string name="setting_runtime_none">none</string>
     <string name="setting_runtime_apply">Apply now</string>
     <string name="setting_runtime_rollback_action">Roll back</string>
     <string name="setting_runtime_started">Runtime update started; the engine will restart</string>
     <string name="setting_runtime_rollback_started">Rollback started; the engine will restart</string>
-    <string name="setting_runtime_busy">Another runtime operation is in progress</string>
+    <string name="setting_runtime_busy">Runtime busy: %1$s</string>
     <string name="setting_runtime_source_assets">factory</string>
     <string name="setting_runtime_source_external">hot update</string>
+    <string name="setting_runtime_check_update">Check dsh update</string>
+    <string name="setting_runtime_check_title">dsh version</string>
+    <string name="setting_runtime_check_body">installed dsh: %1$s\nnpm latest: %2$s\nruntime feed: %3$s\nabi: %4$s</string>
+    <string name="setting_runtime_checking">Checking dsh versions…</string>
+    <string name="setting_runtime_check_failed">Check failed: %1$s</string>
+    <string name="setting_runtime_pull">Pull and apply</string>
+    <string name="setting_runtime_pulling">Pulling dsh runtime…</string>
 </resources>
