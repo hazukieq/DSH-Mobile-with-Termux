@@ -21,6 +21,28 @@ DSH_BRIDGE_PORT="${DSH_BRIDGE_PORT:-3083}"
 # 单次请求的整体读超时（秒）；bridge 正常时毫秒级返回
 DSH_HTTP_TIMEOUT="${DSH_HTTP_TIMEOUT:-10}"
 
+# token 回退（2026-10-18）：dsh 的 subprocess 在给子进程建环境时会**剔掉所有
+# `DSH_*` 变量**（见 dsh-subprocess 的 scrubbedParentEnv），所以 AI 的 bash 工具和
+# WebUI 侧边栏终端里都拿不到 DSH_BRIDGE_TOKEN → 所有门脚本请求桥都是 403。
+# App 现在把 token 同时写一份到 <engine>/.bridge-token（0600，只有同一 uid 的
+# App 子进程能读，第三方 App 读不到），这里在环境缺失时回退读它。
+if [ -z "${DSH_BRIDGE_TOKEN:-}" ]; then
+  _dsh_token_file=""
+  for _dsh_tf in "${PREFIX:-}/.bridge-token" \
+                  "$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/.bridge-token" \
+                  "${DSH_ENGINE_ROOT:-}/.bridge-token"; do
+    if [ -n "$_dsh_tf" ] && [ -r "$_dsh_tf" ]; then
+      _dsh_token_file="$_dsh_tf"
+      break
+    fi
+  done
+  if [ -n "$_dsh_token_file" ]; then
+    DSH_BRIDGE_TOKEN=$(cat "$_dsh_token_file" 2>/dev/null)
+    DSH_BRIDGE_TOKEN="${DSH_BRIDGE_TOKEN%$'\n'}"
+    [ -n "$DSH_BRIDGE_TOKEN" ] && export DSH_BRIDGE_TOKEN
+  fi
+fi
+
 # JSON 字符串最小转义：反斜杠 → \\、双引号 → \"、换行 → \n（去掉裸回车）
 #
 # ⚡ v1.2.58 提速（用户反馈"有时候还是偏慢"）：旧实现用 sed+tr+awk **三个外部进程**

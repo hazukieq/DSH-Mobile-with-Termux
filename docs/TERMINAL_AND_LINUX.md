@@ -597,3 +597,78 @@ linux shell ubuntu        # 进去后：apt update && apt install ...
 | 装 python/git/ffmpeg 等 | `pkg install python`（App 扩展，改写到我们的前缀） |
 | 真 apt/apk 依赖解析、系统发行版工具 | `linux shell alpine` / `linux shell ubuntu` |
 | 直接抄 Termux 的 `pkg`/`apt` | ❌ 前缀与 dpkg 数据库都不匹配，做不到 |
+
+## 十一、原生包管理器：真 dpkg + Termux 仓库（2026-10-18 新增）
+
+> 上一节说了「原生运行时不是 Termux、`apt`/`pkg` 用不了」。这一节是解法：
+> 把 Termux 的 `dpkg`、`proot` 按本 App 的包名**重新交叉编译**，再用 proot 的
+> bind 把 Termux 前缀映射到本 App 的运行时目录 —— 于是 Termux 仓库里的 `.deb`
+> 可以真装、真卸载、真依赖解析。
+
+### 为什么需要 proot
+
+Termux 的 `.deb` 内部路径全是 `/data/data/com.termux/files/usr/...`，而本 App 的
+前缀是 `/data/data/app.dsh.mobile/files/engine`（Android 不允许我们创建别的应用
+的数据目录）。直接 `dpkg -i` 会把文件铺到错误位置。做法是：
+
+```
+proot -r <pkgroot> -b <engine>:/data/data/com.termux/files/usr \
+      -b <engine>:<engine> -b <dsh-home>:/data/data/com.termux/files/home \
+      <engine>/bin/dpkg --unpack ...
+```
+
+`pkgroot` 是个假 rootfs 骨架（`<files>/pkgroot`），只为让 proot 的 bind 目标存在：
+- guest 里的 `/data/data/com.termux/files/usr/bin/vim` → 实际写到 `<engine>/bin/vim`
+- 维护脚本 shebang `#!/data/data/com.termux/files/usr/bin/sh` → `<engine>/bin/sh`
+- dpkg 本体按 app 前缀编译，admindir 天然是 `<engine>/var/lib/dpkg`
+
+### 组件（全部按包名/前缀重编，不是拷 Termux 的二进制）
+
+| 组件 | 作用 | 关键补丁（都在 `scripts/build-runtime-app-prefix.sh` 里带 `[dsh-patch]`） |
+|---|---|---|
+| `dpkg` 1.22.6 | 真状态库、文件清单、卸载、``--configure`` | 依赖裁到库（coreutils 等运行时工具单独装）、禁用 `dpkg-perl`/`dpkg-scanpackages` 子包（会拉 perl/clang）、源码换 GitHub 镜像（salsa 对本网络 429） |
+| `proot` 5.1.107.96 | 前缀映射（bind） | `src/extension` 补 `#include <string.h>`（NDK r30 严格报错） |
+| `libandroid-shmem` | proot 依赖 | 补 `_PATH_TMP`（NDK r30 的 paths.h 没有） |
+| `attr` / `libacl` | tar 依赖（可选） | 补 glibc 的 `IFTODT` 宏（bionic 没有） |
+| `zstd` | `dpkg-deb` 需要 `libzstd.so.1` | 无 |
+
+### 三个必须踩的坑（都已修）
+
+1. **`bin/sh` 不存在**：Termux 的 bash 包不带 `bin/sh`，而所有维护脚本 shebang 都是
+   `.../usr/bin/sh`。运行时 overlay 补一个 `bin/sh` 包装（exec 同目录 bash）。
+2. **`dpkg-deb` 要 GNU tar 的选项**：它调 `tar --warning=no-timestamp`，而 Android
+   只有 toybox tar（不认 GNU 选项）。overlay 的 `bin/tar` 会过滤 GNU 专有选项再交给
+   toybox（只给 dpkg 用，不替代用户自己的 tar）。
+3. **`update-alternatives` 造绝对路径链接**：它在 guest 里建
+   `/data/data/com.termux/files/usr/bin/vim → ...`，出了 proot 就是悬空链接
+   （`vim: inaccessible or not found`）。`pkg` 装完会把这类链接改写成**相对链接**，
+   proot 内外都能用；`pkg fixup` 可手动重跑。
+   另外运行时 zip 里的符号链接会被 `RuntimeInstaller` 写成普通文件（`bin/sh` 变
+   0 字节），所以构建脚本打包前**把所有链接解引用成真文件**（270 个）。
+
+### 用法
+
+```
+pkg update                # 拉 Termux 官方仓库索引（Packages.gz，约 1.8MB / 3000 包）
+pkg install vim           # 依赖解析 + 下载校验 + dpkg 安装（实测 76s，含 4 个包）
+pkg list                  # 读 dpkg 状态库
+pkg remove vim
+pkg search python
+pkg fixup                 # 修复 alternatives 绝对链接（装完自动跑）
+```
+
+宿主机构建（复现）：
+
+```
+scripts/build-runtime-app-prefix.sh --abi arm64-v8a \
+  --base-runtime <collected.zip> --out /tmp/runtime-arm64.zip
+```
+
+默认 `PKGS="bash proot dpkg zstd"`（依赖自动递归构建）。
+
+### 与 apt 的关系
+
+`apt` 本体（`pkg` 脚本的官方后端）依赖 gnutls/gcrypt/gpgv/termux-keyring 等 10+ 个包，
+还没交叉编译；当前 `pkg` 是「Termux 仓库 + 真 dpkg + 自研依赖解析」的前端，
+`install/remove/list/search/info` 已经可用。需要 apt 的完整行为（版本求解、
+`apt upgrade`、release 签名校验）时再补 apt 那一层。

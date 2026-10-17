@@ -914,6 +914,20 @@ object EngineConfig {
      * （runner-launch-XXXX.js），版本一升就变；按**文件内容锚点**扫描整个包目录，
      * 既能跨版本生效，也不会在锚点消失时误改别的代码。
      */
+    /** 单个 overlay 文件部署（内容一致则跳过；失败只记日志不阻断启动） */
+    private fun deployOverlayFile(ctx: android.content.Context, root: File, rel: String) {
+        runCatching {
+            val bytes = ctx.assets.open("runtime-overlay/$rel").use { it.readBytes() }
+            val dst = File(root, rel)
+            if (dst.isFile && dst.readBytes().contentEquals(bytes)) return@runCatching
+            dst.parentFile?.mkdirs()
+            dst.writeBytes(bytes)
+            // overlay 里有需要直接执行的（bin/tar 的 GNU 选项过滤器）；统一给 +x。
+            dst.setExecutable(true, false)
+            Log.i(TAG, "runtime overlay deployed: $rel")
+        }.onFailure { Log.w(TAG, "runtime overlay $rel failed: ${it.message}") }
+    }
+
     private fun patchEngineForAndroid(root: File) {
         val dir = File(root, "lib/node_modules/@deepseek-ai/dsh-subprocess-local/lib")
         if (!dir.isDirectory) {
@@ -953,6 +967,14 @@ object EngineConfig {
      *  - 目标是**真** node-pty（有 build/Release 等）→ 不动，避免破坏未来真机可用的预编译。
      */
     private fun applyRuntimeOverlays(ctx: android.content.Context, root: File) {
+        // ① 与 node-pty 无关的 overlay：pkg 的前端（Termux 仓库 + dpkg 的 node 驱动）。
+        //    `pkg` 门脚本只负责 exec node bin/pkg.js；这里保证脚本每次启动都是最新版。
+        deployOverlayFile(ctx, root, "bin/pkg.js")
+        // dpkg-deb 调用 GNU 专有选项的 tar；系统只有 toybox —— 用过滤器垫片。
+        deployOverlayFile(ctx, root, "bin/tar")
+        // 维护脚本 shebang 用 .../usr/bin/sh，而运行时没有 bin/sh。
+        deployOverlayFile(ctx, root, "bin/sh")
+        // ② node-pty 真实现：仅当运行时里那份不是原生编译产物时才覆盖。
         val pkgDir = File(root, "lib/node_modules/node-pty")
         // 判定「能不能覆盖」而不是「版本号长什么样」：只要这棵树里没有**原生产物**
         // （.node / prebuilds / build/Release），就说明它是空壳或我们自己的 bridge 版，

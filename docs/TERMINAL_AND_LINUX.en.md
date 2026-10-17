@@ -641,3 +641,82 @@ bash 5.3.20 returns **false for `[ -x <any file> ]`** (even `/system/bin/sh`), w
 | python / git / ffmpeg etc. | `pkg install python` (app extension, prefix rewritten) |
 | real apt/apk dependency resolution and distro tooling | `linux shell alpine` / `linux shell ubuntu` |
 | copy Termux's `pkg`/`apt` over | ❌ prefix and dpkg database do not match; not feasible |
+
+## 11. A real package manager on the native runtime: dpkg + the Termux repository (added 2026-10-18)
+
+> The previous section explained why `apt`/`pkg` cannot work on the native runtime.
+> This section is the fix: cross-compile Termux's `dpkg` and `proot` under this app's
+> package name, then let proot bind-map the Termux prefix onto the app's runtime tree,
+> so `.deb` files from the Termux repository install, uninstall and resolve deps for real.
+
+### Why proot
+
+Termux `.deb` payloads contain paths under `/data/data/com.termux/files/usr/...`, while
+this app's prefix is `/data/data/app.dsh.mobile/files/engine` (Android forbids creating
+another app's data directory). Running `dpkg -i` directly would scatter files. Instead:
+
+```
+proot -r <pkgroot> -b <engine>:/data/data/com.termux/files/usr \
+      -b <engine>:<engine> -b <dsh-home>:/data/data/com.termux/files/home \
+      <engine>/bin/dpkg --unpack ...
+```
+
+`pkgroot` is a fake rootfs skeleton (`<files>/pkgroot`) whose only job is to make proot
+bind targets exist:
+- guest `/data/data/com.termux/files/usr/bin/vim` is written to `<engine>/bin/vim`
+- maintainer-script shebang `#!/data/data/com.termux/files/usr/bin/sh` becomes `<engine>/bin/sh`
+- dpkg itself is built for the app prefix, so its admindir is `<engine>/var/lib/dpkg`
+
+### Components (all rebuilt for our prefix, not copied binaries)
+
+| Component | Purpose | Patch (all tagged `[dsh-patch]` in `scripts/build-runtime-app-prefix.sh`) |
+|---|---|---|
+| `dpkg` 1.22.6 | real status DB, file lists, removal, `--configure` | deps trimmed to libraries, `dpkg-perl`/`dpkg-scanpackages` subpackages disabled (they pull perl/clang), source moved to the GitHub mirror (salsa 429s this network) |
+| `proot` 5.1.107.96 | prefix mapping (bind) | `#include <string.h>` in `src/extension` (NDK r30 is strict) |
+| `libandroid-shmem` | proot dependency | provide `_PATH_TMP` (missing in NDK r30 `paths.h`) |
+| `attr` / `libacl` | tar deps (optional) | provide glibc's `IFTODT` macro |
+| `zstd` | `dpkg-deb` needs `libzstd.so.1` | none |
+
+### Three real gotchas (fixed)
+
+1. **No `bin/sh`**: Termux's bash package does not ship `bin/sh`, yet every maintainer
+   script uses `#!/data/data/com.termux/files/usr/bin/sh`. A runtime overlay provides
+   `bin/sh` (execs the sibling bash).
+2. **`dpkg-deb` wants GNU tar options**: it runs `tar --warning=no-timestamp`, while
+   Android only has toybox tar, which rejects GNU-only flags. The overlay `bin/tar`
+   filters those flags and delegates to toybox (only for dpkg).
+3. **`update-alternatives` creates absolute links**: inside proot it writes
+   `/data/data/com.termux/files/usr/bin/vim -> ...`, which dangles outside proot
+   (`vim: inaccessible or not found`). `pkg` rewrites such links to relative ones after
+   install; `pkg fixup` reruns it. Also, symlinks inside the runtime zip are written as
+   plain files by `RuntimeInstaller` (`bin/sh` used to become a 0-byte file), so the
+   build script now **dereferences every symlink into a real file** before zipping
+   (270 of them today).
+
+### Usage
+
+```
+pkg update                # fetch the official Termux index (Packages.gz, 1.8 MB, ~3000 pkgs)
+pkg install vim           # resolve deps + download/verify + dpkg install (76 s, 4 packages)
+pkg list                  # read the real dpkg database
+pkg remove vim
+pkg search python
+pkg fixup                 # rewrite alternatives links (runs automatically after install)
+```
+
+Host build (reproducible):
+
+```
+scripts/build-runtime-app-prefix.sh --abi arm64-v8a \
+  --base-runtime <collected.zip> --out /tmp/runtime-arm64.zip
+```
+
+Default `PKGS="bash proot dpkg zstd"` (dependencies are built recursively).
+
+### Relation to apt
+
+`apt` itself (the backend of the official `pkg` script) depends on gnutls/gcrypt/gpgv/
+termux-keyring and ten-odd other packages and has not been cross-compiled yet. Today's
+`pkg` is a front-end over the Termux repository plus real `dpkg` with its own solver;
+`install/remove/list/search/info` already work. The apt layer (full version solving,
+`apt upgrade`, release signature verification) is the next step.

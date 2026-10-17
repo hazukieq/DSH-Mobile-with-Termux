@@ -1,239 +1,41 @@
 #!/system/bin/sh
-# [dsh-android] pkg: 原生运行时的"装包"入口（驱动 App 的扩展中心）。
+# [dsh-android] pkg: real package manager for the native runtime.
 #
-# ## 为什么不是 Termux 的 pkg
-#
-# 本 App 的原生运行时是**从 Termux 仓库收集的最小闭包**（node/bash/ripgrep/... ），
-# 不是 Termux 的完整 rootfs：
-#   · 没有 apt/dpkg（也不该有：Termux 的 apt/dpkg 编译期前缀写死
-#     /data/data/com.termux/files/usr，dpkg 数据库、sources.list、签名公钥
-#     都在那个前缀下；我们的前缀是 /data/data/app.dsh.mobile/files/engine）；
-#   · 原来 engine/bin 里那个 Termux `pkg` 脚本会 source
-#     /data/data/com.termux/files/usr/bin/termux-setup-package-manager —— 必然失败。
-#
-# 所以这里把它换成一个**能真正干活**的包装：把 `pkg install <工具>` 交给 App 的
-# 扩展中心（ExtensionManager）。扩展就是 Termux 的 .deb，安装时会把
-# com.termux 前缀改写成我们的前缀，落到 <filesDir>/extensions/<id>/，并并入
-# PATH/LD_LIBRARY_PATH —— 这是原生侧唯一被支持的"装包"通道。
-#
-# 需要**真正的包管理器**（apt/apk 生态、依赖解析、系统级工具）时，用 Linux 环境：
-#   linux shell alpine      → 进 Alpine，`apk add <pkg>`
-#   linux shell ubuntu      → 进 Ubuntu，`apt install <pkg>`
+# 这是一个**真**包管理器前端：Termux 官方仓库 + 交叉编译的 dpkg + proot 前缀映射。
+#   · .deb 内部路径是 /data/data/com.termux/files/usr/...，proot 把该前缀 bind 到
+#     本 App 的引擎目录 → 文件落在正确位置，维护脚本的 shebang 也能跑；
+#   · dpkg 本体是按 app.dsh.mobile 前缀重编的，状态库在 <engine>/var/lib/dpkg；
+#   · 依赖解析/下载/校验由 engine/bin/pkg.js（node）完成。
 #
 # 用法:
-#   pkg list                 已装/可装扩展一览（green=已激活 yellow=已下载 red=未装）
-#   pkg search <关键词>       在扩展目录里搜（按 id/name/分类）
-#   pkg install <id|名称>     安装并激活一个扩展（异步，轮询到 green）
-#   pkg state <id>           单个扩展的状态
-#   pkg where <id>           打印扩展安装目录
-#   pkg help                 本说明
+#   pkg update                刷新仓库索引（Packages.gz）
+#   pkg install <pkg...>      安装（含依赖解析；Termux 仓库的 arm64/x86_64 包）
+#   pkg remove <pkg...>       卸载
+#   pkg list                  已装列表（读 dpkg 状态库）
+#   pkg search <关键词>       搜仓库
+#   pkg info <pkg>            仓库元数据
+#   pkg help
 #
-# 退出码：0 成功 / 1 失败或被拒 / 2 用法错误 / 3 环境错误（桥不可达）
-#
-# 与其它门脚本同一套自举：shebang 不传环境变量，先 exec 引擎 bash（/dev/tcp 需要 bash）。
-if [ -z "$_DSH_REEXEC" ]; then
-  _DSH_REEXEC=1; export _DSH_REEXEC
-  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
-  exec "@DSH_BASH@" "$0" "$@"
-fi
-
+# 另一条装包路：App 扩展（pkg install 的等价物之一）由扩展中心管理；
+# 需要完整发行版（apt/apk 生态）时用 `linux shell alpine|ubuntu`。
 DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
-. "$DIR/_dsh_http.sh"
-
-EXT_ROOT="${PREFIX:-$(cd "$DIR/.." 2>/dev/null && pwd)}/extensions"
-_POLL_SECS=2
-_INSTALL_TIMEOUT=900
-
-_die() { echo "pkg: $*" >&2; exit 3; }
-
-_usage() {
-  cat >&2 <<'USAGE'
-usage: pkg list
-       pkg search <keyword>
-       pkg install <id|name>
-       pkg state <id>
-       pkg where <id>
-       pkg help
-
-note: this is NOT Termux. The native runtime has no apt/dpkg.
-      - install tools as App extensions:  pkg install python
-      - need a real package manager:      linux shell alpine  -> apk add ...
-                                          linux shell ubuntu  -> apt install ...
-USAGE
-  exit 2
-}
-
-# /ext/list 返回 JSON 数组；无 jq，用 sed 拆行 + 逐字段抽取（值里没有转义引号）
-_rows() {
-  local json rc
-  json=$(dsh_http GET /ext/list 2>/dev/null)
-  rc=$?
-  if [ "$rc" != 0 ]; then
-    case "$rc" in
-      2) _die "bridge unreachable (is the app running?)" ;;
-      3) _die "bridge timeout" ;;
-      *) _die "ext list failed (http rc=$rc)" ;;
-    esac
-  fi
-  printf '%s' "$json" | sed 's/},{/}\
-{/g'
-}
-
-_field() {  # $1=行 $2=字段名（JSON 里 / 可能被转义成 \/，顺手还原）
-  printf '%s' "$1" | sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p" | sed 's|\\/|/|g; s|\\\"|\"|g'
-}
-
-# 名称 → id：先精确匹配 id/name，再忽略大小写的子串匹配（唯一命中才用）
-_resolve_id() {
-  local want="$1" rows id name hit hit_id
-  rows=$(_rows) || exit 3
-  # 精确 id
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    id=$(_field "$line" id)
-    [ "$id" = "$want" ] && { printf '%s' "$id"; return 0; }
-  done <<< "$rows"
-  # 精确 name（忽略大小写）
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    id=$(_field "$line" id); name=$(_field "$line" name)
-    [ "$(printf '%s' "$name" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$want" | tr 'A-Z' 'a-z')" ] && { printf '%s' "$id"; return 0; }
-  done <<< "$rows"
-  # 子串（唯一命中）
-  hit=""; hit_id=""
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    id=$(_field "$line" id); name=$(_field "$line" name)
-    case "$id $name" in
-      *[!a-zA-Z0-9]*"$want"*|*"$want"*)
-        if [ -n "$hit" ] && [ "$id" != "$hit_id" ]; then hit="multiple"; break; fi
-        hit=1; hit_id=$id ;;
-    esac
-  done <<< "$rows"
-  [ "$hit" = "1" ] && { printf '%s' "$hit_id"; return 0; }
-  return 1
-}
-
-_state_of() {  # $1=id  → 打印 state 与 version（找不到返回 1）
-  local want="$1" rows id
-  rows=$(_rows) || exit 3
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    id=$(_field "$line" id)
-    if [ "$id" = "$want" ]; then
-      printf '%s\t%s\t%s\t%s\n' "$id" "$(_field "$line" name)" "$(_field "$line" state)" "$(_field "$line" version)"
-      return 0
-    fi
-  done <<< "$rows"
-  return 1
-}
-
-_cmd_list() {
-  local rows any=0
-  rows=$(_rows) || exit 3
-  echo "id           state   version  name"
-  echo "-----------  ------  -------  ------------------------------"
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    any=1
-    printf '%-12s %-7s %-8s %s\n' \
-      "$(_field "$line" id)" "$(_field "$line" state)" \
-      "$([ -n "$(_field "$line" version)" ] && _field "$line" version || echo '-')" \
-      "$(_field "$line" name)"
-  done <<< "$rows"
-  [ "$any" = "1" ] || echo "(catalog empty?)"
-  echo
-  echo "install: pkg install <id>   ·  real package manager: linux shell alpine (apk)"
-  exit 0
-}
-
-_cmd_search() {
-  local kw="${1:-}"
-  [ -n "$kw" ] || _usage
-  local rows line hay
-  rows=$(_rows) || exit 3
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    hay=$(printf '%s %s' "$(_field "$line" id)" "$(_field "$line" name)" | tr 'A-Z' 'a-z')
-    case "$hay" in
-      *"$(printf '%s' "$kw" | tr 'A-Z' 'a-z')"*)
-        printf '%-14s %-7s %s\n' "$(_field "$line" id)" "$(_field "$line" state)" "$(_field "$line" name)" ;;
-    esac
-  done <<< "$rows"
-  exit 0
-}
-
-_cmd_install() {
-  local want="${1:-}" id body out rc start state
-  [ -n "$want" ] || _usage
-  id=$(_resolve_id "$want") || { echo "pkg: no extension matches '$want' (try: pkg search $want)" >&2; exit 1; }
-  state=$(_state_of "$id" | cut -f3)
-  if [ "$state" = "green" ] || [ "$state" = "yellow" ]; then
-    echo "pkg: $id already installed (state=$state)"
-    echo "where: $EXT_ROOT/$id"
-    exit 0
-  fi
-  body="{\"id\":\"$(_dsh_json_escape "$id")\"}"
-  out=$(dsh_http POST /ext/install "$body" 2>/dev/null)
-  rc=$?
-  if [ "$rc" != 0 ]; then
-    echo "pkg: install rejected" >&2
-    printf '%s\n' "$out" >&2
-    exit 1
-  fi
-  echo "install: started ($id)"
-  start=$SECONDS
-  while [ $((SECONDS - start)) -lt "$_INSTALL_TIMEOUT" ]; do
-    sleep "$_POLL_SECS"
-    state=$(_state_of "$id" | cut -f3)
-    case "$state" in
-      green)
-        echo "install: ok ($id)"
-        echo "where: $EXT_ROOT/$id"
-        echo "note: restart the engine (or start a new shell) to pick up its bin/lib in PATH"
-        exit 0 ;;
-      red|"")
-        # 可能刚起步或失败：继续等，超时后统一报失败
-        ;;
-    esac
-  done
-  echo "pkg: install of $id did not reach green within ${_INSTALL_TIMEOUT}s" >&2
-  echo "pkg: check 'pkg state $id' or the extension page in the app" >&2
-  exit 1
-}
-
-_cmd_state() {
-  local id="${1:-}"
-  [ -n "$id" ] || _usage
-  local row
-  row=$(_state_of "$id") || { echo "pkg: unknown extension: $id" >&2; exit 1; }
-  printf 'id: %s\nname: %s\nstate: %s\nversion: %s\npath: %s\n' \
-    "$(printf '%s' "$row" | cut -f1)" "$(printf '%s' "$row" | cut -f2)" \
-    "$(printf '%s' "$row" | cut -f3)" "$(printf '%s' "$row" | cut -f4)" \
-    "$EXT_ROOT/$id"
-  exit 0
-}
-
-_cmd_where() {
-  local id="${1:-}"
-  [ -n "$id" ] || _usage
-  _state_of "$id" >/dev/null || { echo "pkg: unknown extension: $id" >&2; exit 1; }
-  echo "$EXT_ROOT/$id"
-  exit 0
-}
-
-main() {
-  local sub="${1:-}"
-  if [ $# -gt 0 ]; then shift; fi
-  case "$sub" in
-    list)    _cmd_list ;;
-    search)  _cmd_search "$@" ;;
-    install) _cmd_install "$@" ;;
-    state)   _cmd_state "$@" ;;
-    where)   _cmd_where "$@" ;;
-    help|-h|--help|'') _usage ;;
-    *) _die "unknown subcommand: $sub (try 'pkg help')" ;;
-  esac
-}
-
-main "$@"
+# node/openssl 的 OpenSSL 默认配置路径是编译期写死的 com.termux 前缀；引擎环境
+# 平时会注入 OPENSSL_CONF，但精简环境（env -i、某些子进程）里没有 → node 一启动
+# 就报 "OpenSSL configuration error: Permission denied"。这里兜底。
+if [ -z "${OPENSSL_CONF:-}" ] && [ -f "$DIR/../etc/tls/openssl.cnf" ]; then
+  OPENSSL_CONF="$DIR/../etc/tls/openssl.cnf"; export OPENSSL_CONF
+fi
+if [ -z "${SSL_CERT_FILE:-}" ] && [ -f "$DIR/../etc/tls/cert.pem" ]; then
+  SSL_CERT_FILE="$DIR/../etc/tls/cert.pem"; export SSL_CERT_FILE
+fi
+NODE="$DIR/node"
+PKGJS="$DIR/pkg.js"
+if [ ! -x "$NODE" ]; then
+  echo "pkg: engine node not found at $NODE" >&2
+  exit 3
+fi
+if [ ! -f "$PKGJS" ]; then
+  echo "pkg: pkg.js missing at $PKGJS (runtime overlay not deployed?)" >&2
+  exit 3
+fi
+exec "$NODE" "$PKGJS" "$@"

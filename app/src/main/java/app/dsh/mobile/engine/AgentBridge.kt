@@ -141,9 +141,37 @@ object AgentBridge {
     fun currentToken(): String? = token
 
     private fun ensureToken(ctx: Context) {
-        if (token != null) return
-        token = java.util.UUID.randomUUID().toString().replace("-", "")
-        Log.i(TAG, "bridge token generated")
+        if (token == null) {
+            token = java.util.UUID.randomUUID().toString().replace("-", "")
+            Log.i(TAG, "bridge token generated")
+        }
+        writeTokenFile(ctx)
+    }
+
+    /**
+     * 把桥 token 同步写一份到 `<engineRoot>/.bridge-token`（0600）。
+     *
+     * 为什么需要文件而不是只靠环境变量：dsh 的 subprocess 在构造子进程环境时会
+     * **剔掉所有 `DSH_*` 变量**（`dsh-subprocess` 的 `scrubbedParentEnv`），
+     * 于是 AI 的 bash 工具、WebUI 侧边栏终端里都没有 `DSH_BRIDGE_TOKEN`，
+     * 所有门脚本（pkg / notify / scr / say / linux / dsh-update）请求桥都被 403。
+     * 文件放在 App 私有目录、权限 0600：只有同一 uid 的 App 子进程可读，
+     * 第三方 App 依然拿不到。
+     */
+    private fun writeTokenFile(ctx: Context) {
+        val tok = token ?: return
+        runCatching {
+            val root = EngineConfig.engineRoot(ctx)
+            if (!root.isDirectory) return@runCatching
+            val f = java.io.File(root, ".bridge-token")
+            if (!f.isFile || f.readText().trim() != tok) {
+                f.writeText(tok)
+                f.setReadable(false, false)
+                f.setReadable(true, true)
+                f.setWritable(false, false)
+                f.setWritable(true, true)
+            }
+        }.onFailure { Log.w(TAG, "write bridge token file failed: ${it.message}") }
     }
 
     /**

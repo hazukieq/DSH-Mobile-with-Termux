@@ -54,7 +54,7 @@ OUT=""
 TERMUX_PKGS=""
 NDK_DIR="${NDK:-$HOME/lib/android-ndk-r30}"
 # 需要重编的包。`bash` 会递归带出 libandroid-support/libiconv/readline/ncurses。
-PKGS="${PKGS:-bash}"
+PKGS="${PKGS:-bash proot dpkg zstd}"  # proot+dpkg+zstd: 原生包管理器
 KEEP_WORK="${KEEP_WORK:-0}"
 
 usage() {
@@ -245,7 +245,77 @@ patch('packages/bash/build.sh', [
 	('\texport CC_FOR_BUILD="clang-${TERMUX_HOST_LLVM_MAJOR_VERSION}"',
 	 '\t# [dsh-patch] host has gcc only; GCC 13 does not trigger the bool issue\n'
 	 '\texport CC_FOR_BUILD="gcc"'),
-])
+# 2.7 原生包管理器（proot + dpkg + 其依赖）在 NDK r30 / 非 com.termux 包名下的修补。
+#     · dpkg：只留库依赖（coreutils/tar 等运行期工具单独装），禁用 dpkg-perl 等
+#       会拉起 perl/clang 的子包，源码从 salsa 换到 GitHub 镜像（salsa 对本网络 429）
+#     · proot：ashmem_memfd 扩展没 include <string.h>，新 clang 直接报错
+#     · attr / libacl：bionic 没有 glibc 的 IFTODT 宏
+#     · libandroid-shmem：NDK r30 的 <paths.h> 没有 _PATH_TMP
+def ensure_file_patch(rel, block, marker):
+	path = os.path.join(tp, rel)
+	s = io.open(path, encoding='utf-8').read()
+	if marker in s:
+		print('patch: skipped (already patched) ' + rel, file=sys.stderr)
+		return
+	io.open(path, 'w', encoding='utf-8').write(s.rstrip() + '\n' + block)
+	print('patch: ' + rel, file=sys.stderr)
+
+ensure_file_patch('packages/dpkg/build.sh', """
+# [dsh-patch] 原生包管理器：只保留构建/运行必需的库依赖。coreutils/tar/gzip/xz-utils
+# 这些是维护脚本用的运行时工具（单独编译后直接并进运行时），它们会拉进
+# autoconf/perl 一整条构建期依赖链，在交叉编译环境里没必要。
+TERMUX_PKG_DEPENDS="libbz2, liblzma, libmd, zlib, zstd"
+""", '[dsh-patch] 原生包管理器')
+ensure_file_patch('packages/dpkg/build.sh', """
+# [dsh-patch] salsa.debian.org 对本网络限流（HTTP 429），改用官方 GitHub 镜像
+termux_step_post_get_source() {
+	:
+}
+""", 'salsa.debian.org 对本网络限流')
+
+# dpkg 的两处源码级替换（镜像 + 子包禁用）
+path = os.path.join(tp, 'packages/dpkg/build.sh')
+s = io.open(path, encoding='utf-8').read()
+s = s.replace('TERMUX_PKG_SRCURL=git+https://salsa.debian.org/dpkg-team/dpkg.git',
+              'TERMUX_PKG_SRCURL=git+https://github.com/guillemj/dpkg.git  # [dsh-patch] salsa 429 -> github mirror', 1)
+io.open(path, 'w', encoding='utf-8').write(s)
+import shutil
+for sub in ('dpkg-perl', 'dpkg-scanpackages'):
+	src = os.path.join(tp, 'packages/dpkg', sub + '.subpackage.sh')
+	if os.path.exists(src):
+		os.rename(src, src + '.disabled-by-dsh')
+
+ensure_file_patch('packages/proot/build.sh', """
+# [dsh-patch] NDK r30 clang 默认 -Werror=implicit-function-declaration，proot 的
+# ashmem_memfd 扩展没 include <string.h>（老 NDK 靠传递包含蒙混过关）。只补
+# src/extension（loader.c 自带 basename 定义，注入 string.h 会冲突）。
+termux_step_post_get_source() {
+	for f in $(find src/extension -name '*.c'); do
+		sed -i '1i #include <string.h>' "$f"
+	done
+}
+""", 'src/extension 没 include')
+
+ensure_file_patch('packages/attr/build.sh', """
+# [dsh-patch] bionic 没有 glibc 的 IFTODT 宏（libmisc/walk_tree.c 用到）
+termux_step_post_get_source() {
+	sed -i '1i #include <sys/stat.h>\n#ifndef IFTODT\n#define IFTODT(mode) (((mode) & 0170000) >> 12)\n#endif' libmisc/walk_tree.c
+}
+""", 'bionic 没有 glibc 的 IFTODT')
+
+ensure_file_patch('packages/libacl/build.sh', """
+# [dsh-patch] 同 attr：libacl 自带一份 walk_tree.c
+termux_step_post_get_source() {
+	sed -i '1i #include <sys/stat.h>\n#ifndef IFTODT\n#define IFTODT(mode) (((mode) & 0170000) >> 12)\n#endif' libmisc/walk_tree.c
+}
+""", 'libacl 自带一份 walk_tree.c')
+
+ensure_file_patch('packages/libandroid-shmem/build.sh', """
+# [dsh-patch] NDK r30 的 <paths.h> 不再提供 _PATH_TMP（Termux 自己的 NDK 版本有）
+termux_step_post_get_source() {
+	sed -i '1i #ifndef _PATH_TMP\n#define _PATH_TMP "/tmp/"\n#endif' shmem.c
+}
+""", '不再提供 _PATH_TMP')
 PY
 }
 log "应用宿主构建补丁"
@@ -361,6 +431,35 @@ done
 # ---------------------------------------------------------------------------
 log "打包 -> $OUT"
 rm -f "$OUT"
+# Termux 的 deb 里大量符号链接（bin/sh -> bash、lib*.so -> lib*.so.X）。zip 会把
+# 它们存成链接条目，而 RuntimeInstaller 一律按普通文件写 → 装完 bin/sh 变成
+# 0 字节垃圾（dpkg 维护脚本全挂）。拆包前先解引用成真文件。
+python3 - "$TMP_BASE" <<'PY'
+import os, shutil, sys
+root = sys.argv[1]
+realroot = os.path.realpath(root)
+links = copied = dropped = 0
+for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+	for name in dirnames + filenames:
+		p = os.path.join(dirpath, name)
+		if not os.path.islink(p):
+			continue
+		links += 1
+		try:
+			target = os.path.realpath(p)
+			if not target.startswith(realroot + os.sep):
+				os.unlink(p); dropped += 1; continue
+			if os.path.isdir(target):
+				os.unlink(p); shutil.copytree(target, p, symlinks=False)
+			else:
+				mode = os.stat(target).st_mode & 0o777
+				os.unlink(p); shutil.copyfile(target, p); os.chmod(p, mode); copied += 1
+		except Exception:
+			try: os.unlink(p)
+			except Exception: pass
+			dropped += 1
+print(f'[build-runtime] materialised symlinks: {links} (files {copied}, dropped {dropped})', file=sys.stderr)
+PY
 ( cd "$TMP_BASE" && zip -q -r "$OUT" . )
 
 SHA="$(sha256sum "$OUT" | cut -d' ' -f1)"
