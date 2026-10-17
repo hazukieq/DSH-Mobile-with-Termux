@@ -48,3 +48,7 @@ scripts/probes/*.bin
 # com.termux 版运行时资产（大文件；用 scripts/prepare-termux-assets.sh 生成）
 app/src/main/assets/bootstrap-*.zip
 app/src/main/assets/engine-dsh-*.zip
+
+# 发布签名凭据（keystore 路径/密码），绝不入库
+keystore.properties
+*.keystore

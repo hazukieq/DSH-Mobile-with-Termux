@@ -58,5 +58,14 @@ for lib in libc++_shared.so libpcre2-8.so libandroid-support.so; do
 	unzip -q "$RUNTIME" "lib/$lib*" -d "$WORK/tree" 2>/dev/null || true
 done
 chmod 755 "$WORK/tree/bin/node" "$WORK/tree/bin/rg" 2>/dev/null || true
+# 引擎版本标记（BootstrapInstaller 解压后也会写；打进包里便于 dsh-update 直接读）
+ENGINE_VERSION="${ENGINE_VERSION:-}"
+if [[ -z "$ENGINE_VERSION" ]]; then
+	DSH_VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+		"$WORK/tree/lib/node_modules/@deepseek-ai/dsh/package.json" | head -1)
+	ENGINE_VERSION="dsh-engine-${DSH_VER:-unknown}-$(date +%Y%m%d)"
+fi
+printf '%s' "$ENGINE_VERSION" > "$WORK/tree/.dsh-engine-version"
+echo "[assets] engine version: $ENGINE_VERSION"
 ( cd "$WORK/tree" && zip -q -r "$ASSETS/engine-dsh-${TARCH}.zip" bin lib )
 echo "[assets] done: bootstrap + engine-dsh-${TARCH}.zip"

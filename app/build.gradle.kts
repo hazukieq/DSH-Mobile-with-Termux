@@ -1,4 +1,5 @@
 import java.security.MessageDigest
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -7,6 +8,22 @@ plugins {
 
 // 构建目标 ABI 可由 -Pabi=x86_64 覆盖（CI 双架构矩阵 / 模拟器测试用），默认真机 arm64
 val targetAbi = (project.findProperty("abi") as String?) ?: "arm64-v8a"
+
+// 发布签名：优先 keystore.properties（gitignored），其次环境变量；都没有时退回 debug 签名，
+// 保证 assembleDebug 在没配密钥的机器上照常可用。
+//   storeFile / DSH_KEYSTORE_FILE         keystore 路径（相对仓库根或绝对路径）
+//   storePassword / DSH_KEYSTORE_PASSWORD
+//   keyAlias / DSH_KEY_ALIAS
+//   keyPassword / DSH_KEY_PASSWORD        （省略时用 storePassword）
+val keystoreProps: Properties? = rootProject.file("keystore.properties")
+    .takeIf { it.isFile }
+    ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+
+fun signingValue(propKey: String, envKey: String): String? =
+    (keystoreProps?.getProperty(propKey)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(envKey)?.takeIf { it.isNotBlank() })
+
+val dshStoreFile: String? = signingValue("storeFile", "DSH_KEYSTORE_FILE")
 
 android {
     namespace = "app.dsh.mobile"
@@ -41,10 +58,25 @@ android {
         }
     }
 
+    signingConfigs {
+        if (dshStoreFile != null) {
+            create("release") {
+                storeFile = rootProject.file(dshStoreFile).takeIf { it.isFile }
+                    ?: file(dshStoreFile)
+                storePassword = signingValue("storePassword", "DSH_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "DSH_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "DSH_KEY_PASSWORD")
+                    ?: signingValue("storePassword", "DSH_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // 配了发布密钥就用它；否则沿用 debug 签名（本地自测不会被卡住）
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -56,6 +88,9 @@ android {
         jvmTarget = "17"
     }
     lint {
+        // release 的 lintVital 在 AGP 8.5 + 本机 SDK 36.1 上会崩（For input string: "36.1"），
+        // 属于工具链 bug；发布构建靠 CI 的 lint job 兜底，这里跳过 vital 检查。
+        checkReleaseBuilds = false
         // targetSdk 28 会触发大量 lint 提示（前台服务类型、通知权限等），
         // 这些是刻意的兼容性决策，不阻断构建。
         abortOnError = false

@@ -30,7 +30,7 @@ object BootstrapInstaller {
     const val ASSET = "bootstrap-aarch64.zip"
     const val VERSION = "bootstrap-2026.10.11-r1"
     const val ENGINE_ASSET = "engine-dsh-aarch64.zip"
-    const val ENGINE_VERSION = "dsh-engine-2026.10.18"
+    const val ENGINE_VERSION = "dsh-engine-0.2.1-rc.2-20261018"
     private const val STAMP = ".bootstrap-version"
     private const val ENGINE_STAMP = ".dsh-engine-version"
     const val DSH_PKG = "lib/node_modules/@deepseek-ai/dsh/lib/bin.js"
