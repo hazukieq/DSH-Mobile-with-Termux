@@ -33,8 +33,11 @@ object EngineConfig {
     // 否则第 8 次就进 Failed 停机、安全模式在数学上永远无法触发（实测事故）
     const val MAX_RESTART = 14
 
+    /** 运行时前缀目录名（Termux 标准是 `usr`；改包名后必须与 Termux 对齐） */
+    const val PREFIX_DIR = "usr"
+
     fun engineRoot(ctx: android.content.Context): File =
-        File(ctx.filesDir, "engine").apply { mkdirs() }
+        File(ctx.filesDir, EngineConfig.PREFIX_DIR).apply { mkdirs() }
 
     fun nodeBin(ctx: android.content.Context): File =
         File(engineRoot(ctx), "bin/node")
@@ -388,7 +391,7 @@ object EngineConfig {
         publicDataRoot(ctx)?.absolutePath
 
     fun tmpDir(ctx: android.content.Context): File =
-        File(ctx.filesDir, "tmp").apply { mkdirs() }
+        File(engineRoot(ctx), "tmp").apply { mkdirs() }
 
     /**
      * Android 适配覆盖层（v1.2.36）：写成 YAML patch 文件，由启动参数 `--patch` 注入。
@@ -969,11 +972,7 @@ object EngineConfig {
     private fun applyRuntimeOverlays(ctx: android.content.Context, root: File) {
         // ① 与 node-pty 无关的 overlay：pkg 的前端（Termux 仓库 + dpkg 的 node 驱动）。
         //    `pkg` 门脚本只负责 exec node bin/pkg.js；这里保证脚本每次启动都是最新版。
-        deployOverlayFile(ctx, root, "bin/pkg.js")
-        // dpkg-deb 调用 GNU 专有选项的 tar；系统只有 toybox —— 用过滤器垫片。
-        deployOverlayFile(ctx, root, "bin/tar")
-        // 维护脚本 shebang 用 .../usr/bin/sh，而运行时没有 bin/sh。
-        deployOverlayFile(ctx, root, "bin/sh")
+        // 包管理器切换成 Termux 原生 pkg/apt 后，pkg.js / tar / sh 垫片全部删除
         // ② node-pty 真实现：仅当运行时里那份不是原生编译产物时才覆盖。
         val pkgDir = File(root, "lib/node_modules/node-pty")
         // 判定「能不能覆盖」而不是「版本号长什么样」：只要这棵树里没有**原生产物**
@@ -1023,7 +1022,7 @@ object EngineConfig {
             // 漏掉了这两个，但种子仍在教 agent 使用 → agent 照着调用得到 command not found
             // （Agent 审计 N8 实测）。它们解决的是真问题：agent 常以 `bash -c '... pkill -f X'`
             // 形式执行，完整命令行含 pattern 会命中自己并自杀，必须按 comm 匹配。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update", "pkg").forEach { name ->
+            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { name ->
                 val dst = File(bindir, name)
                 runCatching {
                     val text = ctx.assets.open("gates/$name").use { it.readBytes().toString(Charsets.UTF_8) }
@@ -1062,12 +1061,12 @@ object EngineConfig {
                 dst.setReadable(true, true)
     }.onFailure { Log.w(TAG, "lan-web-proxy deploy failed: ${it.message}") }
 
-            listOf("notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update", "pkg").forEach { File(bindir, it).setExecutable(true, false) }
+            listOf("notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { File(bindir, it).setExecutable(true, false) }
             File(bindir, "_dsh_http.sh").setReadable(true, false)
 
             // 部署后自检（v1.2.52）：逐个校验首行不含 \r 且指向存在的解释器。
             // 失败不静默——写进 engine.log 并给出明确原因，避免「看起来像文件丢了」的误判。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update", "pkg").forEach { name ->
+            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { name ->
                 val f = File(bindir, name)
                 val head = runCatching {
                     f.inputStream().use { ins ->

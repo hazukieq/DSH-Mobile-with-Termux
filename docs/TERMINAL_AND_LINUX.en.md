@@ -720,3 +720,61 @@ termux-keyring and ten-odd other packages and has not been cross-compiled yet. T
 `pkg` is a front-end over the Termux repository plus real `dpkg` with its own solver;
 `install/remove/list/search/info` already work. The apt layer (full version solving,
 `apt upgrade`, release signature verification) is the next step.
+
+## 12. Package name switched to `com.termux`: a full Termux environment plus the bundled adapted engine (2026-10-18)
+
+### Why change the package name
+
+Termux packages and binaries hard-code `/data/data/com.termux/files/usr` inside ELF files and
+deb payload paths. As long as the applicationId is anything else, proot has to map the prefix
+(previous section). Setting applicationId to `com.termux` makes `<filesDir>/usr` the real
+`$PREFIX`: debs install verbatim, maintainer-script shebangs work as-is, `apt`/`dpkg`/`pkg`
+come straight from the official Termux bootstrap, and none of our rebuilt dpkg/proot/tar shims
+are needed.
+
+The cost: **it cannot coexist with the official Termux** (same package id, different signing
+key); uninstalling Termux is required, and Termux's data cannot be migrated because the
+signing key changes. The app data directory changes too, so data needs migration.
+
+### Two runtime layers (they never overwrite each other)
+
+| Layer | Contents | Source |
+|---|---|---|
+| Termux base | bash / apt / dpkg / coreutils / sed / tar … | `assets/bootstrap-aarch64.zip` extracted into `<files>/usr`, 1213 links rebuilt from `SYMLINKS.txt` |
+| dsh engine | node + `lib/node_modules/@deepseek-ai/dsh` (adapted closure) + ripgrep | `assets/engine-dsh-aarch64.zip` (**bundled in the APK**) |
+
+node itself comes from the Termux repository (`pkg install nodejs-lts`) so it follows repo
+upgrades; **dsh must never be installed with npm** — the upstream package cannot be installed
+on Android/Termux, which is exactly why this project ships an adapted runtime.
+
+### Incident postmortem: dsh would not start after the rename (fixed)
+
+Symptom: blank home page; `engine.log` reported
+`No usable native binding found for node-addon-require-builtin-android-arm64 (auto)`.
+
+Root causes:
+1. On first boot `BootstrapInstaller` installed `@deepseek-ai/dsh` with **npm**. npm pulled in a
+   **newer nested dependency** (`dsh/node_modules/node-addon-require-builtin`) that shadowed the
+   working one from the adapted runtime, so `dsh-app-boot` failed to find an Android native
+   binding and exited fatally.
+2. After restoring data, `dsh-home/storages/workspace.json` and `session_projcache/*.json`
+   contained **absolute paths under the old package name**, so session restoration tried to
+   mkdir the old package directory → `EACCES`, which looked like "the home page is broken".
+
+Fixes:
+- the engine is only ever extracted from the APK assets (delete any npm-tainted
+  `lib/node_modules` first); npm is not used at all;
+- new `LegacyDataMigrator` rewrites old package paths in dsh-home text data on first start and
+  recreates workspace directories from `workspace.json` (idempotent, marker file);
+- `restoreExecBits` after extraction (ZipInputStream drops permission bits, otherwise `bin/pkg`
+  is not executable);
+- the runtime builder dereferences every symlink before zipping (zip contract).
+
+### What works now
+
+```
+pkg install vim          # native Termux apt (no proot, no rewriting)
+apt update && apt upgrade
+dsh-update status        # bundled engine version (engine upgrades with the APK)
+linux shell alpine       # distros still run under proot, independent of the Termux prefix
+```

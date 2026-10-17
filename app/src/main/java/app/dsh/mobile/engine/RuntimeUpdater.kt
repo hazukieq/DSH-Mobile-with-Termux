@@ -296,7 +296,14 @@ object RuntimeUpdater {
 
     /** `GET /runtime/feed` 的实现：只读查询，不触发任何文件改动 */
     fun feedCheck(ctx: Context, manifestUrl: String?): RuntimeFeed.Check =
-        RuntimeFeed.check(ctx, manifestUrl)
+        // 2026-10-18：包名切到 com.termux 后，运行时 = 官方 bootstrap + 内置适配引擎，
+        // 自制 runtime.zip 热更新链路停用（否则会覆盖 usr/ 毁掉 apt/dpkg）。
+        RuntimeFeed.Check(
+            ok = false, liveDsh = "", liveRuntime = "", abi = "", feedUrl = "",
+            feedDsh = "", feedBuiltAt = "", npmLatest = "", assetSha = "", assetSize = 0L,
+            updateAvailable = false,
+            error = "runtime updates are managed by the bundled engine now",
+        )
 
     /**
      * 从 feed 拉取「最新 dsh 版本」（或 [version] 指定的版本）的运行时并**暂存**。

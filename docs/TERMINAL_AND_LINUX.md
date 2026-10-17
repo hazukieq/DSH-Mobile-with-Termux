@@ -672,3 +672,58 @@ scripts/build-runtime-app-prefix.sh --abi arm64-v8a \
 还没交叉编译；当前 `pkg` 是「Termux 仓库 + 真 dpkg + 自研依赖解析」的前端，
 `install/remove/list/search/info` 已经可用。需要 apt 的完整行为（版本求解、
 `apt upgrade`、release 签名校验）时再补 apt 那一层。
+
+## 十二、包名切换为 `com.termux`：完整 Termux 环境 + 内置适配引擎（2026-10-18）
+
+### 为什么改包名
+
+Termux 仓库里的二进制/`.deb` 把 `/data/data/com.termux/files/usr` 写死在 ELF 和包路径里。
+只要应用包名不是 `com.termux`，就得靠 proot 做前缀映射（上一节）。把 applicationId 直接
+改成 `com.termux` 后：
+
+- `<filesDir>/usr` 就是真正的 `$PREFIX`，`.deb` 原样安装、维护脚本 shebang 原样可跑；
+- `apt` / `dpkg` / `pkg` 用 **Termux 官方 bootstrap**，一个包都不用重编；
+- 不再需要自编 dpkg/proot/tar 垫片。
+
+代价（必须知道）：**不能与官方 Termux 共存**（同包名不同签名），安装本 APK 前要先卸载
+Termux，且 Termux 的旧数据因签名变化无法迁移。应用数据目录也随包名变化，需要迁移。
+
+### 两层运行时（互不覆盖）
+
+| 层 | 内容 | 来源 |
+|---|---|---|
+| Termux 基础环境 | bash / apt / dpkg / coreutils / sed / tar … | `assets/bootstrap-aarch64.zip` 解到 `<files>/usr`，`SYMLINKS.txt` 重建 1213 个链接 |
+| dsh 引擎 | node + `lib/node_modules/@deepseek-ai/dsh` 适配版闭包 + ripgrep | `assets/engine-dsh-aarch64.zip`（**随 APK 打包**）|
+
+node 本身用 Termux 仓库的 `nodejs-lts`（首启 `pkg install`），因为要跟着仓库升级；
+**dsh 绝不能用 npm 安装** —— 上游包在 Android/Termux 装不起来，本项目存在的意义就是这份
+适配运行时。
+
+### 事故复盘：改包名后 dsh 起不来（已修）
+
+现象：主页空白、`engine.log` 报
+`No usable native binding found for node-addon-require-builtin-android-arm64 (auto)`。
+
+原因链：
+1. 首启时我让 `BootstrapInstaller` 用 **npm** 装了 `@deepseek-ai/dsh`，npm 把**更新的嵌套
+   依赖**（`dsh/node_modules/node-addon-require-builtin`）铺进去，覆盖了适配版里那份能用的
+   实现 → `dsh-app-boot` 找不到 android 原生 binding，直接 fatal。
+2. 恢复数据后，`dsh-home/storages/workspace.json`、`session_projcache/*.json` 里存的是
+   **旧包名的绝对路径**（`/data/user/0/app.dsh.mobile/files/...`）→ 会话恢复时去 mkdir
+   旧包目录 → `EACCES` → 主页看起来"起不来"。
+
+修法：
+- 引擎只从 APK 资产解压（先删掉可能被 npm 污染的 `lib/node_modules` 再解），彻底不走 npm；
+- 新增 `LegacyDataMigrator`：首启把 dsh-home 文本数据里的旧包名路径改写成本包名，并按
+  `workspace.json` 重建工作区目录（幂等，写 `.path-migrated-com.termux` 标记）；
+- bootstrap 解压后 `restoreExecBits`（ZipInputStream 不保留权限位，否则 `bin/pkg` 不能执行）；
+- 运行时资产打包前把所有符号链接解引用成真文件（zip 契约）。
+
+### 现在的能力
+
+```
+pkg install vim          # Termux 原生 apt（无 proot、无改写）
+apt update && apt upgrade
+dsh-update status        # 查看内置引擎版本（引擎随 APK 升级）
+linux shell alpine       # 发行版仍走 proot（与 Termux 环境独立）
+```

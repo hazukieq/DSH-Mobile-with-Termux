@@ -48,6 +48,10 @@ class RuntimeInstaller(private val ctx: Context) {
      *  → MODULE_NOT_FOUND 反复重启。故改为【版本匹配 + 关键资产存在】双重条件，
      *  任一关键资产缺失即视为安装不完整，删除重装。 */
     fun ensureInstalled(onProgress: (Float) -> Unit = {}) {
+        // 2026-10-18 架构切换：包名 = com.termux 后，运行时 = Termux 官方 bootstrap
+        // （<files>/usr）+ 内置适配版 dsh 引擎（不走 npm）。
+        BootstrapInstaller.ensure(ctx, onProgress)
+        if (true) return
         // ── 热更新中断恢复（2026-10-18）──────────────────────────────────────
         // apply/rollback 中间被系统杀进程会留下半交换的目录布局（engine 缺失、
         // engine.old 还在…）。必须先把它修成可启动状态，再做版本判断 —— 否则下面
@@ -113,9 +117,9 @@ class RuntimeInstaller(private val ctx: Context) {
     fun probeRootComplete(dir: File): Boolean {
         // 1) 引擎入口 bin.js（MODULE_NOT_FOUND 的直接案发现场）
         if (!File(dir, "lib/node_modules/@deepseek-ai/dsh/lib/bin.js").isFile) return false
-        // 2) bash 依赖闭环：readline SONAME 别名（m1.5 事故）
-        if (!File(dir, "lib/libreadline.so.8").isFile) return false
-        // 3) node 本体可执行位（安装器 restoreExecBits 之后应为 true）
+        // 2) Termux bootstrap 的 bash 必须在位（原 readline SONAME 探针随自制运行时退役）
+        if (!File(dir, "bin/bash").isFile) return false
+        // 3) node 本体可执行位
         if (!File(dir, "bin/node").canExecute()) return false
         // 4) @deepseek-ai 作用域下至少要有一批真实文件（空壳=部分解压）
         val dshAi = File(dir, "lib/node_modules/@deepseek-ai")

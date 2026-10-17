@@ -241,7 +241,7 @@ object SessionReader {
     private fun findNode(): String? {
         // 引擎自带的 node（TurnWatcher 同款探测顺序）
         val candidates = listOf(
-            File("/data/data/app.dsh.mobile/files/engine/bin/node"),
+            File("/data/data/com.termux/files/usr/bin/node"),
         )
         return candidates.firstOrNull { it.canExecute() }?.absolutePath
     }

@@ -15,7 +15,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.dsh.mobile"
+        applicationId = "com.termux"  // 2026-10-18：与 Termux 同包名，$PREFIX 才是 /data/data/com.termux/files/usr
         minSdk = 26
         // 关键决策：targetSdk 28 —— sideload 分发，豁免 Android 10+ 的 W^X 限制，
         // 允许从 filesDir 直接 execve bionic 二进制（Termux 同款策略）。

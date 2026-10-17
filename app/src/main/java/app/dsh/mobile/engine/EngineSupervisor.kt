@@ -361,13 +361,13 @@ class EngineSupervisor(private val ctx: Context) {
                 // 孤儿永占 3080 → 无限 EADDRINUSE 重启（用户实测 62 次仍在增长）。
                 runCatching {
                     ProcessBuilder("/system/bin/sh", "-c",
-                        "pkill -9 -f 'files/engine/bin/node' 2>/dev/null; true")
+                        "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
                         .start().waitFor()
                 }
                 // v1.2.108：走 runSu —— 旧实现硬编码 `su -c`，toybox 风格 su 报
                 // `invalid uid/gid '-c'` 后被 runCatching 吞掉，root 孤儿杀不掉 →
                 // 端口一直占着 → EADDRINUSE 无限重启（正是上一条注释描述的现场）。
-                Privilege.runSu("pkill -9 -f 'files/engine/bin/node' 2>/dev/null; true")
+                Privilege.runSu("pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
                 Log.w(TAG, "EADDRINUSE: killed orphan engine node(s)")
                 deterministicFailure = null   // 已处置，不计入 guardian（与配置无关）
                 backoffIndex = 0
@@ -457,11 +457,11 @@ class EngineSupervisor(private val ctx: Context) {
         Log.w(TAG, "port ${EngineConfig.DEFAULT_PORT} occupied before start — killing orphan engine node(s)")
         runCatching {
             ProcessBuilder("/system/bin/sh", "-c",
-                "pkill -9 -f 'files/engine/bin/node' 2>/dev/null; true")
+                "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
                 .start().waitFor()
         }
         // v1.2.108：走 runSu（同上，toybox 设备上旧写法静默失败）
-        Privilege.runSu("pkill -9 -f 'files/engine/bin/node' 2>/dev/null; true")
+        Privilege.runSu("pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
         // 轮询等端口释放（旧实现平睡 1.5s，每次重启白等；通常几十毫秒内就释放）
         val waitUntil = System.currentTimeMillis() + 1_500
         while (System.currentTimeMillis() < waitUntil) {

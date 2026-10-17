@@ -105,7 +105,7 @@ object LanWebProxy {
         last
     }.getOrNull()
 
-    private const val ENV_ENGINE_LOG = "/data/user/0/app.dsh.mobile/files/engine/engine.log"
+    private const val ENV_ENGINE_LOG = "/data/user/0/com.termux/files/usr/engine.log"
 
     /** 本机局域网 IPv4（供 UI 显示访问地址） */
     fun lanAddress(): String? = runCatching {

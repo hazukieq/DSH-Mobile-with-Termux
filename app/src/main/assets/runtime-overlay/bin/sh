@@ -1,9 +1,0 @@
-#!/system/bin/sh
-# [dsh-android] sh -> bash.
-#
-# Termux 的 dpkg 维护脚本 shebang 是 `#!/data/data/com.termux/files/usr/bin/sh`，
-# 而 bash 包不提供 bin/sh。这里补一个包装：用 command -v（shell 内建）找 bash，
-# 不依赖 dirname（引擎里的 coreutils 需要 LD_LIBRARY_PATH，proot 里不一定有）。
-b=$(command -v bash 2>/dev/null)
-[ -n "$b" ] || b="${0%/*}/bash"
-exec "$b" "$@"

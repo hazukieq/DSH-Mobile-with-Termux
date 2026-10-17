@@ -419,7 +419,7 @@ object Privilege {
         val home = EngineConfig.dshHome(ctx)
         return runCatching {
             // v1.2.173：改用 runPrivileged（Shizuku 优先）—— Shizuku 模式下 su 是拒绝 shim。
-            val engine = java.io.File(home.parentFile, "engine")
+            val engine = java.io.File(home.parentFile, "usr")
             val uid = android.os.Process.myUid()
             val out = runPrivileged(
                 ctx,
@@ -448,7 +448,7 @@ object Privilege {
             // app 自己的 node 进程（新 uid）**读不了插件** → 引擎日志
             // `android-fast-mode: failed to import` / EACCES → 插件功能全哑。
             // 实测症状：AI 找不到 fast_mode 工具、局域网代理进程起不来。
-            val engine = java.io.File(home.parentFile, "engine")
+            val engine = java.io.File(home.parentFile, "usr")
             Log.i(TAG, "fixHomeOwnership: chown -R $uid:$uid (home + engine, uid changed after reinstall)")
             val out = runSu(
                 "chown -R $uid:$uid " + shellQuote(home.absolutePath) + " " +
