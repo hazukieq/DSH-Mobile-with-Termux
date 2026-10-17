@@ -428,4 +428,47 @@ You can still continue without updating, but the interface will not display.</st
     <string name="splash_starting">Starting the engine…</string>
     <string name="splash_loading">Loading the interface…</string>
     <string name="splash_hint">Please wait a few seconds…</string>
+
+    <!-- Terminal + Linux environment (2026-10-18) -->
+    <string name="terminal_title">Terminal</string>
+    <string name="terminal_back">Back</string>
+    <string name="terminal_new">New session</string>
+    <string name="terminal_menu">Session menu</string>
+    <string name="terminal_close_session">Close session</string>
+    <string name="terminal_close">Close</string>
+    <string name="terminal_choose_shell">Choose shell</string>
+    <string name="terminal_linux_env">Linux environment…</string>
+    <string name="terminal_profile_unavailable">Profile %1$s is unavailable — opened the Android shell instead</string>
+    <string name="terminal_create_failed">Could not start the terminal session</string>
+    <string name="terminal_menu_new">New session…</string>
+    <string name="terminal_menu_paste">Paste</string>
+    <string name="terminal_menu_copy_all">Copy all output</string>
+    <string name="terminal_menu_font_up">Font size +</string>
+    <string name="terminal_menu_font_down">Font size −</string>
+    <string name="terminal_menu_scroll_bottom">Scroll to bottom</string>
+    <string name="terminal_menu_close">Close this session</string>
+    <string name="terminal_menu_close_all">Close all sessions</string>
+    <string name="terminal_clipboard_empty">Clipboard is empty</string>
+    <string name="terminal_copied">Copied %1$d characters</string>
+    <string name="linux_title">Linux environment</string>
+    <string name="linux_subtitle">proot userland under %1$s · download happens on demand, China mirrors first</string>
+    <string name="linux_size_mb">%1$d MB</string>
+    <string name="linux_distro_desc">%1$s · default shell %2$s · runs under proot, no root needed</string>
+    <string name="linux_install">Install</string>
+    <string name="linux_remove">Remove</string>
+    <string name="linux_remove_confirm">Remove %1$s and its rootfs? Installed packages inside it will be lost.</string>
+    <string name="linux_open_terminal">Open terminal</string>
+    <string name="linux_installed">Installed · %1$s</string>
+    <string name="linux_not_installed">Not installed</string>
+    <string name="linux_proot_missing">Not installed · proot payload is downloaded on first install</string>
+    <string name="linux_preparing">Preparing…</string>
+    <string name="linux_install_ok">%1$s installed</string>
+    <string name="linux_install_failed">Install failed: %1$s</string>
+    <string name="linux_footnote">Rootfs and proot are fetched from their official/China mirrors at install time — nothing of them ships inside the APK. Termux packages are licensed individually (proot is GPL-2.0).</string>
+    <string name="setting_terminal">Terminal</string>
+    <string name="setting_terminal_sub">A real terminal in the agent\'s own environment (same PATH, same tools)</string>
+    <string name="setting_linux">Linux environment</string>
+    <string name="setting_linux_sub">Install Alpine or Ubuntu (proot) and open its shell</string>
+    <string name="setting_linux_none">None</string>
+    <string name="setting_linux_count">%1$d installed</string>
 </resources>

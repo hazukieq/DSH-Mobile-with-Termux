@@ -437,4 +437,47 @@ Sie können auch ohne Update fortfahren, die Oberfläche wird dann aber nicht an
     <string name="splash_starting">Engine wird gestartet…</string>
     <string name="splash_loading">Oberfläche wird geladen…</string>
     <string name="splash_hint">Bitte warte ein paar Sekunden…</string>
+
+    <!-- Terminal + Linux environment (2026-10-18) -->
+    <string name="terminal_title">Terminal</string>
+    <string name="terminal_back">Zurück</string>
+    <string name="terminal_new">Neue Sitzung</string>
+    <string name="terminal_menu">Sitzungsmenü</string>
+    <string name="terminal_close_session">Sitzung schließen</string>
+    <string name="terminal_close">Schließen</string>
+    <string name="terminal_choose_shell">Shell wählen</string>
+    <string name="terminal_linux_env">Linux-Umgebung…</string>
+    <string name="terminal_profile_unavailable">Profil %1$s nicht verfügbar – Android-Shell geöffnet</string>
+    <string name="terminal_create_failed">Terminalsitzung konnte nicht gestartet werden</string>
+    <string name="terminal_menu_new">Neue Sitzung…</string>
+    <string name="terminal_menu_paste">Einfügen</string>
+    <string name="terminal_menu_copy_all">Gesamte Ausgabe kopieren</string>
+    <string name="terminal_menu_font_up">Schriftgröße +</string>
+    <string name="terminal_menu_font_down">Schriftgröße −</string>
+    <string name="terminal_menu_scroll_bottom">Nach unten scrollen</string>
+    <string name="terminal_menu_close">Diese Sitzung schließen</string>
+    <string name="terminal_menu_close_all">Alle Sitzungen schließen</string>
+    <string name="terminal_clipboard_empty">Zwischenablage ist leer</string>
+    <string name="terminal_copied">%1$d Zeichen kopiert</string>
+    <string name="linux_title">Linux-Umgebung</string>
+    <string name="linux_subtitle">proot-Userland unter %1$s · Download bei Bedarf, zuerst China-Mirrors</string>
+    <string name="linux_size_mb">%1$d MB</string>
+    <string name="linux_distro_desc">%1$s · Standard-Shell %2$s · läuft unter proot, kein Root nötig</string>
+    <string name="linux_install">Installieren</string>
+    <string name="linux_remove">Entfernen</string>
+    <string name="linux_remove_confirm">%1$s und sein Rootfs entfernen? Installierte Pakete gehen verloren.</string>
+    <string name="linux_open_terminal">Terminal öffnen</string>
+    <string name="linux_installed">Installiert · %1$s</string>
+    <string name="linux_not_installed">Nicht installiert</string>
+    <string name="linux_proot_missing">Nicht installiert · proot wird bei der ersten Installation geladen</string>
+    <string name="linux_preparing">Vorbereiten…</string>
+    <string name="linux_install_ok">%1$s installiert</string>
+    <string name="linux_install_failed">Installation fehlgeschlagen: %1$s</string>
+    <string name="linux_footnote">Rootfs und proot werden bei der Installation von offiziellen/China-Mirrors geladen – nichts davon steckt in der APK. Termux-Pakete haben eigene Lizenzen (proot: GPL-2.0).</string>
+    <string name="setting_terminal">Terminal</string>
+    <string name="setting_terminal_sub">Ein echtes Terminal in der Umgebung des Agenten (gleicher PATH, gleiche Tools)</string>
+    <string name="setting_linux">Linux-Umgebung</string>
+    <string name="setting_linux_sub">Alpine oder Ubuntu (proot) installieren und dessen Shell öffnen</string>
+    <string name="setting_linux_none">Keine</string>
+    <string name="setting_linux_count">%1$d installiert</string>
 </resources>

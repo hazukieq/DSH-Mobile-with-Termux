@@ -1,0 +1,277 @@
+#!/system/bin/sh
+# [dsh-android] linux: run commands inside a proot distro (Alpine / Ubuntu).
+#
+# 自举到引擎 bash（与 notify/scr 等门脚本同一套 preamble）：
+#   - shebang 机制不传环境变量，必须显式设 LD_LIBRARY_PATH 再 exec（引擎 bash 是 bionic）；
+#   - _DSH_REEXEC 标记防止 exec "$0" 无限递归。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+#
+# 用法:
+#   linux list                  已安装的发行版（每行一个 id）
+#   linux status [id]           安装状态 / rootfs 路径 / proot 是否可用 / 默认发行版
+#   linux run <id> <cmd...>     在指定发行版里非交互执行命令，透传退出码
+#   linux shell <id> [cmd...]   无 cmd 时起 login shell，有 cmd 等价于 run
+#   linux exec <cmd...>         在默认发行版（DSH_LINUX_DEFAULT，否则第一个已装）里执行
+#   linux path <id>             打印该发行版的 rootfs 路径
+#
+# 环境（由 EngineConfig 从 LinuxEnv.gateEnv 注入，缺省则按部署位置推断）:
+#   DSH_LINUX_HOME  <filesDir>/linux
+#   PROOT_LOADER    <home>/proot/libexec/proot/loader
+#   PROOT_TMP_DIR   <home>/tmp
+#   LD_LIBRARY_PATH <home>/proot/lib（proot 自己的 so）
+#   PROOT_NO_SECCOMP=1（Android seccomp 兼容）
+#
+# ⚠️ 本文件的 proot argv 与 LinuxEnv.shellSpec() 是**两份手工同步的实现**：
+#    Kotlin 侧给终端 PTY 用，这里给 agent 的一次性命令用。改参数（bind 列表、
+#    --link2symlink / -0 / -w）时必须两边一起改，否则会出现「终端能跑、gate 挂」
+#    的割裂现象。这里只做非交互执行，不需要 PTY。
+
+DSH_LINUX_HOME="${DSH_LINUX_HOME:-}"
+if [ -z "$DSH_LINUX_HOME" ]; then
+  # 部署位置是 <filesDir>/engine/bin/linux → <filesDir>/linux
+  _linux_self=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+  if [ -n "$_linux_self" ]; then
+    DSH_LINUX_HOME=$(cd "$_linux_self/../.." 2>/dev/null && pwd)/linux
+  fi
+fi
+PROOT_BIN="$DSH_LINUX_HOME/proot/bin/proot"
+PROOT_LOADER_PATH="$DSH_LINUX_HOME/proot/libexec/proot/loader"
+PROOT_LIB="$DSH_LINUX_HOME/proot/lib"
+PROOT_TMP="$DSH_LINUX_HOME/tmp"
+DISTROS_DIR="$DSH_LINUX_HOME/distros"
+# proot 需要 bind 的 app filesDir = linux home 的上一级
+FILES_DIR=$(cd "$DSH_LINUX_HOME/.." 2>/dev/null && pwd)
+[ -n "$FILES_DIR" ] || FILES_DIR="$DSH_LINUX_HOME"
+
+_die() {
+  echo "linux: $*" >&2
+  exit 3
+}
+
+_usage() {
+  cat >&2 <<'USAGE'
+usage: linux list
+       linux status [id]
+       linux run <id> <cmd...>
+       linux shell <id> [cmd...]
+       linux exec <cmd...>
+       linux path <id>
+USAGE
+  exit 2
+}
+
+_validate_id() {
+  case "$1" in
+    ''|*[!a-z0-9_-]*) return 1 ;;
+  esac
+  return 0
+}
+
+# 已安装 = 标记 + rootfs 目录都在（与 LinuxEnv.isInstalled 的三要素取前两项，
+# shell 检查在 run/path 里由 proot 自己报错；这里刻意只用内建/glob，避免 fork）。
+_installed_ids() {
+  local d id
+  [ -d "$DISTROS_DIR" ] || return 0
+  for d in "$DISTROS_DIR"/*; do
+    [ -d "$d" ] || continue
+    id=${d##*/}
+    if [ -f "$d/.installed" ] && [ -d "$d/rootfs" ]; then
+      printf '%s\n' "$id"
+    fi
+  done
+}
+
+_default_id() {
+  local id
+  if [ -n "${DSH_LINUX_DEFAULT:-}" ] &&
+     [ -f "$DISTROS_DIR/$DSH_LINUX_DEFAULT/.installed" ] &&
+     [ -d "$DISTROS_DIR/$DSH_LINUX_DEFAULT/rootfs" ]; then
+    printf '%s\n' "$DSH_LINUX_DEFAULT"
+    return 0
+  fi
+  for id in $(_installed_ids); do
+    printf '%s\n' "$id"
+    return 0
+  done
+  return 1
+}
+
+_require_distro() {
+  local id="$1"
+  _validate_id "$id" || _die "invalid distro id: $id"
+  if [ ! -f "$DISTROS_DIR/$id/.installed" ] || [ ! -d "$DISTROS_DIR/$id/rootfs" ]; then
+    _die "distro not installed: $id (try 'linux list' or install it in the app)"
+  fi
+}
+
+_require_proot() {
+  [ -x "$PROOT_BIN" ] || _die "proot runtime missing: $PROOT_BIN (install a distro first)"
+  [ -f "$PROOT_LOADER_PATH" ] || _die "proot loader missing: $PROOT_LOADER_PATH"
+}
+
+_proot_state() {
+  if [ -x "$PROOT_BIN" ] && [ -f "$PROOT_LOADER_PATH" ]; then
+    printf 'ok'
+  else
+    printf 'missing'
+  fi
+}
+
+# 客户机登录 shell：Ubuntu 有 bash，Alpine 只有 busybox sh
+_guest_shell() {
+  if [ -x "$1/bin/bash" ]; then
+    printf '/bin/bash'
+  else
+    printf '/bin/sh'
+  fi
+}
+
+# 与 LinuxEnv.shellSpec() 的 argv 保持一致的 proot 启动器（见文件头注意）
+_linux_proot() {
+  local rootfs="$1"; shift
+  local args=(--link2symlink --kill-on-exit -0 -r "$rootfs" \
+    -b /dev -b /proc -b /sys -b "$FILES_DIR" -w /root)
+  if [ -d /storage/emulated/0 ]; then
+    args+=(-b /storage/emulated/0:/sdcard)
+  fi
+  (
+    # 只在子 shell 里改 LD_LIBRARY_PATH：proot 之后的命令由 guest 执行，
+    # 不能让宿主侧（引擎 bash 自己的 fork）失去引擎 lib 路径。
+    export PROOT_LOADER="$PROOT_LOADER_PATH"
+    export PROOT_TMP_DIR="$PROOT_TMP"
+    export LD_LIBRARY_PATH="$PROOT_LIB"
+    export PROOT_NO_SECCOMP=1
+    exec "$PROOT_BIN" "${args[@]}" "$@"
+  )
+}
+
+# 非交互执行一条命令：env -i 清宿主 bionic 环境，cmd 作为**单个 argv** 交给 -lc
+# （不 eval、不二次拆分；引号由调用方的 shell 决定）。
+_run_command() {
+  local rootfs="$1" cmd="$2" shell
+  shell=$(_guest_shell "$rootfs")
+  _linux_proot "$rootfs" \
+    /usr/bin/env -i \
+    HOME=/root \
+    TERM=xterm-256color \
+    LANG=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    USER=root \
+    SHELL="$shell" \
+    "$shell" -lc "$cmd"
+}
+
+_run_login() {
+  local rootfs="$1" shell
+  shell=$(_guest_shell "$rootfs")
+  _linux_proot "$rootfs" \
+    /usr/bin/env -i \
+    HOME=/root \
+    TERM=xterm-256color \
+    LANG=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    USER=root \
+    SHELL="$shell" \
+    "$shell" -l
+}
+
+# ── 子命令 ────────────────────────────────────────────────────────────────
+
+_cmd_list() {
+  local id
+  for id in $(_installed_ids); do
+    printf '%s\n' "$id"
+  done
+  exit 0
+}
+
+_cmd_status() {
+  local id="${1:-}"
+  if [ -z "$id" ]; then
+    id=$(_default_id) || id=""
+  fi
+  if [ -z "$id" ]; then
+    echo "distro: (none)"
+    echo "installed: no"
+    echo "rootfs: (none)"
+    echo "proot: $(_proot_state)"
+    echo "default: (none)"
+    exit 0
+  fi
+  _validate_id "$id" || _die "invalid distro id: $id"
+  echo "distro: $id"
+  if [ -f "$DISTROS_DIR/$id/.installed" ] && [ -d "$DISTROS_DIR/$id/rootfs" ]; then
+    echo "installed: yes"
+  else
+    echo "installed: no"
+  fi
+  echo "rootfs: $DISTROS_DIR/$id/rootfs"
+  echo "proot: $(_proot_state)"
+  local def
+  def=$(_default_id) || def=""
+  echo "default: ${def:-(none)}"
+  exit 0
+}
+
+_cmd_path() {
+  local id="${1:-}"
+  [ -n "$id" ] || _usage
+  _require_distro "$id"
+  printf '%s\n' "$DISTROS_DIR/$id/rootfs"
+  exit 0
+}
+
+_cmd_run() {
+  local id="${1:-}"
+  [ -n "$id" ] || _usage
+  shift
+  [ $# -gt 0 ] || _die "missing command; usage: linux run <id> <cmd...>"
+  _require_distro "$id"
+  _require_proot
+  local cmd="$*"
+  _run_command "$DISTROS_DIR/$id/rootfs" "$cmd"
+}
+
+_cmd_shell() {
+  local id="${1:-}"
+  [ -n "$id" ] || _usage
+  shift
+  _require_distro "$id"
+  _require_proot
+  local rootfs="$DISTROS_DIR/$id/rootfs"
+  if [ $# -gt 0 ]; then
+    _run_command "$rootfs" "$*"
+  else
+    _run_login "$rootfs"
+  fi
+}
+
+_cmd_exec() {
+  [ $# -gt 0 ] || _die "missing command; usage: linux exec <cmd...>"
+  local id
+  id=$(_default_id) || _die "no distro installed yet (install Alpine or Ubuntu in the app)"
+  _require_proot
+  _run_command "$DISTROS_DIR/$id/rootfs" "$*"
+}
+
+main() {
+  local sub="${1:-}"
+  if [ $# -gt 0 ]; then shift; fi
+  case "$sub" in
+    list)    _cmd_list ;;
+    status)  _cmd_status "$@" ;;
+    run)     _cmd_run "$@" ;;
+    shell)   _cmd_shell "$@" ;;
+    exec)    _cmd_exec "$@" ;;
+    path)    _cmd_path "$@" ;;
+    help|-h|--help) _usage ;;
+    '')      _usage ;;
+    *)       _die "unknown subcommand: $sub (try 'linux help')" ;;
+  esac
+}
+
+main "$@"

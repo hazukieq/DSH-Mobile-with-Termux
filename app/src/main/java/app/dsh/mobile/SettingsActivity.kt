@@ -231,6 +231,16 @@ class SettingsActivity : Activity() {
             startActivity(Intent(this, PluginStoreActivity::class.java))
         }
 
+        // —— 终端（2026-10-18）：原生 PTY 终端页 ——
+        findViewById<LinearLayout>(R.id.rowTerminal).setOnClickListener {
+            startActivity(app.dsh.mobile.term.TerminalActivity.intent(this))
+        }
+
+        // —— Linux 环境（2026-10-18）：proot 发行版管理 ——
+        findViewById<LinearLayout>(R.id.rowLinux).setOnClickListener {
+            startActivity(Intent(this, app.dsh.mobile.linux.LinuxEnvActivity::class.java))
+        }
+
         // 语音服务（v1.2.78）：识别 + 合成合并入口，归入扩展中心分组
         findViewById<LinearLayout>(R.id.rowVoiceService).setOnClickListener {
             startActivity(Intent(this, app.dsh.mobile.VoiceServiceActivity::class.java))
@@ -337,6 +347,7 @@ class SettingsActivity : Activity() {
         refreshNotifRow()
         refreshMicRow()
         refreshExt()
+        refreshLinux()
         // 缩放副标题文案无需变；图标着色按打开时状态由静态 XML 决定
     }
 
@@ -346,6 +357,15 @@ class SettingsActivity : Activity() {
         val v = findViewById<TextView>(R.id.valExt)
         v.text = getString(R.string.setting_ext_active_count, count)
         v.setTextColor(if (count > 0) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
+    }
+
+    /** Linux 环境入口：显示已安装发行版数量（0 时提示"未安装"） */
+    private fun refreshLinux() {
+        val v = findViewById<TextView>(R.id.valLinux)
+        val n = runCatching { app.dsh.mobile.linux.LinuxEnv.installedIds(this).size }.getOrDefault(0)
+        v.text = if (n == 0) getString(R.string.setting_linux_none)
+        else getString(R.string.setting_linux_count, n)
+        v.setTextColor(if (n > 0) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
     }
 
     /** 权限中心：所有文件访问状态（MANAGE_EXTERNAL_STORAGE，Android 11+ 系统设置页授予；

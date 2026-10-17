@@ -96,6 +96,30 @@
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
+        <!-- 终端（2026-10-18）：原生 VT100/xterm 终端 + PTY 会话。
+             注册为**第二个 LAUNCHER 入口**：它本身就是一个完整的终端 App
+             （桌面上有独立图标），从设置页也能进；Linux 环境页与 dsh 的 linux
+             门脚本都会拉起它。singleTask + onNewIntent 支持"从别处再开一个
+             发行版会话"时复用同一页面而不是堆 Activity。 -->
+        <activity
+            android:name=".term.TerminalActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
+            android:label="@string/terminal_title">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Linux 环境管理页（2026-10-18）：proot 发行版安装/删除/进入 -->
+        <activity
+            android:name=".linux.LinuxEnvActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
         <!-- ASR 模型管理页（v1.2.64）：离线语音识别模型下载/加载。
              此前漏注册 —— 设置页点击必崩 ActivityNotFoundException（模拟器实测确认）。 -->
         <activity

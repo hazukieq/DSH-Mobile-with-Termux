@@ -639,6 +639,16 @@ object EngineConfig {
         // v1.2.0 扩展环境：已激活扩展的 bin/lib 并入 PATH/LD_LIBRARY_PATH
         // （顺序：engine 自带 → 扩展 → 系统，保证 su/notify/scr 闸门优先级不被扩展覆盖）
         val extRoots = ExtensionManager.activeRoots(ctx)
+        // ── Linux 环境（2026-10-18）────────────────────────────────────────────
+        // 终端 + proot 发行版上线后，AI 侧也要能用：`linux run <id> <cmd>` 门脚本
+        // 直接 exec `<home>/proot/bin/proot`。这里注入路径与 PROOT_* 三件套，
+        // 让门脚本不必自己去猜目录布局。
+        // 注意：**只注入路径，不检查安装状态** —— rootfs 没装时门脚本会明确报错
+        // （「distro not installed」），比建 env 时静默跳过更好排查。
+        val linuxHome = app.dsh.mobile.linux.LinuxEnv.home(ctx)
+        val linuxProotBin = java.io.File(linuxHome, "proot/bin")
+        val linuxProotLib = java.io.File(linuxHome, "proot/lib")
+        val linuxProotReady = java.io.File(linuxProotBin, "proot").isFile
         // JVM 扩展（openjdk 等）：Termux 的 java 入口靠 postinst 建链接（解包器不执行），
         // 本体在 lib/jvm/<ver>/bin —— 整段并入 PATH，java/javac/jar 全工具一次到位
         val jvmBins = extRoots.flatMap { ext ->
@@ -650,6 +660,7 @@ object EngineConfig {
             "PATH=" + (
                 listOf(File(root, "bin"), File(root, "usr/bin")) +
                     extRoots.map { File(it, "bin") } + jvmBins +
+                    listOfNotNull(linuxProotBin.takeIf { linuxProotReady }) +
                     listOf("/system/bin", "/system/xbin")
                 ).joinToString(":"),
             "DSH_SHZ_PORT=${ShizukuHttpBridge.port(port)}",
@@ -658,7 +669,8 @@ object EngineConfig {
             "DSH_BRIDGE_TOKEN=${AgentBridge.currentToken().orEmpty()}",
             "LD_LIBRARY_PATH=" + (
                 listOf(File(root, "lib"), File(root, "usr/lib")) +
-                    extRoots.map { File(it, "lib") }
+                    extRoots.map { File(it, "lib") } +
+                    listOfNotNull(linuxProotLib.takeIf { linuxProotReady })
                 ).joinToString(":"),
             "PREFIX=$root",
             "HOME=${dshHome(ctx)}",
@@ -683,6 +695,19 @@ object EngineConfig {
             // （"no sandbox backend usable on host"），故固定 danger-full-access；
             // 真实安全边界是 App 的权限模式（Normal/Shizuku/Root）与 su 闸门。
             "DSH_PERMISSION_MODE=danger-full-access",
+            // ── Linux 环境（2026-10-18）────────────────────────────────────────
+            // 门脚本 `linux` 靠这四个变量定位 proot 与 rootfs 根目录。
+            // PROOT_LOADER 显式覆盖：Termux 的 proot 编译期把 loader 路径写死成
+            // /data/data/com.termux/files/usr/libexec/proot/loader，本机不存在；
+            // proot 5.1.107 支持 PROOT_LOADER 覆盖（src/execve/enter.c:571）。
+            "DSH_LINUX_HOME=" + linuxHome.absolutePath,
+            "PROOT_LOADER=" + java.io.File(linuxHome, "proot/libexec/proot/loader").absolutePath,
+            "PROOT_TMP_DIR=" + java.io.File(linuxHome, "tmp").absolutePath,
+            "PROOT_NO_SECCOMP=1",
+            // 默认发行版：终端「linux exec」不带 id 时用它（第一个已安装的）
+            "DSH_LINUX_DEFAULT=" + runCatching {
+                app.dsh.mobile.linux.LinuxEnv.installedIds(ctx).firstOrNull().orEmpty()
+            }.getOrDefault(""),
         )
         // Perl/Ruby：编译期 @INC/$LOAD_PATH 硬编码 Termux 前缀（重写 shebang 碰不到），
         // 注入扩展内的库路径（Agent 实测注入后 json/openssl 等模块恢复正常）
@@ -879,7 +904,7 @@ object EngineConfig {
             // 漏掉了这两个，但种子仍在教 agent 使用 → agent 照着调用得到 command not found
             // （Agent 审计 N8 实测）。它们解决的是真问题：agent 常以 `bash -c '... pkill -f X'`
             // 形式执行，完整命令行含 pattern 会命中自己并自杀，必须按 comm 匹配。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast").forEach { name ->
+            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux").forEach { name ->
                 val dst = File(bindir, name)
                 runCatching {
                     val text = ctx.assets.open("gates/$name").use { it.readBytes().toString(Charsets.UTF_8) }
@@ -918,12 +943,12 @@ object EngineConfig {
                 dst.setReadable(true, true)
     }.onFailure { Log.w(TAG, "lan-web-proxy deploy failed: ${it.message}") }
 
-            listOf("notify", "scr", "say", "psx", "killx", "loop", "fast").forEach { File(bindir, it).setExecutable(true, false) }
+            listOf("notify", "scr", "say", "psx", "killx", "loop", "fast", "linux").forEach { File(bindir, it).setExecutable(true, false) }
             File(bindir, "_dsh_http.sh").setReadable(true, false)
 
             // 部署后自检（v1.2.52）：逐个校验首行不含 \r 且指向存在的解释器。
             // 失败不静默——写进 engine.log 并给出明确原因，避免「看起来像文件丢了」的误判。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast").forEach { name ->
+            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux").forEach { name ->
                 val f = File(bindir, name)
                 val head = runCatching {
                     f.inputStream().use { ins ->

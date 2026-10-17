@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 终端页（2026-10-18 新增）
+     结构：顶栏（返回/标题/新会话/菜单）→ 会话标签条（>1 个会话才显示）
+          → 终端视图（自绘 Canvas）→ 额外按键条（Esc/Ctrl/Tab/方向键…）
+     背景刻意用比 Theme.Dsh 更深的 #0B0F13：终端主体是黑底文字，
+     顶栏/按键条留一点层次差即可，避免亮边干扰阅读。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FF0B0F13">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#FF141A21"
+        android:elevation="2dp">
+
+        <ImageView
+            android:id="@+id/btnTermBack"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:padding="11dp"
+            android:src="@drawable/ic_back"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/terminal_back" />
+
+        <TextView
+            android:id="@+id/tvTermTitle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:paddingStart="2dp"
+            android:paddingEnd="6dp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="@string/terminal_title"
+            android:textColor="#FFE8ECF2"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnTermNew"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:gravity="center"
+            android:text="+"
+            android:textColor="#FF7DD3FC"
+            android:textSize="24sp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/terminal_new" />
+
+        <TextView
+            android:id="@+id/btnTermMenu"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:gravity="center"
+            android:text="&#8942;"
+            android:textColor="#FFE8ECF2"
+            android:textSize="20sp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/terminal_menu" />
+    </LinearLayout>
+
+    <HorizontalScrollView
+        android:id="@+id/termTabScroll"
+        android:layout_width="match_parent"
+        android:layout_height="38dp"
+        android:background="#FF10161C"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/termTabStrip"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp" />
+    </HorizontalScrollView>
+
+    <app.dsh.mobile.term.TerminalView
+        android:id="@+id/termView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:focusable="true"
+        android:focusableInTouchMode="true" />
+
+    <app.dsh.mobile.term.TerminalExtraKeysView
+        android:id="@+id/termExtraKeys"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+</LinearLayout>

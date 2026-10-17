@@ -428,4 +428,47 @@
     <string name="splash_starting">正在启动引擎…</string>
     <string name="splash_loading">正在加载界面…</string>
     <string name="splash_hint">请稍等几秒…</string>
+
+    <!-- Terminal + Linux environment (2026-10-18) -->
+    <string name="terminal_title">终端</string>
+    <string name="terminal_back">返回</string>
+    <string name="terminal_new">新建会话</string>
+    <string name="terminal_menu">会话菜单</string>
+    <string name="terminal_close_session">关闭会话</string>
+    <string name="terminal_close">关闭</string>
+    <string name="terminal_choose_shell">选择 Shell</string>
+    <string name="terminal_linux_env">Linux 环境…</string>
+    <string name="terminal_profile_unavailable">配置 %1$s 不可用，已改用 Android Shell</string>
+    <string name="terminal_create_failed">无法启动终端会话</string>
+    <string name="terminal_menu_new">新建会话…</string>
+    <string name="terminal_menu_paste">粘贴</string>
+    <string name="terminal_menu_copy_all">复制全部输出</string>
+    <string name="terminal_menu_font_up">字号 +</string>
+    <string name="terminal_menu_font_down">字号 −</string>
+    <string name="terminal_menu_scroll_bottom">滚到底部</string>
+    <string name="terminal_menu_close">关闭当前会话</string>
+    <string name="terminal_menu_close_all">关闭全部会话</string>
+    <string name="terminal_clipboard_empty">剪贴板为空</string>
+    <string name="terminal_copied">已复制 %1$d 个字符</string>
+    <string name="linux_title">Linux 环境</string>
+    <string name="linux_subtitle">proot 用户空间位于 %1$s · 按需下载，优先国内镜像</string>
+    <string name="linux_size_mb">%1$d MB</string>
+    <string name="linux_distro_desc">%1$s · 默认 shell %2$s · 跑在 proot 里，无需 root</string>
+    <string name="linux_install">安装</string>
+    <string name="linux_remove">删除</string>
+    <string name="linux_remove_confirm">删除 %1$s 及其 rootfs？里面安装的软件会一起丢失。</string>
+    <string name="linux_open_terminal">打开终端</string>
+    <string name="linux_installed">已安装 · %1$s</string>
+    <string name="linux_not_installed">未安装</string>
+    <string name="linux_proot_missing">未安装 · 首次安装时会下载 proot 运行时</string>
+    <string name="linux_preparing">准备中…</string>
+    <string name="linux_install_ok">%1$s 已安装</string>
+    <string name="linux_install_failed">安装失败：%1$s</string>
+    <string name="linux_footnote">rootfs 与 proot 在安装时从官方/国内镜像下载，APK 内不含这些第三方二进制。各 Termux 包按其自身许可证分发（proot 为 GPL-2.0）。</string>
+    <string name="setting_terminal">终端</string>
+    <string name="setting_terminal_sub">在 AI 同一环境里开一个真终端（同一套 PATH 与工具）</string>
+    <string name="setting_linux">Linux 环境</string>
+    <string name="setting_linux_sub">安装 Alpine 或 Ubuntu（proot）并进入其 shell</string>
+    <string name="setting_linux_none">未安装</string>
+    <string name="setting_linux_count">%1$d 个已安装</string>
 </resources>

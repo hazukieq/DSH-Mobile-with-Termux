@@ -23,7 +23,7 @@ DSH Mobile 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harnes
 
 **这是**：官方 dsh 引擎（锁定 `0.2.0-rc.2`）+ 自建 Android 运行环境。插件体系、WebUI、工具调用链全部来自上游，本项目负责运行层：bionic 版 Node.js 运行时、前台服务保活、三级权限、扩展中心。**桌面上 dsh 能做的事，这里都能做。**
 
-**这不是**：不是自研 Agent 框架，不是端侧大模型 App（模型走你配置的 API），不是手机自动化 Agent（读屏点击是交给 AI 的工具之一），**也不是 proot / Ubuntu 容器方案**——不套 Linux 容器、不装发行版 rootfs，Node.js 运行时与整套工具链都以 Android 原生（bionic）二进制直接打进 APK，装完即用。
+**这不是**：不是自研 Agent 框架，不是端侧大模型 App（模型走你配置的 API），不是手机自动化 Agent（读屏点击是交给 AI 的工具之一），**默认不套 Linux 容器**——Node.js 运行时与整套工具链都以 Android 原生（bionic）二进制直接打进 APK，装完即用；**但另有可选的 Linux 用户空间**（Alpine / Ubuntu Base，经 proot 伪 root 运行）与**内置原生终端**，按需下载、互不干扰，用于 glibc / apt 这类 bionic 覆盖不到的场景。
 
 ## ⚡ 性能实测
 
@@ -38,6 +38,15 @@ DSH Mobile 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harnes
 对比：Termux 快照类方案首次启动通常需**数分钟**（解压 + 手动初始化）；本项目的运行时预置在 APK 内，装完即用。proot 系方案（Ubuntu 容器）APK 看着小，但首次使用要另下 500MB～2GB 的 rootfs。
 
 ## ✨ 核心能力
+
+### 🖥 内置终端 + 可选 Linux 环境（2026-10-18）
+
+App 自带一个**完整终端**（原生 VT100/xterm 模拟 + 真实 PTY，不是 WebView 套壳）：独立桌面图标、多会话、5000 行回滚、CJK 宽字符、256 色 / 真彩、底部额外按键条（Esc / Ctrl / Tab / 方向键 / PgUp…）、字号可调、整段复制。终端默认落在**与 AI 完全相同的环境**（同一 PATH、同一套扩展工具链）——「AI 能跑的，你也能亲手跑」。
+
+在此之上可选装 **Linux 用户空间**：Alpine 或 Ubuntu Base 的 rootfs 经 `proot` 以伪 root 运行，`apk` / `apt` 可用、glibc 二进制可跑、`sshd` / 构建链不再被 bionic 前缀卡住。rootfs 与 proot 均**按需从官方/国内镜像下载**（不随 APK 分发，避免把第三方 GPL 二进制重新分发出去），装完在终端里一键进入。
+
+dsh 侧同样打通：`linux run <发行版> <命令>` 门脚本让 AI 把命令直接送进发行版执行，拿回真实退出码与输出；`linux list / status / exec / shell` 覆盖管理、默认发行版与交互场景。分工明确——日常用 bionic 原生工具链（零下载），遇到 glibc / apt 依赖才进 Linux。
+
 
 ### 🔌 扩展中心：把手机变成可扩展工作站
 

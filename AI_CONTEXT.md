@@ -1,6 +1,17 @@
 # AI_CONTEXT
 
 ## Current progress
+- **终端 + Linux 环境（2026-10-18，本轮新增，已模拟器实测）**：给 App 加了两件原本没有的东西。
+  - **原生终端**（`app/src/main/java/app/dsh/mobile/term/`）：`dsh_pty.c` 从「单引擎子进程」重构为 8 槽会话表（槽 0 保留给引擎 legacy API，JNI 符号与行为不变），上层 VT100/xterm 模拟器（主/备屏、5000 行回滚、CJK 宽字符、16/256/真彩、DECSTBM、OSC 标题）+ Canvas 自绘 `TerminalView`（IME、硬件键、触摸回滚、View 自管 PTY 尺寸）+ 多会话标签 + 额外按键条（Esc/Ctrl/Tab/方向键/KBD 收键盘）。注册了**第二个 LAUNCHER 入口**（桌面 `DSH Terminal`）。
+  - **可选 Linux 用户空间**（`app/src/main/java/app/dsh/mobile/linux/`）：Alpine 3.20.3 / Ubuntu Base 24.04.3 rootfs 按需从阿里云镜像下载，proot 5.1.107.96 + libtalloc + libandroid-shmem 三个 Termux .deb 走 packages.termux.dev；`PROOT_LOADER` 显式覆盖（Termux 的 loader 路径是编译期写死的）。安装 = 下载→SHA256→原子 rename；后配置写 resolv.conf/hosts/镜像源/profile.d。**rootfs 与 proot 都不进 APK**（GPL 再分发问题）。
+  - **与 dsh 打通**：`EngineConfig.buildEnv` 注入 `DSH_LINUX_HOME/PROOT_LOADER/PROOT_TMP_DIR/PROOT_NO_SECCOMP/DSH_LINUX_DEFAULT` 并把 proot bin/lib 并入 PATH/LD_LIBRARY_PATH；`assets/gates/linux` 部署到 engine/bin（`list/status/run/shell/exec/path`），seed 新增「Linux environment」一节教 AI 何时用、安装属用户动作。
+  - **实测（Android 14 x86_64 AVD）**：终端跑引擎 bash（`node -v`=v24.18.0）；颜色/CJK/备用屏/多会话/IME/KBD 均通过；Alpine 与 Ubuntu 均 <10s 装完；`linux exec uname -a` 返回 guest 内核信息；Ubuntu 会话 `apt 2.8.3 (amd64)` 正常。
+  - **实测（真机 Redmi K40 / Android 16 / LineageOS，arm64）**：完整包（含 arm64 runtime.zip）安装后引擎 healthy；终端引擎 bash 提示符正常；`which linux` 命中 `engine/bin/linux`；`linux list` → `alpine`；`linux exec uname -a` → `Linux localhost 4.19.325-cip131-… aarch64 Linux`；Alpine 内 `apk update` 走 aliyun 镜像返回 24059 个包。**arm64 真机无 x86_64 的 fork 限制**，与推断一致。
+  - **真机顺带修掉**：Termux 版 bash 把系统 bashrc 路径编译期写死成 `/data/data/com.termux/...`，装了 Termux 的设备上每个交互 shell 多打一行 `Permission denied`；改用 `bash --norc -i`（PS1 已由环境注入，不依赖 rc）。
+  - **⚠️ x86_64 模拟器限制（已定位，已在 UI 提示并让 Ubuntu 排前）**：x86_64 上 musl 用 `fork(2)` 实现 fork，Android app seccomp 以 SIGSYS 拦截（proot 日志 `seccomp SIGSYS: fork(...) = 0x39`）→ Alpine 里任何外部命令 `can't fork`。arm64 无 fork 系统调用（走 clone）不受影响；Ubuntu(glibc) 走 clone 正常。
+  - **修到的两个真 bug**：① 交互式会话把 guestEnv/hostEnv 直接拼给 proot，`PATH` 重复键导致 guest 拿到宿主 PATH（`ls: command not found`）→ 改 guest 侧 `env -i` 重建；② `adb input text`/硬件键盘走 KeyEvent 而非 IME commitText，字符被丢弃 → 补 `unicodeChar` + `onKeyMultiple`。
+  - 构建：`assembleDebug -Pabi=x86_64` 与 `-Pabi=arm64-v8a` 均通过；`check-i18n.py` 全绿（新增 41 个 key ×3 语言）。
+
 - **开源仓库 Issues/PR 处理（2026-10-14，已完成）**：
   - **PR #11 已合并**（`1f317ea`，squash；贡献者 @jahdaganj02ki-sketch）：界面三语（en/de/zh，默认英语，移除「跟随系统」）+ 新增 values-de（402 键）+ 删除过时的 values-en（169 键旧部分翻译）+ 屏幕方向三态 OrientationPrefs（竖屏/横屏/自动，旧布尔键自动迁移）+ 冷启动桌面布局修复 + CI 全量触发/build-monitor/Gradle 管道退出码修复 + check-i18n 重复键检查。**合并前维护者修复了阻塞项**（`fa8d85e`）：自动发布 job 原条件在上游同样成立（会每次 push main 自动发 debug 签名包、破坏人工发布流程）→ 加 `github.repository == 'jahdaganj02ki-sketch/...'` 门禁，**实测上游运行该 job 显示 skipped ✓、Releases 无新增污染 ✓**。
   - **Issue #10**（版本检测）已回复：功能自 v1.2.77 已存在（设置 → 关于 → 检查更新，查 Releases tag 对比 App versionName，手动触发）。
