@@ -299,9 +299,16 @@ class TerminalActivity : Activity() {
     }
 
     private fun onBack() {
-        // 若正在回看历史，第一次返回先回到底部（与桌面终端一致的直觉）
+        // 若正在回看历史，第一次返回先回到底部（与桌面终端一致的直觉）。
+        //
+        // ⚠️ 2026-10-18 修 bug：这里原先写的是
+        //     viewportTopRow < scrollbackRows - 1
+        // 但视口顶行最大只到 `scrollbackRows - 屏幕行数`（maxTop），所以只要屏幕
+        // 行数 > 1，这个条件**恒为真** —— 每次返回都只是 scrollToBottom()（贴底时
+        // 还是空操作），finish() 永远走不到，表现就是「返回键点了没反应」。
+        // 判据应改成 emulator 自己给的 scrolledBack（viewTop < maxTop）。
         val e = active?.emulator
-        if (e != null && e.viewportTopRow < e.scrollbackRows - 1) {
+        if (e != null && e.snapshot().scrolledBack) {
             termView.scrollToBottom()
             return
         }

@@ -65,7 +65,18 @@ soft keyboard / extra-keys row / paste
 | Font size ± | menu ⋮ → Font size ± (8–26 sp, persisted) |
 | Copy whole output | menu ⋮ → Copy all output (scrollback + screen, trailing blank lines collapsed) |
 | Paste | menu ⋮ → Paste (system clipboard, bypasses the IME) |
-| Scroll to bottom | menu ⋮ → Scroll to bottom; Back first scrolls to the bottom when you are in history |
+| Scroll back | drag **down** = older output, drag **up** = newer output (same as every other Android scroller); a `↓ rows` badge appears while scrolled back |
+| Scroll to bottom | menu ⋮ → Scroll to bottom; **back / top-left ←** first returns to the bottom when scrolled back, then exits |
+
+#### Terminal interaction fixes (2026-10-18)
+
+Two interaction bugs were fixed. The back key used `viewportTopRow < scrollbackRows - 1`,
+which is always true (the viewport top can only reach `scrollbackRows - screenRows`), so it
+always ran `scrollToBottom()` and never `finish()` — the back key appeared dead. It now uses
+the emulator's `scrolledBack` (`viewTop < maxTop`). Touch scrolling was also inverted relative
+to Android convention (swipe up showed history, swipe down jumped to the newest); it now
+follows the standard direction. With the soft keyboard open the system still uses the first
+back press to dismiss it (same as other terminal apps) — the second one is handled by the app.
 | New session | top-bar ＋; pick Android or an installed distro |
 
 ### Environment: identical to the agent's

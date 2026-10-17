@@ -444,8 +444,13 @@ class TerminalView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                // 手指下滑 = 内容下移 = 看更早的输出（与文档滚动同向）
-                val dy = event.y - lastY
+                // 手指**下滑** = 内容下移 = 看更早的输出；手指**上滑** = 看更新的输出。
+                //
+                // ⚠️ 2026-10-18 方向修正：emulator.scrollBy(+n) 是把 viewportTopRow
+                // 往**新**的方向挪（越界由它 coerce），所以「手指下滑要显示更早的
+                // 输出」必须传负值。旧实现直接累加 dy，结果方向正好相反（上滑看历史、
+                // 下滑回最新），与 Android 里所有滚动容器（以及用户习惯）都是反的。
+                val dy = lastY - event.y
                 lastY = event.y
                 if (!dragging && abs(event.y - downY) > touchSlop) dragging = true
                 if (dragging) {
@@ -483,7 +488,7 @@ class TerminalView @JvmOverloads constructor(
     // 公开操作（设计文档 §4.A + Lead 追加）
     // ------------------------------------------------------------------
 
-    /** 滚动 deltaRows 行（正数 = 往历史方向） */
+    /** 滚动 deltaRows 行（正数 = 往更新的方向；越界由 emulator 收敛到 0..maxTop） */
     fun scrollBy(deltaRows: Int) {
         val emulator = session?.emulator ?: return
         emulator.scrollBy(deltaRows)
