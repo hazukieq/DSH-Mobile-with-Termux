@@ -429,7 +429,13 @@ object EngineConfig {
                 }
                 if (head != "#!") return@forEach
                 val first = f.bufferedReader().use { it.readLine() } ?: return@forEach
-                if (!first.contains("com.termux")) return@forEach
+                if (!first.startsWith("#!")) return@forEach
+                // 2026-10-18 包名切换为 com.termux 后，Termux 前缀**真实存在**：
+                // 这些 shebang 是合法的（pkg/apt/codex 等脚本还要靠 bash 的 `=~`）。
+                // 只有当解释器路径确实不存在时（旧的 app.dsh.mobile 前缀等）才降级到
+                // /system/bin/sh —— 否则会把 bash 脚本改成 toybox sh，语法直接报错。
+                val interp = first.removePrefix("#!").trim().substringBefore(' ')
+                if (interp.startsWith("/") && File(interp).exists()) return@forEach
                 runCatching {
                     val rest = f.readLines().drop(1)
                     f.writeText("#!/system/bin/sh\n" + rest.joinToString("\n") + "\n")
