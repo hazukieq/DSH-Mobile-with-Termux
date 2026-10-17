@@ -13,6 +13,7 @@
 # - ⚠️ PKGS 清单基于 Termux 主仓库当前已知包名编写，仓库调整时按报错修正。
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT_ZIP="${1:?用法: $0 <输出zip路径> [架构]}"
 ARCH="${2:-aarch64}"
 case "$ARCH" in aarch64|x86_64) ;; *) echo "不支持的架构: $ARCH" >&2; exit 1;; esac
@@ -120,8 +121,8 @@ NM="$ROOT/lib/node_modules"
 # "path open failed: native path opener is unsupported on android"。
 # 补丁脚本单一真源（与本地 build_runtime.py 同源），幂等可重跑。
 if command -v python3 >/dev/null 2>&1; then
-  SCRIPTS_DIR="${GITHUB_WORKSPACE:-}/scripts"
-  [ -d "$SCRIPTS_DIR" ] || SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)/scripts"
+  SCRIPTS_DIR="${GITHUB_WORKSPACE:+$GITHUB_WORKSPACE/scripts}"
+  [ -n "${SCRIPTS_DIR:-}" ] && [ -d "$SCRIPTS_DIR" ] || SCRIPTS_DIR="$SCRIPT_DIR"
   # ⚠️ 必须传 runtime 根目录：两个 patch 脚本内部会自行拼
   # "lib/node_modules/@deepseek-ai/<pkg>/..."，若传 $NM（已是 lib/node_modules）
   # 会拼成 lib/node_modules/lib/node_modules/... 而静默 WARN 跳过。
