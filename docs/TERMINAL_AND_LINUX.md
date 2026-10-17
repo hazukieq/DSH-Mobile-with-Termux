@@ -522,3 +522,78 @@ stat/task/fd/syscall，全都存在；`/bin/ps` 只在 darwin 分支和 `foregro
 - `node -e` 直接调 shim：`spawn(bash)` → 输出 `PTY_OK_2`、resize 生效、`kill('SIGKILL')` →
   `exit` 事件 `{exitCode:0, signal:'SIGKILL'}`；
 - App 内终端（TerminalActivity）回归正常，两边共用 PTY 表互不影响。
+
+## 十、原生运行时 ≠ Termux：pkg / apt 为什么用不了（2026-10-18 新增）
+
+### 一句话
+
+App 的原生 shell 用的是**从 Termux 仓库收集的最小闭包**（node、bash、ripgrep、curl
+wrapper、pnpm 等），**不是 Termux 的完整 rootfs**。所以 `apt`、`dpkg` 不存在，
+原来的 `pkg` 也只是 Termux 的一个脚本壳子，必然失败。
+
+### 具体原因（三条，缺一不可）
+
+1. **运行时里没有包管理器**。`collect-termux-runtime.sh` 只挑运行 dsh 所需的命令闭包，
+   从不包含 `apt`/`dpkg`/`apt-utils`（它们会连带 ~100MB 依赖）。
+2. **`pkg` 是 Termux 的脚本，路径写死**。它一上来就
+   `source /data/data/com.termux/files/usr/bin/termux-setup-package-manager`，
+   我们的前缀是 `/data/data/app.dsh.mobile/files/engine` → 立刻失败。
+3. **即使把 apt/dpkg 塞进来也没用**。Termux 的 apt/dpkg 编译期前缀写死
+   `/data/data/com.termux/files/usr`；dpkg 的 status 数据库、`sources.list`、签名公钥
+   都在那个前缀下，Termux 仓库里 `.deb` 的内部路径同样是 `data/data/com.termux/...`。
+   装进我们的目录会全部错位 —— 这正是我们重编 bash 时把前缀改成 app 包名的同一个坑。
+
+### 现在能用的两条"装包"路
+
+**① 原生扩展（等价 `pkg install`）**
+
+`engine/bin/pkg` 已换成 App 自己的门脚本（不再是 Termux 的残废壳）：
+
+```
+pkg list                 # 21 个扩展：python / openjdk-17 / golang / rust / ruby / php /
+                         #   lua / perl / clang / git / archivers / android-buildtools /
+                         #   cmake / sqlite / ffmpeg / imagemagick / openssh / android-tools /
+                         #   vim / llama-cpp / asr-service
+pkg search <关键词>
+pkg install <id|name>    # 走 App 扩展中心：下载 Termux .deb → 改写前缀 → 展开到
+                         #   <engine>/extensions/<id>/ → 并入 PATH/LD_LIBRARY_PATH
+pkg state <id> / pkg where <id>
+```
+
+实测：`pkg install archivers` **8.7 秒**完成（下载+解包+激活），`pkg list/search/state`
+正常。安装后需要重启引擎（或新开 shell）才能在新 shell 的 PATH 里看到。
+
+**② 真正的发行版包管理器（apk / apt）**
+
+需要依赖解析、系统级工具、apt/apk 生态时，用 proot Linux 环境：
+
+```
+linux shell alpine        # 进去后：apk update && apk add python3
+linux run alpine apk --version
+linux shell ubuntu        # 进去后：apt update && apt install ...
+```
+
+实测：Alpine 内 `apk-tools 2.14.4 (aarch64)` 正常运行。
+
+### 顺带修掉的一个真回归：重编的 bash `test -x` 全假
+
+排查 `linux` 门脚本报 `proot: missing` 时发现：我们重编的 bash 5.3.20 里
+`[ -x 任意文件 ]` **恒为假**（连 `/system/bin/sh` 都假），但 `[ -e ]` 正常。
+
+- 根因：bionic 的 `faccessat()` 不支持 `AT_EACCESS`（传了返回 EINVAL），而 bash 的
+  `sh_eaccess()` 在 configure 探测到 `HAVE_FACCESSAT && AT_EACCESS` 时**只走**
+  `faccessat(AT_EACCESS)` → 全部返回失败。
+- 影响：所有用 `[ -x ]` 的脚本（门脚本、用户的构建脚本）静默走错分支；`linux` 门脚本
+  因此误报 proot 缺失。
+- 修法：构建时 `ac_cv_func_faccessat=no`（让 bash 回落到 `access(2)` 分支），
+  已写进 `scripts/build-runtime-app-prefix.sh` 并加了注释。重编后的运行时
+  `v1.3.2-app-prefix-arm64` 上 `[ -x ]`、`[ -x /system/bin/sh ]` 均正常，
+  `linux status` 恢复 `proot: ok`。
+
+### 结论对照表
+
+| 需求 | 用什么 |
+|---|---|
+| 装 python/git/ffmpeg 等 | `pkg install python`（App 扩展，改写到我们的前缀） |
+| 真 apt/apk 依赖解析、系统发行版工具 | `linux shell alpine` / `linux shell ubuntu` |
+| 直接抄 Termux 的 `pkg`/`apt` | ❌ 前缀与 dpkg 数据库都不匹配，做不到 |

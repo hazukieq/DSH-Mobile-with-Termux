@@ -559,3 +559,85 @@ completion).
 - calling the shim directly from `node -e`: `spawn(bash)` printed `PTY_OK_2`, resize took
   effect, `kill('SIGKILL')` produced `exit {exitCode:0, signal:'SIGKILL'}`;
 - the app's own TerminalActivity still works; both share the PTY table without interference.
+
+## 10. The native runtime is not Termux: why `pkg` / `apt` do not work (added 2026-10-18)
+
+### In one line
+
+The app's native shell runs a **minimal closure collected from the Termux repository**
+(node, bash, ripgrep, curl wrapper, pnpm, …), **not a Termux rootfs**. So `apt` and
+`dpkg` simply are not there, and the old `pkg` was only a Termux shell script that cannot
+work here.
+
+### Three reasons (all of them matter)
+
+1. **No package manager in the runtime.** `collect-termux-runtime.sh` only picks the
+   command closure dsh needs; it never includes `apt`/`dpkg` (which would drag in ~100 MB
+   of dependencies).
+2. **`pkg` is a Termux script with hard-coded paths.** It starts with
+   `source /data/data/com.termux/files/usr/bin/termux-setup-package-manager`, while our
+   prefix is `/data/data/app.dsh.mobile/files/engine` — it fails immediately.
+3. **Dropping apt/dpkg in would not help.** Termux's apt/dpkg are compiled with
+   `/data/data/com.termux/files/usr` as the prefix; the dpkg status database,
+   `sources.list` and signing keys live under it, and the `.deb` files in the Termux
+   repository contain `data/data/com.termux/...` paths as well. Installing them into our
+   tree would put everything in the wrong place — the same issue that forced us to
+   rebuild bash under the app's package name.
+
+### The two working ways to install software
+
+**① Native extensions (the `pkg install` equivalent)**
+
+`engine/bin/pkg` is now an app gate (no longer the broken Termux shell):
+
+```
+pkg list                 # 21 extensions: python / openjdk-17 / golang / rust / ruby / php /
+                         #   lua / perl / clang / git / archivers / android-buildtools /
+                         #   cmake / sqlite / ffmpeg / imagemagick / openssh / android-tools /
+                         #   vim / llama-cpp / asr-service
+pkg search <keyword>
+pkg install <id|name>    # goes through the app extension centre: fetch the Termux .deb,
+                         #   rewrite the prefix, unpack into <engine>/extensions/<id>/ and
+                         #   add it to PATH/LD_LIBRARY_PATH
+pkg state <id> / pkg where <id>
+```
+
+Measured: `pkg install archivers` finished in **8.7 s** (download + unpack + activate);
+`pkg list/search/state` all work. A new shell (or an engine restart) is needed before the
+new bin/ shows up in PATH.
+
+**② A real distro package manager (apk / apt)**
+
+For dependency resolution and system-level tooling, use the proot Linux environment:
+
+```
+linux shell alpine        # inside: apk update && apk add python3
+linux run alpine apk --version
+linux shell ubuntu        # inside: apt update && apt install ...
+```
+
+Measured: `apk-tools 2.14.4 (aarch64)` runs fine inside Alpine.
+
+### A real regression fixed along the way: rebuilt bash `test -x` was always false
+
+While investigating the `linux` gate's `proot: missing` report we found that our rebuilt
+bash 5.3.20 returns **false for `[ -x <any file> ]`** (even `/system/bin/sh`), while
+`[ -e ]` works.
+
+- Cause: bionic's `faccessat()` does not support `AT_EACCESS` (returns EINVAL), and bash's
+  `sh_eaccess()` uses **only** `faccessat(AT_EACCESS)` when configure detects
+  `HAVE_FACCESSAT && AT_EACCESS` → every check fails.
+- Impact: every script using `[ -x ]` (gates, user build scripts) silently takes the wrong
+  branch; the `linux` gate therefore mis-reported a missing proot.
+- Fix: build with `ac_cv_func_faccessat=no` so bash falls back to `access(2)`; documented
+  in `scripts/build-runtime-app-prefix.sh`. On the rebuilt runtime
+  `v1.3.2-app-prefix-arm64`, `[ -x ]` and `[ -x /system/bin/sh ]` behave correctly and
+  `linux status` reports `proot: ok` again.
+
+### Cheat sheet
+
+| Need | Use |
+|---|---|
+| python / git / ffmpeg etc. | `pkg install python` (app extension, prefix rewritten) |
+| real apt/apk dependency resolution and distro tooling | `linux shell alpine` / `linux shell ubuntu` |
+| copy Termux's `pkg`/`apt` over | ❌ prefix and dpkg database do not match; not feasible |

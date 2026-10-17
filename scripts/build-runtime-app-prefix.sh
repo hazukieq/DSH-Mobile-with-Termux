@@ -319,6 +319,13 @@ for abi in "${ABIS[@]}"; do
 		export NDK="$NDK_DIR"
 		export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 		export TERMUX_HOST_LLVM_MAJOR_VERSION="${TERMUX_HOST_LLVM_MAJOR_VERSION:-18}"
+		# ⚠️ 2026-10-18 实测坑：bionic 的 faccessat() 不支持 AT_EACCESS（传了返回
+		# EINVAL），而 bash 的 sh_eaccess() 在「HAVE_FACCESSAT && AT_EACCESS」成立时
+		# 就只走 faccessat —— 结果**重编出来的 bash 里 test -x 对所有文件都为假**
+		# （`[ -x /system/bin/sh ]` 也假）。这会静默打断所有 shell 脚本门禁
+		# （linux 门脚本因此报 "proot missing"，尽管文件确实是 0777）。
+		# 关掉 configure 对 faccessat 的探测，让它回落到 access(2) 分支（bionic 正常）。
+		export ac_cv_func_faccessat=no
 		# shellcheck disable=SC2086
 		"$WORK/in-bwrap.sh" "$FAKE_DATA" bash -lc \
 			"cd '$TERMUX_PKGS' && ./build-package.sh -a $tarch -f $PKGS" \
