@@ -451,3 +451,74 @@ dsh-update apply | rollback | restart
   旧树」，`pull` 前会检查剩余空间；
 - rollback 窗口只有一次启动；之后 `engine.old` 被回收，`rollback` 返回 409；
 - 仍是热更新 → 只换运行时，不动 APK、`dsh-home`、`workspaces`、会话。
+
+## 九、WebUI 侧边栏终端（node-pty 桥，2026-10-18 新增）
+
+### 现象
+
+dsh WebUI（App 内 WebView，`127.0.0.1:3080`）侧边栏的终端打不开，报：
+
+```
+终端错误: subprocess-local: terminal inspection is unsupported on platform android
+```
+
+或者更早的 `node-pty unavailable in this Android build`。两个错误是**两条独立的阻断**：
+
+1. **node-pty 没有 Android 实现**：上游预编译 `.node` 是 glibc/x64 的，bionic 加载不了；
+   运行时里那份是构建期空壳，`spawn()` 直接 throw。
+2. **进程检查器不认 android**：`dsh-subprocess-local` 把平台限定成
+   linux/darwin/win32，android 直接抛错 —— 即使 PTY 能开也会在这里失败。
+
+### 做法
+
+**① 真 PTY 留在 App 进程，引擎通过桥使用它**
+
+```
+引擎(node)                     App 进程
+node-pty shim  ──HTTP──▶ AgentBridge /pty/{open,write,resize,kill,close,read}
+                                └─▶ libdshpty.so（fork/exec + /dev/ptmx）
+```
+
+- `PtyBridge.kt`：会话管理 + 每会话 reader 线程 + 512KB 环形缓冲（绝对序号 `seq`），
+  `GET /pty/read?id&seq&timeout` 长轮询取增量（base64）；`resolved` 后给 `exit_code/signal`。
+- `assets/runtime-overlay/lib/node_modules/node-pty/`：**真** node-pty 实现（CommonJS），
+  由 `EngineConfig.applyRuntimeOverlays()` 在每次引擎启动时覆盖进引擎树（只在目标不是
+  原生 node-pty 时覆盖，幂等）。`spawn()` 保持**同步**语义（用子 node 进程做一次 HTTP
+  open，父进程 `execFileSync` 等它——引擎在 spawn 返回后立刻读取 `terminal.pid`）。
+- 会话表从 8 扩到 16 槽（1 引擎 + 7 App 终端 tab + 8 引擎侧）；App 内终端上限仍 7。
+
+**② 让「进程检查」认 android**
+
+`EngineConfig.patchEngineForAndroid()` 在引擎启动时按**内容锚点**扫描
+`@deepseek-ai/dsh-subprocess-local/lib/*.js`（文件名带内容哈希，不能写死），把
+
+```js
+if (platform === "linux") return new LinuxProcessInspector(arch, internals);
+```
+
+改成 `linux || android`。Android 就是 Linux 变体，检查器用 `/proc/<pid>/` 下的
+stat/task/fd/syscall，全都存在；`/bin/ps` 只在 darwin 分支和 `foregroundPgid`
+（已 try/catch）里用。幂等：锚点消失即跳过，运行时升级后自动按新文件重打。
+
+**③ 默认 shell 指向引擎自带 bash**
+
+引擎用 `process.env.SHELL || userInfo().shell` 决定默认 shell；Android 没有 passwd 条目，
+不设就是 `/bin/sh`（toybox）。`EngineConfig.buildEnv()` 现在注入
+`SHELL=<engineRoot>/bin/bash`，所以侧边栏拿到的是**真正的 bash**（我们的 PS1、rc、补全）。
+
+### 踩到的三个坑（都在 C 层 / 生命周期）
+
+| 坑 | 现象 | 修法 |
+|---|---|---|
+| `PR_SET_PDEATHSIG` 绑的是**线程**不是进程 | open 成功但 read 立刻 exited / signal=15，零输出 | 所有 fork 放到常驻 `pty-spawner` 线程上做 |
+| fork 后在子进程里 `opendir`/`malloc`（多线程 ART） | 子进程在 exec 前崩在 libsigchain | `close_inherited_fds` 改成不分配内存的 `close(3..1023)` 循环 |
+| 子进程里对 SIGSEGV/SIGBUS 等调 `sigaction` | 同上，子进程卡死 | 只复位「普通信号」白名单；崩溃类交给 execve 自动复位 |
+| 引擎传的 `cwd` 在本机不存在 | 子进程 `_exit(125)`，终端一开就退 | cwd 不可用时回落到 `dsh-home` 并记日志 |
+
+### 实测（arm64 真机）
+
+- 侧边栏「新建终端」→ 出现 `~ $` 提示符（App 注入的 PS1）；
+- 输入 `bash --version` 触发 GNU bash 的输出/用法文本 —— 确认是引擎自带 bash 而非 toybox sh；
+- `node -e` 直接调 shim：`spawn(bash)` → 输出 `PTY_OK_2`、resize 生效、`kill('SIGKILL')` →
+  `exit` 事件 `{exitCode:0, signal:'SIGKILL'}`；
+- App 内终端（TerminalActivity）回归正常，两边共用 PTY 表互不影响。

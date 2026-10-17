@@ -636,6 +636,14 @@ object EngineConfig {
         // v1.1.0：notify/scr 包装器（所有模式可用——通知与无障碍是 App 自身能力，
         // 经 AgentBridge 127.0.0.1:3083 转发）。
         applyAgentGates(ctx, root)
+        // 运行时 overlay（2026-10-18）：把 assets/runtime-overlay 覆盖进引擎根。
+        // 当前只有一项 —— node-pty 的**真**实现（转发到 App 的 libdshpty.so），
+        // 替换构建期那个「spawn() 直接 throw」的空壳，WebUI 侧边栏终端才能用。
+        applyRuntimeOverlays(ctx, root)
+        // 引擎侧 Android 补丁（2026-10-18）：dsh-subprocess-local 把「终端进程检查」
+        // 限定在 linux/darwin/win32，android 直接抛 "terminal inspection is unsupported
+        // on platform android" → WebUI 侧边栏终端打不开。Android 有 /proc，检查器可用。
+        patchEngineForAndroid(root)
         // v1.2.0 扩展环境：已激活扩展的 bin/lib 并入 PATH/LD_LIBRARY_PATH
         // （顺序：engine 自带 → 扩展 → 系统，保证 su/notify/scr 闸门优先级不被扩展覆盖）
         val extRoots = ExtensionManager.activeRoots(ctx)
@@ -673,6 +681,10 @@ object EngineConfig {
                     listOfNotNull(linuxProotLib.takeIf { linuxProotReady })
                 ).joinToString(":"),
             "PREFIX=$root",
+            // WebUI 侧边栏终端的默认 shell 由 dsh-subprocess-local 取
+            // process.env.SHELL || userInfo().shell 决定；Android 没有 passwd 条目，
+            // 不设就是 /bin/sh（toybox），用户看到的就是「不是真正的 bash」。
+            "SHELL=" + File(root, "bin/bash").absolutePath,
             "HOME=${dshHome(ctx)}",
             "DSH_HOME=${dshHome(ctx)}",
             "TMPDIR=${tmpDir(ctx)}",
@@ -886,6 +898,91 @@ object EngineConfig {
      *  - scr tap <x> <y>         → POST /tap 坐标点击
      *  - scr tap-text <文本>     → POST /tap 按文本点击（无障碍服务开启才可用）
      */
+    /**
+     * 引擎侧 Android 兼容补丁（幂等、按内容锚点，不绑死文件名/版本）。
+     *
+     * 目前只有一条：`dsh-subprocess-local` 的进程检查器把平台限定成
+     * linux/darwin/win32，遇到 android 直接抛
+     * `subprocess-local: terminal inspection is unsupported on platform android`
+     * → WebUI 侧边栏终端（以及一切用 spawnTerminal 的功能）在 Android 上完全不可用。
+     *
+     * Android 就是 Linux 的一个变体，检查器用的全是 `/proc/<pid>/` 下的 stat/task/fd/syscall，这些在 Android 都存在；`/bin/ps` 那两处只在 darwin 分支和
+     * `foregroundPgid` 里用，且调用点已 try/catch（取不到就返回 undefined），
+     * 不会把终端判死。因此把 android 归到 Linux 分支是正确且最小的改动。
+     *
+     * 为什么在 App 启动时打而不是构建期：dsh-subprocess-local 的文件名带内容哈希
+     * （runner-launch-XXXX.js），版本一升就变；按**文件内容锚点**扫描整个包目录，
+     * 既能跨版本生效，也不会在锚点消失时误改别的代码。
+     */
+    private fun patchEngineForAndroid(root: File) {
+        val dir = File(root, "lib/node_modules/@deepseek-ai/dsh-subprocess-local/lib")
+        if (!dir.isDirectory) {
+            Log.w(TAG, "engine patch: subprocess-local not found, skip")
+            return
+        }
+        val anchor = "if (platform === \"linux\") return new LinuxProcessInspector(arch, internals);"
+        val replacement = "/* [dsh-android] Android has /proc: reuse the Linux inspector */\n" +
+            "\tif (platform === \"linux\" || platform === \"android\") return new LinuxProcessInspector(arch, internals);"
+        var patched = 0
+        dir.listFiles { f -> f.isFile && f.name.endsWith(".js") }?.forEach { f ->
+            val text = runCatching { f.readText() }.getOrNull() ?: return@forEach
+            if (!text.contains(anchor)) return@forEach
+            runCatching {
+                f.writeText(text.replace(anchor, replacement))
+                patched++
+                Log.i(TAG, "engine patch: android terminal inspection enabled in ${f.name}")
+            }.onFailure { Log.w(TAG, "engine patch failed on ${f.name}: ${it.message}") }
+        }
+        if (patched == 0) Log.i(TAG, "engine patch: android terminal inspection already patched")
+    }
+
+    /**
+     * 运行时 overlay：`assets/runtime-overlay/<相对路径>` → `<engineRoot>/<相对路径>`。
+     *
+     * 为什么需要：有些「引擎侧」的兼容层无法在运行时打包阶段解决，只能在 App 启动时
+     * 覆盖进引擎树。当前唯一的一项是 node-pty 的**真实现**：
+     *  - 构建期（collect-termux-runtime.sh）把 node-pty 打成空壳，因为上游预编译是
+     *    glibc/x64 的 .node，Android 加载不了 —— 于是 WebUI 侧边栏终端一开就 throw；
+     *  - 现在 App 进程有真 PTY（libdshpty.so），overlay 里的 node-pty 通过
+     *    AgentBridge 的 pty 系列端点转发，侧边栏拿到的是真 tty。
+     *
+     * 部署条件（幂等、可升级）：
+     *  - 目标不存在 → 写；
+     *  - 目标是空壳（package.json 里含 "android-shim"）→ 覆盖；
+     *  - 目标已是 overlay 版本（内容一致）→ 跳过；
+     *  - 目标是**真** node-pty（有 build/Release 等）→ 不动，避免破坏未来真机可用的预编译。
+     */
+    private fun applyRuntimeOverlays(ctx: android.content.Context, root: File) {
+        val pkgDir = File(root, "lib/node_modules/node-pty")
+        // 判定「能不能覆盖」而不是「版本号长什么样」：只要这棵树里没有**原生产物**
+        // （.node / prebuilds / build/Release），就说明它是空壳或我们自己的 bridge 版，
+        // 可以覆盖；一旦将来 runtime 里出现能用的真 node-pty 预编译，就绝不碰它。
+        val hasNative = runCatching {
+            pkgDir.walkTopDown().any { f ->
+                f.isFile && (f.name.endsWith(".node") || f.path.contains("/prebuilds/") ||
+                    f.path.contains("/build/Release/"))
+            }
+        }.getOrDefault(false)
+        if (hasNative) {
+            Log.i(TAG, "runtime overlay: node-pty has native artifacts, skipping")
+            return
+        }
+        val files = listOf(
+            "lib/node_modules/node-pty/package.json",
+            "lib/node_modules/node-pty/lib/index.js",
+        )
+        for (rel in files) {
+            runCatching {
+                val bytes = ctx.assets.open("runtime-overlay/$rel").use { it.readBytes() }
+                val dst = File(root, rel)
+                if (dst.isFile && dst.readBytes().contentEquals(bytes)) return@runCatching
+                dst.parentFile?.mkdirs()
+                dst.writeBytes(bytes)
+                Log.i(TAG, "runtime overlay deployed: $rel")
+            }.onFailure { Log.w(TAG, "runtime overlay $rel failed: ${it.message}") }
+        }
+    }
+
     private fun applyAgentGates(ctx: android.content.Context, root: File) {
         val bindir = File(root, "bin").apply { mkdirs() }
         try {

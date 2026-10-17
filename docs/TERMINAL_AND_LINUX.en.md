@@ -480,3 +480,82 @@ of `pull --apply`).
   returns 409;
 - it is still a runtime-only update: the APK, `dsh-home`, `workspaces` and sessions are
   untouched.
+
+## 9. WebUI sidebar terminal (node-pty bridge, added 2026-10-18)
+
+### Symptom
+
+The WebUI sidebar terminal (in the app's WebView, `127.0.0.1:3080`) did not open:
+
+```
+terminal error: subprocess-local: terminal inspection is unsupported on platform android
+```
+
+or, earlier, `node-pty unavailable in this Android build`. Those are two independent
+blockers:
+
+1. **node-pty has no Android build**: upstream ships glibc/x64 `.node` prebuilds, which
+   bionic cannot load; the runtime carried a build-time stub whose `spawn()` throws.
+2. **The process inspector rejects android**: `dsh-subprocess-local` only accepts
+   linux/darwin/win32 and throws for anything else — so even a working PTY fails here.
+
+### Fix
+
+**① Keep the real PTY in the app process; expose it over the bridge**
+
+```
+engine (node)                  app process
+node-pty shim  ──HTTP──▶ AgentBridge /pty/{open,write,resize,kill,close,read}
+                                └─▶ libdshpty.so (fork/exec + /dev/ptmx)
+```
+
+- `PtyBridge.kt`: session table, one reader thread per session, 512 KB ring buffer with an
+  absolute `seq`; `GET /pty/read?id&seq&timeout` long-polls for new bytes (base64) and
+  reports `exit_code`/`signal` once the child is gone.
+- `assets/runtime-overlay/lib/node_modules/node-pty/`: a **real** CommonJS node-pty
+  implementation, deployed into the engine tree by
+  `EngineConfig.applyRuntimeOverlays()` on every engine start (idempotent, and only when
+  the target is not a native node-pty). `spawn()` keeps the **synchronous** contract
+  (a child node process performs the HTTP open; the parent blocks in `execFileSync`)
+  because the engine reads `terminal.pid` immediately after spawn returns.
+- The PTY table grew from 8 to 16 slots (1 engine + 7 app tabs + 8 engine-side); the app
+  terminal still caps at 7.
+
+**② Teach the process inspector about android**
+
+`EngineConfig.patchEngineForAndroid()` scans `@deepseek-ai/dsh-subprocess-local/lib/*.js`
+by **content anchor** at engine start (file names carry a content hash), turning
+
+```js
+if (platform === "linux") return new LinuxProcessInspector(arch, internals);
+```
+
+into `linux || android`. Android is a Linux variant: the inspector only uses
+`/proc/<pid>/` (stat/task/fd/syscall), all present; `/bin/ps` is used only in the darwin
+branch and in `foregroundPgid` (already wrapped in try/catch). Idempotent: when the anchor
+is gone it is skipped, and a runtime update re-patches the new file automatically.
+
+**③ Point the default shell at the bundled bash**
+
+The engine resolves the default shell from `process.env.SHELL || userInfo().shell`; Android
+has no passwd entry, so without it you get `/bin/sh` (toybox). `EngineConfig.buildEnv()` now
+injects `SHELL=<engineRoot>/bin/bash`, so the sidebar gets the **real bash** (our PS1, rc,
+completion).
+
+### Four pitfalls hit along the way (mostly C / lifetime)
+
+| Pitfall | Symptom | Fix |
+|---|---|---|
+| `PR_SET_PDEATHSIG` is bound to the **thread**, not the process | open succeeds but reads immediately report exited / signal=15, no output | fork on a dedicated long-lived `pty-spawner` thread |
+| `opendir`/`malloc` after fork in a multi-threaded ART process | child crashes in libsigchain before exec | `close_inherited_fds` became an allocation-free `close(3..1023)` loop |
+| `sigaction` on SIGSEGV/SIGBUS in the forked child | same crash, child stuck before exec | reset only an allowlist of ordinary signals; crash signals are reset by execve |
+| engine passes a `cwd` that does not exist on the device | child `_exit(125)`, terminal opens then dies | fall back to `dsh-home` and log |
+
+### Measured (arm64 phone)
+
+- sidebar "New terminal" shows the `~ $` prompt (the app's PS1);
+- typing `bash --version` produced GNU bash usage output — proof it is the bundled bash,
+  not toybox sh;
+- calling the shim directly from `node -e`: `spawn(bash)` printed `PTY_OK_2`, resize took
+  effect, `kill('SIGKILL')` produced `exit {exitCode:0, signal:'SIGKILL'}`;
+- the app's own TerminalActivity still works; both share the PTY table without interference.

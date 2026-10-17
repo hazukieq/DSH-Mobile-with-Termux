@@ -37,8 +37,10 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-/* 会话表容量：1 个引擎槽 + 7 个终端会话（终端 tab 上限远小于此） */
-#define MAX_SESSIONS 8
+/* 会话表容量：1 个引擎槽 + 7 个终端 tab + 8 个「引擎侧终端」
+ * （2026-10-18 扩表：dsh WebUI 侧边栏的终端由引擎经 node-pty shim 向 App 申请 PTY，
+ *  和 App 内终端共用同一张表；两边各自有并发上限，16 槽足够） */
+#define MAX_SESSIONS 16
 
 /* 槽 0 是引擎 legacy 路径专用；终端会话从 1 起分配 */
 #define LEGACY_SESSION 0
@@ -144,15 +146,14 @@ static char **build_full_argv(const char *cmd, char **args, jsize argc) {
  * 用 /proc/self/fd 而不是 close_range(2)：后者要 Linux 5.9+，Android 上跨度太大。
  */
 static void close_inherited_fds(void) {
-    DIR *d = opendir("/proc/self/fd");
-    if (!d) return;
-    int dfd = dirfd(d);
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        int fd = atoi(e->d_name);
-        if (fd > STDERR_FILENO && fd != dfd) close(fd);
-    }
-    closedir(d);
+    /* 2026-10-18：改成**不分配内存**的朴素循环。
+     *
+     * 旧实现用 opendir/readdir：fork 之后子进程只应调用 async-signal-safe 的接口，
+     * 而 opendir 会 malloc —— 父进程是多线程 ART，别的线程可能正持有 malloc 锁，
+     * 子进程一 malloc 就死锁/踩坏堆（实测：引擎侧开终端时子进程在 exec 前崩在
+     * libsigchain 里，而 App 内终端因为时序不同没暴露）。
+     * 1024 个 close() 全是系统调用，几十微秒，换确定正确。 */
+    for (int fd = STDERR_FILENO + 1; fd < 1024; fd++) close(fd);
 }
 
 /*
@@ -167,17 +168,24 @@ static void close_inherited_fds(void) {
  * 因为「忽略」按 POSIX 语义应当跨 exec 继承。
  */
 static void reset_child_signal_state(void) {
-    struct sigaction sa;
-    for (int sig = 1; sig < DSH_NSIG; sig++) {
-        if (sig == SIGKILL || sig == SIGSTOP) continue;
-        if (sigaction(sig, NULL, &sa) != 0) continue;
-        if (sa.sa_handler != SIG_DFL && sa.sa_handler != SIG_IGN) {
-            struct sigaction dfl;
-            memset(&dfl, 0, sizeof(dfl));
-            dfl.sa_handler = SIG_DFL;
-            sigemptyset(&dfl.sa_mask);
-            sigaction(sig, &dfl, NULL);
-        }
+    /* 2026-10-18 修正：只复位**普通**信号，不再遍历 1..64。
+     *
+     * ART 通过 libsigchain 接管 SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGABRT（崩溃上报）。
+     * 在 fork 出来的子进程里对这些信号调 sigaction，会踩 libsigchain 的再入状态
+     * （实测子进程 SIGSEGV，栈是 libsigchain LogStack → sigaction），结果子进程
+     * 卡死在 exec 之前 —— 引擎侧开 PTY 就永远收不到输出。
+     * 崩溃类信号本来也不需要复位：execve 会把「被捕获的信号」自动重置为默认，
+     * 而子进程即便在 exec 前崩溃，交给默认处理也更安全。 */
+    static const int kResetSigs[] = {
+        SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGUSR1, SIGUSR2, SIGALRM, SIGCHLD,
+        SIGWINCH, SIGTSTP, SIGTTIN, SIGTTOU, SIGCONT, SIGPIPE,
+    };
+    struct sigaction dfl;
+    memset(&dfl, 0, sizeof(dfl));
+    dfl.sa_handler = SIG_DFL;
+    sigemptyset(&dfl.sa_mask);
+    for (size_t i = 0; i < sizeof(kResetSigs) / sizeof(kResetSigs[0]); i++) {
+        sigaction(kResetSigs[i], &dfl, NULL);
     }
     /* 信号屏蔽字同样会跨 exec 继承：fork 线程可能屏蔽了某些信号，
      * 不清掉的话 shell 会带着继承的屏蔽字启动。 */

@@ -23,11 +23,17 @@ object PtyNative {
         System.loadLibrary("dshpty")
     }
 
-    /** 会话表容量（含引擎槽 0；终端最多 [MAX_TERMINAL_SESSIONS] 个） */
-    const val MAX_SESSIONS = 8
+    /** 会话表容量（含引擎槽 0），必须与 dsh_pty.c 的 MAX_SESSIONS 一致 */
+    const val MAX_SESSIONS = 16
 
-    /** 终端可用会话数（槽 1..7） */
-    const val MAX_TERMINAL_SESSIONS = MAX_SESSIONS - 1
+    /**
+     * App 内终端 tab 并发上限（槽 1..7）。
+     *
+     * 表本身扩到 16 是为了给「引擎侧终端」留位置（dsh WebUI 侧边栏经
+     * [app.dsh.mobile.engine.PtyBridge] 申请 PTY），但 App 自己仍只允许 7 个 tab ——
+     * 这是刻意的产品限制，不随表容量放宽。
+     */
+    const val MAX_TERMINAL_SESSIONS = 7
 
     // ------------------------------------------------------------------
     // native 入口（命名约定绑定，见 dsh_pty.c）

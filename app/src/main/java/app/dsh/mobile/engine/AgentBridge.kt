@@ -39,6 +39,14 @@ import java.nio.charset.StandardCharsets
  *   GET  /runtime/status   [?format=line] → 运行时版本/来源/暂存/回滚/引擎状态
  *   GET  /runtime/feed     [?format=line][&manifest=url] → dsh 版本检查（本机 / npm 最新 / feed）
  *   POST /runtime/pull     body: {"version":"0.2.1","manifest":"https://…"} → 202（按 dsh 版本拉取）
+ *
+ *   引擎侧终端（2026-10-18，node-pty 桥）：
+ *   POST /pty/open         {file,args,cwd,env,rows,cols,name} → {id,pid}
+ *   POST /pty/write        {id,data(base64)}
+ *   POST /pty/resize       {id,rows,cols}
+ *   POST /pty/kill         {id,sig?}
+ *   POST /pty/close        {id}
+ *   GET  /pty/read?id&seq&timeout  → 增量字节（base64，长轮询）
  *   POST /runtime/stage    body: {"path":"/abs/x.zip"} 或 {"url":"https://…","sha256":"…"} → 202
  *   POST /runtime/apply    → 202（停引擎 → 换目录 → 启动 → 健康检查，失败自动回滚）
  *   POST /runtime/rollback → 202（回到 engine.old）
@@ -419,6 +427,13 @@ object AgentBridge {
             method == "GET" && path == "/runtime/status" -> runtimeStatus(ctx, query)
             method == "GET" && path == "/runtime/feed" -> runtimeFeed(ctx, query)
             method == "POST" && path == "/runtime/pull" -> runtimePull(ctx, body)
+            // 引擎侧终端：dsh WebUI 侧边栏的 node-pty shim 通过这组端点用 App 的真 PTY
+            method == "POST" && path == "/pty/open" -> ptyOpen(ctx, body)
+            method == "POST" && path == "/pty/write" -> ptyWrite(body)
+            method == "POST" && path == "/pty/resize" -> ptyResize(body)
+            method == "POST" && path == "/pty/kill" -> ptyKill(body)
+            method == "POST" && path == "/pty/close" -> ptyClose(body)
+            method == "GET" && path == "/pty/read" -> ptyRead(query)
             method == "POST" && path == "/runtime/stage" -> runtimeStage(ctx, body)
             method == "POST" && path == "/runtime/apply" -> runtimeApply(ctx)
             method == "POST" && path == "/runtime/rollback" -> runtimeRollback(ctx)
@@ -462,6 +477,120 @@ object AgentBridge {
         val sha = obj.optString("sha256").takeIf { it.isNotBlank() }
         val err = RuntimeUpdater.stage(ctx, src, sha, isUrl = path == null)
         return acceptedOrRejected("stage", err)
+    }
+
+    // ── 引擎侧终端（node-pty 桥，2026-10-18）────────────────────────────────
+    //
+    // 为什么在 App 侧开 PTY：Android 上 node-pty 没有可用预编译（它依赖 glibc/x64 的
+    // .node），运行时里的 node-pty 是构建期空壳，WebUI 侧边栏一开终端就 throw。
+    // App 已经有 libdshpty.so（fork/exec + /dev/ptmx + PR_SET_PDEATHSIG），于是把
+    // 真实 PTY 留在 App 进程里，用这组端点暴露给引擎的 node-pty shim —— 侧边栏
+    // 因此拿到的是**真 tty**（作业控制、Ctrl-C、resize 都成立），不是管道假终端。
+    //
+    // 鉴权沿用 handle() 里的统一 X-DSH-Token；数据用 base64（二进制安全）。
+
+    /** POST /pty/open {file,args,cwd,env,rows,cols,name} → {ok,id,pid} */
+    private fun ptyOpen(ctx: Context, body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
+            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
+        val file = obj.optString("file").trim()
+        if (file.isEmpty()) {
+            return 400 to JSONObject().put("ok", false).put("error", "missing 'file'").toString()
+        }
+        val args = ArrayList<String>()
+        obj.optJSONArray("args")?.let { a -> for (i in 0 until a.length()) args.add(a.optString(i)) }
+        val env = LinkedHashMap<String, String>()
+        obj.optJSONObject("env")?.let { e -> for (k in e.keys()) env[k] = e.optString(k) }
+        val cwd = obj.optString("cwd").trim().takeIf { it.isNotEmpty() }
+            ?: EngineConfig.dshHome(ctx).absolutePath
+        val rows = obj.optInt("rows", 24).let { if (it in 1..512) it else 24 }
+        val cols = obj.optInt("cols", 80).let { if (it in 1..512) it else 80 }
+        val term = obj.optString("name").trim().ifEmpty { "xterm-256color" }
+        return try {
+            val s = PtyBridge.open(ctx, file, args, cwd, env, rows, cols, term)
+            200 to JSONObject().put("ok", true).put("id", s.id).put("pid", s.pid).toString()
+        } catch (e: Exception) {
+            409 to JSONObject().put("ok", false)
+                .put("error", e.message ?: e.javaClass.simpleName).toString()
+        }
+    }
+
+    /** POST /pty/write {id,data(base64)} */
+    private fun ptyWrite(body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
+            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
+        val id = obj.optInt("id", -1)
+        val b64 = obj.optString("data")
+        return try {
+            val data = if (b64.isEmpty()) ByteArray(0) else android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
+            val n = PtyBridge.write(id, data)
+            200 to JSONObject().put("ok", true).put("bytes", n).toString()
+        } catch (e: Exception) {
+            409 to JSONObject().put("ok", false)
+                .put("error", e.message ?: e.javaClass.simpleName).toString()
+        }
+    }
+
+    /** POST /pty/resize {id,rows,cols} */
+    private fun ptyResize(body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
+            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
+        return try {
+            PtyBridge.resize(obj.optInt("id", -1), obj.optInt("rows", 24), obj.optInt("cols", 80))
+            200 to JSONObject().put("ok", true).toString()
+        } catch (e: Exception) {
+            409 to JSONObject().put("ok", false)
+                .put("error", e.message ?: e.javaClass.simpleName).toString()
+        }
+    }
+
+    /** POST /pty/kill {id,sig}（默认 SIGTERM=15；只管信号，不释放会话） */
+    private fun ptyKill(body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
+            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
+        return try {
+            PtyBridge.signal(obj.optInt("id", -1), obj.optInt("sig", 15))
+            200 to JSONObject().put("ok", true).toString()
+        } catch (e: Exception) {
+            409 to JSONObject().put("ok", false)
+                .put("error", e.message ?: e.javaClass.simpleName).toString()
+        }
+    }
+
+    /** POST /pty/close {id}（杀进程组 + 回收槽位，幂等） */
+    private fun ptyClose(body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
+            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
+        return try {
+            PtyBridge.close(obj.optInt("id", -1))
+            200 to JSONObject().put("ok", true).toString()
+        } catch (e: Exception) {
+            409 to JSONObject().put("ok", false)
+                .put("error", e.message ?: e.javaClass.simpleName).toString()
+        }
+    }
+
+    /** GET /pty/read?id&seq&timeout → {ok,seq,data,exited,exit_code,signal,lost} */
+    private fun ptyRead(query: String): Pair<Int, String> {
+        val p = parseQuery(query)
+        val id = p["id"]?.toIntOrNull() ?: -1
+        val seq = p["seq"]?.toLongOrNull() ?: 0L
+        val timeout = p["timeout"]?.toIntOrNull() ?: 20_000
+        return try {
+            val c = PtyBridge.read(id, seq, timeout)
+            val b64 = if (c.data.isEmpty()) "" else android.util.Base64.encodeToString(c.data, android.util.Base64.NO_WRAP)
+            200 to JSONObject().put("ok", true)
+                .put("seq", c.nextSeq)
+                .put("data", b64)
+                .put("exited", c.exited)
+                .put("exit_code", c.exitCode)
+                .put("signal", c.signal)
+                .put("lost", c.lost)
+                .toString()
+        } catch (e: Exception) {
+            409 to JSONObject().put("ok", false)
+                .put("error", e.message ?: e.javaClass.simpleName).toString()
+        }
     }
 
     /**
