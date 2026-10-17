@@ -122,7 +122,7 @@ object BootstrapInstaller {
         var n = 0
         // 只扫 bin/ 与 libexec/：以前 walk 整个前缀（含 300MB node_modules）每次启动
         // 要 25s，白白拖慢引擎重启/热更新。
-        listOf(File(root, "bin"), File(root, "libexec"), File(root, "sbin")).forEach { dir ->
+        listOf(File(root, "bin"), File(root, "libexec"), File(root, "sbin"), File(root, "lib/dsh-engine"), File(root, "lib/apt/methods")).forEach { dir ->
         if (!dir.isDirectory) return@forEach
         dir.walkTopDown().forEach { f ->
             if (!f.isFile) return@forEach
