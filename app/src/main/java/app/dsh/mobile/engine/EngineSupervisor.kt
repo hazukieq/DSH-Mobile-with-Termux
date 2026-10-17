@@ -159,6 +159,11 @@ class EngineSupervisor(private val ctx: Context) {
         // spawnEngine() 的阻塞段里，已 fork 的 node 可能没有引用、无人 stop。
         // 这里补一次孤儿清理（端口占用检测 + 同 uid pkill），覆盖该窗口。
         runCatching { cleanupOrphanEngine() }
+        // 引擎侧终端（WebUI 侧边栏 / dsh-terminal）随引擎结束一起收掉：
+        // 这些 PTY 的读者是引擎里的 node-pty shim，引擎没了就没人取数据了；
+        // 不清理会占着 App 的 PTY 槽（上限 6），重启几次后新终端就开不出来。
+        // App 内终端（TerminalActivity）用的是另一套 PtyNative 调用，不受影响。
+        runCatching { PtyBridge.closeAll() }
         _state.value = State.Stopped
         if (explicit) dispatchExplicitExit()
     }
