@@ -120,7 +120,7 @@ NM="$ROOT/lib/node_modules"
 # "path open failed: native path opener is unsupported on android"。
 # 补丁脚本单一真源（与本地 build_runtime.py 同源），幂等可重跑。
 if command -v python3 >/dev/null 2>&1; then
-  SCRIPTS_DIR="$GITHUB_WORKSPACE/scripts"
+  SCRIPTS_DIR="${GITHUB_WORKSPACE:-}/scripts"
   [ -d "$SCRIPTS_DIR" ] || SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)/scripts"
   # ⚠️ 必须传 runtime 根目录：两个 patch 脚本内部会自行拼
   # "lib/node_modules/@deepseek-ai/<pkg>/..."，若传 $NM（已是 lib/node_modules）

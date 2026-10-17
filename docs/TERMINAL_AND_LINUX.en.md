@@ -819,9 +819,15 @@ engine-manifest.json   { dsh_version, engine_version, assets.<arch>.{url,sha256,
 ```
 
 published to the rolling `dsh-engine-latest` release (the default feed) and archived in the
-immutable `dsh-runtime-<dsh version>` release. `check` talks to the official GitHub only (direct URL, then the Releases API looking
-for `engine-manifest.json` assets) — it never queries npm. When no release exists it says
-so instead of pretending.
+immutable `dsh-runtime-<dsh version>` release. `check` talks to the official GitHub only and never queries npm, with two sources:
+- **upstream dsh**: `api.github.com/repos/deepseek-ai/deepseek-harness/releases`, taking the
+  newest `dsh-v*` tag → `upstream_github: <version>`;
+- **this repo's adapted engine bundle**: the direct
+  `dsh-engine-latest/engine-manifest.json` URL, falling back to the Releases API to find any
+  release carrying an `engine-manifest.json` asset.
+
+It therefore distinguishes "upstream has a new version" from "the Android-adapted engine
+bundle for it has been published".
 
 ### Verified on device (arm64)
 

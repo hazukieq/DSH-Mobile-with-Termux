@@ -767,7 +767,21 @@ engine-manifest.json   { dsh_version, engine_version, assets.<arch>.{url,sha256,
 ```
 
 发布到滚动 release `dsh-engine-latest`（默认 feed）与不可变 `dsh-runtime-<dsh版本>` 归档。
-`check` 只走官方 GitHub（直链 → Releases API 找 `engine-manifest.json`），**不查 npm**；还没发布时如实报告 unavailable，不拿 npm 冒充。
+`check` 只走官方 GitHub，**不查 npm**，并且分两路：
+- **上游 dsh 本体**：`api.github.com/repos/deepseek-ai/deepseek-harness/releases`，取 `dsh-v*` tag →
+  `upstream_github: <版本>`（当前上游最新是 0.2.1-rc.2）；
+- **本仓库的适配引擎包**：先直链 `dsh-engine-latest/engine-manifest.json`，404 时用 Releases API
+  找挂 `engine-manifest.json` 资产的 release。
+
+所以 `check` 会明确区分「上游有新版」和「Android 适配引擎包是否已发布」，例如：
+
+```
+dsh: 0.2.0-rc.2
+engine: dsh-engine-2026.10.18
+upstream_github: 0.2.1-rc.2 (deepseek-ai/deepseek-harness)
+feed: unavailable (no release with engine-manifest.json on our repo yet)
+update: yes upstream (0.2.0-rc.2 -> 0.2.1-rc.2; Android 适配引擎包尚未发布)
+```
 
 ### 设备实测（arm64）
 

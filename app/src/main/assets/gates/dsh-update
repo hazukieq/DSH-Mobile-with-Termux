@@ -67,6 +67,17 @@ _jabisha() {
 }
 
 _GH_API="https://api.github.com/repos/Soodok/Deepseek-Harness-Local-Android"
+# 上游 dsh 项目本体（官方 GitHub）：release tag 形如 dsh-v0.2.1-rc.2
+_GH_UPSTREAM_API="https://api.github.com/repos/deepseek-ai/deepseek-harness"
+
+# 查上游最新 dsh 版本（只查 GitHub，不查 npm）
+_upstream_latest() {
+  curl -fsSL -m 25 -H 'Accept: application/vnd.github+json' \
+    "$_GH_UPSTREAM_API/releases?per_page=20" 2>/dev/null \
+    | tr ',' '\n' \
+    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"dsh-v\([^"]*\)".*/\1/p' \
+    | head -1
+}
 
 _fetch_manifest() {  # $1=url|path → 内容
   case "$1" in
@@ -119,9 +130,14 @@ _cmd_check() {
   local manifest="$MANIFEST_DEFAULT" json local_v feed_v feed_e local_e
   while [ $# -gt 0 ]; do case "$1" in --manifest) manifest="$2"; shift 2 ;; *) _usage ;; esac; done
   local_v=$(_dsh_version); local_e=$(_engine_version)
+  local up
   echo "dsh: $local_v"
   echo "engine: $local_e"
   echo "abi: $_ABI"
+  up=$(_upstream_latest || true)
+  echo "upstream_github: ${up:-unknown} (deepseek-ai/deepseek-harness)"
+  local up_new=""
+  [ -n "$up" ] && [ "$up" != "$local_v" ] && up_new=1
   if [ "$manifest" = "$MANIFEST_DEFAULT" ]; then json=$(_feed_manifest || true); else json=$(_fetch_manifest "$manifest" 2>/dev/null || true); fi
   if [ -n "${json:-}" ]; then
     feed_v=$(_jget "$json" dsh_version); feed_e=$(_jget "$json" engine_version)
@@ -138,10 +154,16 @@ _cmd_check() {
     exit 0
   fi
   # 官方 GitHub 上还没有带引擎包的 release：如实报告，不拿 npm 冒充
-  echo "feed: unavailable (github: no release with engine-manifest.json yet)"
-  echo "hint: 引擎热更新包由 .github/workflows/dsh-runtime.yml 发布到 dsh-engine-latest；"
-  echo "      在它发布之前，升级引擎 = 安装包含新引擎的 APK。"
-  echo "update: unknown"
+  echo "feed: unavailable (no release with engine-manifest.json on our repo yet)"
+  if [ -n "$up_new" ]; then
+    echo "update: yes upstream ($local_v -> $up; Android 适配引擎包尚未发布)"
+    echo "hint: 上游已发新版，但本仓库的 dsh-engine-latest 还没有该版本；"
+    echo "      可等 CI 构建，或直接用包含新引擎的 APK 升级。"
+  else
+    echo "hint: 引擎热更新包由 .github/workflows/dsh-runtime.yml 发布到 dsh-engine-latest；"
+    echo "      在它发布之前，升级引擎 = 安装包含新引擎的 APK。"
+    echo "update: no (local $local_v matches upstream ${up:-unknown}; no adapted engine published)"
+  fi
   exit 0
 }
 
