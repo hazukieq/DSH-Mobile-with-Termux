@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var statusBar: TextView
     private var urlLoaded = false
+    /** 已经加载过的引擎 URL（含 token）。引擎热更新/重启后 token 会变，据此重载 WebView。 */
+    private var loadedWebUrl: String? = null
 
     /** 桌面模式：桌面 UA + 固定 1280px 视口 + 手势缩放（手机浏览器「电脑模式」等价物） */
     private var desktopMode = false
@@ -411,6 +413,7 @@ class MainActivity : Activity() {
 
     /** 统一的回环页加载入口：缩放统一由 onPageFinished 的 viewport meta 接管，这里只导航。 */
     private fun loadLocalUrl(url: String) {
+        logWebView("load-url: $url")
         webView.loadUrl(url)
     }
 
@@ -712,17 +715,11 @@ class MainActivity : Activity() {
             is EngineSupervisor.State.Installing -> getString(R.string.status_installing)
             is EngineSupervisor.State.Starting -> getString(R.string.status_starting).also { startStartTicker() }
             is EngineSupervisor.State.Healthy -> {
-                if (!urlLoaded) {
-                    urlLoaded = true
-                    loadLocalUrl((application as DshApp).supervisor.webUrl())
-                }
+                loadEngineUrlIfNeeded()
                 getString(R.string.status_healthy)
             }
             is EngineSupervisor.State.SafeMode -> {
-                if (!urlLoaded) {
-                    urlLoaded = true
-                    loadLocalUrl((application as DshApp).supervisor.webUrl())
-                }
+                loadEngineUrlIfNeeded()
                 getString(R.string.status_safe_mode)
             }
             is EngineSupervisor.State.Backoff ->
@@ -730,9 +727,40 @@ class MainActivity : Activity() {
             is EngineSupervisor.State.Failed -> getString(R.string.status_failed, state.reason)
             is EngineSupervisor.State.Stopped -> {
                 urlLoaded = false
+                loadedWebUrl = null
                 getString(R.string.status_idle)
             }
         }
+    }
+
+    /**
+     * 引擎页面加载（2026-10-18 热更新修复）。
+     *
+     * 为什么不能只在第一次 Healthy 时加载：dsh-update 热更新会换掉整套客户端 bundle
+     * （插件 URL 里带 rev 哈希）并重启引擎、换 token。旧页面继续用旧客户端连新引擎，
+     * 浏览器控制台会报 `sessions service unavailable`、
+     * `renderSlot('root') before any 'root' registration (boot order)`，表现为白屏。
+     *
+     * 判据：`webUrl()` 里的 token 每次引擎启动都不同 → URL 变了就清缓存并重载。
+     */
+    private fun loadEngineUrlIfNeeded() {
+        val url = (application as DshApp).supervisor.webUrl()
+        if (loadedWebUrl == url) return
+        val firstLoad = loadedWebUrl == null
+        loadedWebUrl = url
+        urlLoaded = true
+        if (!firstLoad) {
+            // 引擎重启后 token 变了：旧的 **cookie** 还留在 WebView 里，新引擎会把它
+            // 当成无效会话并直接返回纯文本 "dsh web authentication required"
+            // （0.2.1 实测：白屏 + 这段文字）。缓存和 cookie 都要清，再带新 token 打开。
+            runCatching { webView.clearCache(true) }
+            runCatching {
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.removeAllCookies(null)
+                cm.flush()
+            }
+        }
+        loadLocalUrl(url)
     }
 
     override fun onBackPressed() {

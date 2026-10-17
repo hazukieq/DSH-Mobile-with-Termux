@@ -60,25 +60,61 @@ class EngineSupervisor(private val ctx: Context) {
         else -> EngineConfig.DEFAULT_PORT
     }
 
+    /**
+     * 健康态下轮询 token（最多 60s），拿到后以 copy(tokenUrl=…) 更新 state。
+     * 为什么需要：0.2.1 的启动顺序里 `dsh web:` 输出可能晚于健康探测，而 MainActivity
+     * 只在 state 变化时决定是否加载/重载 WebView —— 不补发 state 就永远停在裸地址上
+     * （白屏 + "dsh web authentication required"）。
+     */
+    private fun retryTokenUrlWhenReady() {
+        val scope = scopeRef ?: return
+        scope.launch(Dispatchers.IO) {
+            repeat(120) {
+                delay(500)
+                val cur = _state.value
+                if (cur !is State.Healthy && cur !is State.SafeMode) return@launch
+                val found = extractTokenUrl() ?: return@repeat
+                when (cur) {
+                    is State.Healthy -> _state.value = cur.copy(tokenUrl = found)
+                    is State.SafeMode -> _state.value = cur.copy(tokenUrl = found)
+                    else -> Unit
+                }
+                Log.i(TAG, "token URL arrived after health poll; state updated")
+                return@launch
+            }
+        }
+    }
+
     /** 从 engine.log 提取**本次启动**的 `dsh web:` 输出（带 token 完整 URL）。
      *  0.2.0 起 WebUI 强制认证，裸 127.0.0.1:3080 会显示认证提示页。
      *  引擎 stdout 由 EngineProcess 泵入 engine.log（环形 2MB，最新在末尾）。
      *  只搜 [logOffsetAtSpawn] 之后的日志段：健康探测可能早于 stdout 送达，
      *  搜全文会拿到上一次启动的旧 token（已失效 → WebView 401 白页，实测）。
      *  stdout 泵有毫秒级延迟，最多重试 ~600ms 等该行出现。 */
+    private val TOKEN_REGEX = Regex("dsh web: (http://127\\.0\\.0\\.1:\\d+/\\?token=\\S+)")
+
     private fun extractTokenUrl(): String? = runCatching {
-        repeat(6) {
+        repeat(20) {
             val f = logFile()
             if (f.isFile) {
                 val text = f.readText()
                 val from = logOffsetAtSpawn.coerceIn(0L, text.length.toLong()).toInt()
-                val seg = text.substring(from)
-                Regex("dsh web: (http://127\\.0\\.0\\.1:\\d+/\\?token=\\S+)")
-                    .findAll(seg).lastOrNull()?.groupValues?.get(1)
-                    ?.let { hit -> return@runCatching hit }
+                // 1) 优先只看本次启动之后的日志段
+                TOKEN_REGEX.findAll(text.substring(from)).lastOrNull()?.let {
+                    return@runCatching it.groupValues[1]
+                }
+                // 2) 回退：engine.log 是 2MB 环形文件，超过上限会从头部截断 →
+                //    logOffsetAtSpawn 失效，此时在文件尾部找**最后一条** token。
+                //    0.2.1 实测：health 探测早于 `dsh web:` 输出，且截断后 offset 指向
+                //    文件末尾，seg 永远为空 → 必须回退，否则永远拿不到 token（白屏）。
+                val tail = if (text.length > 8192) text.substring(text.length - 8192) else text
+                TOKEN_REGEX.findAll(tail).lastOrNull()?.let {
+                    return@runCatching it.groupValues[1]
+                }
             }
             Thread.sleep(100)
         }
+        Log.w(TAG, "extractTokenUrl failed: no dsh web: token in ${logFile().absolutePath}")
         null
     }.getOrNull()
 
@@ -313,6 +349,7 @@ class EngineSupervisor(private val ctx: Context) {
                     app.dsh.mobile.engine.ExtensionManager.clearPendingRestart()
                     val safe = guardian.inSafeMode()
                     val tokenUrl = extractTokenUrl()
+                    Log.i(TAG, "token url extracted: ${if (tokenUrl == null) "null" else "yes (len=" + tokenUrl.length + ")"}")
                     val t1 = System.currentTimeMillis()
                     val restartMs = restartStartedAt?.let { " (total restart took ${t1 - it}ms)" } ?: ""
                     restartStartedAt = null
@@ -320,6 +357,11 @@ class EngineSupervisor(private val ctx: Context) {
                     _state.value =
                         if (safe) State.SafeMode(EngineConfig.DEFAULT_PORT, tokenUrl)
                         else State.Healthy(EngineConfig.DEFAULT_PORT, tokenUrl)
+                    // 0.2.1 起 `dsh web:` 那行可能比健康探测晚几百毫秒才打印：
+                    // extractTokenUrl() 只等 600ms，拿不到就会把裸地址交给 WebView，
+                    // 服务端返回纯文本 "dsh web authentication required"（白屏）。
+                    // 所以健康态先放行，token 迟到时补发一次 state（UI 会据此重载）。
+                    if (tokenUrl == null) retryTokenUrlWhenReady()
                     // 运行时热更新（2026-10-18）：健康启动的这一刻回收上一版 engine.old
                     // （apply 成功时登记的 .runtime-reclaim 决定要不要真删）。放在这里而不是
                     // apply 自己的健康等待里 —— apply 那次不能删，回滚点必须活到下一次启动。

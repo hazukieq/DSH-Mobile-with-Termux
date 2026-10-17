@@ -44,8 +44,9 @@ object BootstrapInstaller {
         if (!installed || !stamp.isFile || stamp.readText().trim() != VERSION) {
             extractAsset(ctx, root, ASSET)
             stamp.writeText(VERSION)
+            // 只有 bootstrap 的 zip 会丢权限位；引擎包是 tar（保留 mode），不用扫。
+            restoreExecBits(root)
         }
-        restoreExecBits(root)
         ensureDshEngine(ctx, root, onProgress)
         // 包名从 app.dsh.mobile 换成 com.termux 后，老数据里的绝对路径要改写，
         // 否则会话恢复会去 mkdir 旧包名目录（EACCES）→ 主页起不来。
@@ -64,8 +65,11 @@ object BootstrapInstaller {
         }
         val dshJs = File(root, DSH_PKG)
         val stamp = File(root, ENGINE_STAMP)
-        val engineOk = stamp.isFile && stamp.readText().trim() == ENGINE_VERSION
-        if (!dshJs.isFile || !engineOk) {
+        // ⚠️ 不能拿 ENGINE_VERSION 做相等判断：dsh-update 热更新会换成别的版本
+        // （stamp 随之改变），下次启动若按"等于内置版本"判断就会把热更新静默回退。
+        // 判据只应该是「引擎可用」：dsh 入口在 + stamp 在。
+        val engineOk = dshJs.isFile && stamp.isFile
+        if (!engineOk) {
             Log.i(TAG, "extracting bundled dsh engine ($ENGINE_VERSION)")
             onProgress(0.8f)
             // 先清掉可能被 npm 装进来的树：嵌套依赖会覆盖适配版（实测灾难性）
@@ -116,12 +120,17 @@ object BootstrapInstaller {
         val bin = File(root, "bin").absolutePath + File.separator
         val libexec = File(root, "libexec").absolutePath + File.separator
         var n = 0
-        root.walkTopDown().forEach { f ->
+        // 只扫 bin/ 与 libexec/：以前 walk 整个前缀（含 300MB node_modules）每次启动
+        // 要 25s，白白拖慢引擎重启/热更新。
+        listOf(File(root, "bin"), File(root, "libexec"), File(root, "sbin")).forEach { dir ->
+        if (!dir.isDirectory) return@forEach
+        dir.walkTopDown().forEach { f ->
             if (!f.isFile) return@forEach
             val p = f.absolutePath
             if (p.startsWith(bin) || p.startsWith(libexec) || looksExecutable(f)) {
                 if (!f.canExecute()) { runCatching { f.setExecutable(true, false); n++ } }
             }
+        }
         }
         if (n > 0) Log.i(TAG, "exec bits restored: $n")
     }
