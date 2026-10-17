@@ -1,35 +1,241 @@
 #!/system/bin/sh
-# [dsh-android] dsh-update: 查看/更新 dsh 引擎版本。
+# [dsh-android] dsh-update: 热更新 **dsh 引擎层**（不重装 APK、不动 Termux 基础环境）。
 #
-# 2026-10-18 起引擎是**随 APK 打包的适配版运行时**（Termux 里 npm 装不了 dsh）。
-# 所以这里不去动 npm：pull 只是提示，真正升级 = 装新 APK。
+# 背景（2026-10-18 包名切到 com.termux 之后，架构是两层的）：
+#   <files>/usr            = Termux 官方 bootstrap（apt/dpkg/bash/coreutils…）
+#   <files>/usr/lib/node_modules/@deepseek-ai/dsh   = 适配版 dsh 引擎
+#   <files>/usr/bin/node、bin/rg                    = 引擎依赖
+#
+# 所以「热更新」= 换掉 **引擎层那几项**（lib/node_modules / bin/node / bin/rg /
+# .dsh-engine-version），bootstrap 一个文件都不碰。跟老版本一样按 **dsh 版本**判断，
+# 不按 APK 版本；产物是预先打好 Android 适配补丁的 engine tar.gz。
 #
 # 用法:
-#   dsh-update status           当前 dsh / node 版本
-#   dsh-update check            期望的引擎标记
-#   dsh-update pull [version]   提示如何升级（内置引擎不可 npm 覆盖）
-#   dsh-update restart          杀掉引擎 node，App 守护会自动拉起
+#   dsh-update status                       本地 dsh/node/引擎版本、暂存与回滚状态
+#   dsh-update check [--manifest URL]       本地 dsh 版本 vs feed 里的最新 dsh 版本
+#   dsh-update pull [dsh-version] [--apply] 下载最新引擎包并暂存（--apply 直接切换）
+#   dsh-update stage <url|path> [sha256]    暂存指定引擎包（离线测试用）
+#   dsh-update apply                        备份当前引擎 → 换入暂存 → 重启 + 健康检查
+#   dsh-update rollback                     回滚到上一份引擎
+#   dsh-update restart                      只重启引擎
+#   dsh-update version                      同 status
+#
+# 退出码: 0 成功 / 1 失败或被拒 / 2 用法错误 / 3 环境错误
+#
+# 自举到引擎 bash（同 notify/linux 等门脚本）：shebang 不传环境变量。
 if [ -z "$_DSH_REEXEC" ]; then
   _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
   exec "@DSH_BASH@" "$0" "$@"
 fi
-PREFIX_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-NODE="$PREFIX_DIR/bin/node"
-case "${1:-status}" in
-  status)
-    echo "dsh:  $("$NODE" -e 'try{process.stdout.write(require(process.argv[1]).version)}catch(e){process.stdout.write("?")}' "$PREFIX_DIR/lib/node_modules/@deepseek-ai/dsh/package.json" 2>/dev/null)"
-    echo "node: $("$NODE" --version 2>/dev/null)"
-    [ -f "$PREFIX_DIR/.dsh-engine-version" ] && echo "engine: $(cat "$PREFIX_DIR/.dsh-engine-version")"
-    ;;
-  check) cat "$PREFIX_DIR/.dsh-engine-version" 2>/dev/null ;;
-  pull)
-    echo "dsh-update: 引擎随 APK 打包（适配版），不能用 npm 覆盖。"
-    echo "            升级方式：安装包含新引擎的 APK；旧的自制 runtime feed 已停用。"
+
+DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+P="${PREFIX:-$(cd "$DIR/.." 2>/dev/null && pwd)}"
+STAGED="$P/.engine-staged"
+PREV="$P/.engine-prev"
+MANIFEST_DEFAULT="https://github.com/Soodok/Deepseek-Harness-Local-Android/releases/download/dsh-engine-latest/engine-manifest.json"
+HEALTH_URL="http://127.0.0.1:3080/"
+
+_die() { echo "dsh-update: $*" >&2; exit "${_EXIT:-3}"; }
+_usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+# ── 版本读取 ────────────────────────────────────────────────────────────────
+_dsh_version() {
+  local pkg="$P/lib/node_modules/@deepseek-ai/dsh/package.json"
+  [ -f "$pkg" ] || { echo "?"; return 1; }
+  if [ -x "$P/bin/node" ]; then
+    "$P/bin/node" -e 'try{process.stdout.write(require(process.argv[1]).version||"?")}catch(e){process.stdout.write("?")}' "$pkg" 2>/dev/null
+  else
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg" | head -1
+  fi
+}
+_engine_version() { [ -f "$P/.dsh-engine-version" ] && cat "$P/.dsh-engine-version" || echo "?"; }
+_node_version() { [ -x "$P/bin/node" ] && "$P/bin/node" --version 2>/dev/null || echo "?"; }
+
+# ── feed ───────────────────────────────────────────────────────────────────
+_ABI=unknown
+case "$(uname -m)" in aarch64|arm64) _ABI=aarch64 ;; x86_64|amd64) _ABI=x86_64 ;; arm*) _ABI=arm ;; esac
+
+_jget() {  # $1=json $2=key → 第一个字符串值（只适用于我们自己的扁平面量）
+  printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1
+}
+_jabi() {  # 取 assets 里本 abi 的 url/sha（格式固定：先 url 后 sha256）
+  printf '%s' "$1" | tr ',' '\n' | sed -n "/\"$_ABI\"/,/sha256/p" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+_jabisha() {
+  printf '%s' "$1" | tr '}' '\n' | sed -n "/\"$_ABI\"/p" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
+}
+
+_fetch_manifest() {  # $1=url|path → 内容
+  case "$1" in
+    http://*|https://*) command -v curl >/dev/null 2>&1 || _die "curl not found"; curl -fsSL --retry 2 -m 60 "$1" ;;
+    *) [ -f "$1" ] || _die "manifest not found: $1"; cat "$1" ;;
+  esac
+}
+
+# ── 引擎层操作 ───────────────────────────────────────────────────────────────
+_restart_engine() {
+  pkill -f "$P/bin/node" 2>/dev/null || true
+  echo "restart: engine killed; waiting for the app guardian"
+}
+_wait_healthy() {  # $1=秒
+  local limit="$1" start=$SECONDS code
+  while [ $((SECONDS - start)) -lt "$limit" ]; do
+    code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)
+    case "$code" in 2*|3*|4*) echo "health: ok (http $code)"; return 0 ;; esac
+    sleep 2
+  done
+  echo "health: failed (timeout ${limit}s)" >&2
+  return 1
+}
+
+_cmd_status() {
+  echo "dsh: $(_dsh_version)"
+  echo "node: $(_node_version)"
+  echo "engine: $(_engine_version)"
+  echo "prefix: $P"
+  echo "staged: $([ -f "$STAGED/.dsh-engine-version" ] && cat "$STAGED/.dsh-engine-version" || echo none)"
+  echo "rollback: $([ -f "$PREV/engine-version" ] && cat "$PREV/engine-version" || echo none)"
+  exit 0
+}
+
+_cmd_check() {
+  local manifest="$MANIFEST_DEFAULT" json local_v feed_v
+  while [ $# -gt 0 ]; do case "$1" in --manifest) manifest="$2"; shift 2 ;; *) _usage ;; esac; done
+  local_v=$(_dsh_version)
+  if ! json=$(_fetch_manifest "$manifest" 2>/dev/null); then
+    # 引擎包还没发布时也要有用：退回 npm registry 只比 dsh 版本号（不下载）
+    local latest
+    latest=$(curl -fsSL -m 20 https://registry.npmmirror.com/@deepseek-ai/dsh/latest 2>/dev/null \
+      | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1) || latest=""
+    [ -n "$latest" ] || latest=$(curl -fsSL -m 20 https://registry.npmjs.org/@deepseek-ai/dsh/latest 2>/dev/null \
+      | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    echo "dsh: $local_v"
+    echo "npm_latest: ${latest:-?}"
+    echo "feed: unavailable ($manifest)"
+    echo "note: 引擎热更新包随 CI 发布到 dsh-engine-latest；未发布时升级=装新 APK"
+    [ -n "$latest" ] && [ "$latest" != "$local_v" ] && echo "update: yes ($local_v -> $latest)"
+    [ -n "$latest" ] && [ "$latest" = "$local_v" ] && echo "update: no (already $local_v)"
     exit 0
-    ;;
-  restart)
-    pkill -f "$PREFIX_DIR/bin/node" 2>/dev/null
-    echo "dsh-update: engine killed; the app guardian will start it again"
-    ;;
-  *) echo "usage: dsh-update status|check|pull|restart" >&2; exit 2 ;;
+  fi
+  feed_v=$(_jget "$json" dsh_version)
+  echo "dsh: $local_v"
+  echo "feed_dsh: ${feed_v:-?}"
+  echo "feed_engine: $(_jget "$json" engine_version)"
+  echo "abi: $_ABI"
+  if [ -n "$feed_v" ] && [ "$feed_v" = "$local_v" ]; then
+    echo "update: no (already $local_v)"; exit 0
+  fi
+  echo "update: yes ($local_v -> ${feed_v:-?})"
+  exit 0
+}
+
+_cmd_stage() {
+  local src="$1" sha="${2:-}" tmp="$P/tmp/engine-dsh.tar.gz"
+  [ -n "$src" ] || _usage
+  mkdir -p "$P/tmp"
+  case "$src" in
+    http://*|https://*) echo "stage: downloading $src"; curl -fL --retry 3 -m 900 -o "$tmp" "$src" || _die "download failed" ;;
+    *) [ -f "$src" ] || _die "artifact not found: $src"; cp -f "$src" "$tmp" ;;
+  esac
+  if [ -n "$sha" ]; then
+    local got; got=$(sha256sum "$tmp" | cut -d' ' -f1)
+    [ "$got" = "$sha" ] || _die "sha256 mismatch (want $sha got $got)"
+  fi
+  rm -rf "$STAGED.new"; mkdir -p "$STAGED.new"
+  tar -xzf "$tmp" -C "$STAGED.new" || _die "extract failed"
+  [ -f "$STAGED.new/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || [ -f "$STAGED/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || _die "artifact is not a dsh engine bundle"
+  rm -rf "$STAGED"; mv "$STAGED.new" "$STAGED"
+  echo "stage: ok ($([ -f "$STAGED/.dsh-engine-version" ] && cat "$STAGED/.dsh-engine-version" || echo unknown))"
+  exit 0
+}
+
+_swap_in() {  # $1 = staged 目录（引擎层）
+  local s="$1" b
+  rm -rf "$PREV"; mkdir -p "$PREV"
+  # 备份旧的引擎层（每项独立，缺就跳过；用 cp 而不是 mv，避免目录嵌套时静默出错）
+  [ -d "$P/lib/node_modules" ] && { mv "$P/lib/node_modules" "$PREV/node_modules" || _die "backup of node_modules failed (out of space?)" 1; }
+  for b in node rg; do [ -f "$P/bin/$b" ] && cp -f "$P/bin/$b" "$PREV/bin-$b"; done
+  [ -f "$P/.dsh-engine-version" ] && cp -f "$P/.dsh-engine-version" "$PREV/engine-version"
+  # 换入新层（旧层已 mv 到 PREV，这里目标必然不存在）
+  rm -rf "$P/lib/node_modules"
+  mv "$s/lib/node_modules" "$P/lib/node_modules" || _die "swap failed: cannot move staged node_modules" 1
+  for b in node rg; do
+    if [ -f "$s/bin/$b" ]; then cp -f "$s/bin/$b" "$P/bin/$b" || _die "swap failed: bin/$b" 1; chmod 755 "$P/bin/$b"; fi
+  done
+  [ -f "$s/.dsh-engine-version" ] && cp -f "$s/.dsh-engine-version" "$P/.dsh-engine-version"
+  [ -f "$P/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || _die "swap produced a broken tree (no dsh bin.js)" 1
+  echo "apply: swapped in $(_engine_version)"
+}
+
+_swap_back() {
+  [ -d "$PREV/node_modules" ] || _die "no rollback available" 1
+  rm -rf "$P/lib/node_modules"
+  mv "$PREV/node_modules" "$P/lib/node_modules" || _die "rollback failed: cannot restore node_modules" 1
+  local b
+  for b in node rg; do
+    if [ -f "$PREV/bin-$b" ]; then cp -f "$PREV/bin-$b" "$P/bin/$b" && chmod 755 "$P/bin/$b"; fi
+  done
+  [ -f "$PREV/engine-version" ] && cp -f "$PREV/engine-version" "$P/.dsh-engine-version"
+  rm -rf "$PREV"
+  echo "rollback: restored previous engine ($(_engine_version))"
+}
+
+_cmd_apply() {
+  [ -d "$STAGED/lib/node_modules" ] || _die "nothing staged (run: dsh-update pull|stage)" 1
+  echo "apply: current dsh=$(_dsh_version) engine=$(_engine_version)"
+  _swap_in "$STAGED"
+  rm -rf "$STAGED"
+  _restart_engine
+  if _wait_healthy 120; then
+    echo "apply: ok (dsh=$(_dsh_version) engine=$(_engine_version))"
+    exit 0
+  fi
+  echo "apply: new engine unhealthy, rolling back" >&2
+  _swap_back
+  _restart_engine
+  _wait_healthy 120 && echo "apply: rolled back (dsh=$(_dsh_version))"
+  _EXIT=1 _die "apply failed; rolled back"
+}
+
+_cmd_rollback() {
+  _swap_back
+  _restart_engine
+  _wait_healthy 120
+  exit 0
+}
+
+_cmd_pull() {
+  local manifest="$MANIFEST_DEFAULT" apply="" want="" json url sha tmp
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --manifest) manifest="$2"; shift 2 ;;
+      --apply) apply=1; shift ;;
+      -*) _usage ;;
+      *) want="$1"; shift ;;
+    esac
+  done
+  json=$(_fetch_manifest "$manifest") || _die "manifest fetch failed: $manifest"
+  url=$(_jabi "$json"); sha=$(_jabisha "$json")
+  [ -n "$url" ] || _die "no artifact for abi $_ABI in manifest"
+  echo "pull: $(_jget "$json" dsh_version) from $url"
+  tmp="$P/tmp/engine-dsh.tar.gz"; mkdir -p "$P/tmp"
+  curl -fL --retry 3 -m 900 -o "$tmp" "$url" || _die "download failed"
+  [ -n "$sha" ] && { [ "$(sha256sum "$tmp" | cut -d' ' -f1)" = "$sha" ] || _die "sha256 mismatch"; }
+  "$0" stage "$tmp" "$sha"
+  [ -n "$apply" ] && "$0" apply
+  echo "pull: staged; run 'dsh-update apply' (or --apply)"
+  exit 0
+}
+
+case "${1:-status}" in
+  status|version) _cmd_status ;;
+  check)  shift; _cmd_check "$@" ;;
+  pull)   shift; _cmd_pull "$@" ;;
+  stage)  shift; _cmd_stage "$@" ;;
+  apply)  _cmd_apply ;;
+  rollback) _cmd_rollback ;;
+  restart) _restart_engine; _wait_healthy 120; exit 0 ;;
+  help|-h|--help) _usage ;;
+  *) _die "unknown command: $1 (try dsh-update help)" 2 ;;
 esac

@@ -778,3 +778,54 @@ apt update && apt upgrade
 dsh-update status        # bundled engine version (engine upgrades with the APK)
 linux shell alpine       # distros still run under proot, independent of the Termux prefix
 ```
+
+## 13. dsh-update: engine-layer hot updates (restored 2026-10-18, verified on device)
+
+After the rename to `com.termux` the runtime has two layers (previous section).
+**Hot update replaces only the engine layer**:
+
+```
+<files>/usr/lib/node_modules      ← replaced
+<files>/usr/bin/node, bin/rg      ← replaced
+<files>/usr/.dsh-engine-version   ← replaced
+(apt/dpkg/bash/coreutils from the bootstrap are never touched)
+```
+
+### Commands
+
+```
+dsh-update status                        # local dsh/node/engine versions, staged/rollback state
+dsh-update check [--manifest URL]         # local dsh version vs feed (falls back to npm registry)
+dsh-update pull [version] [--apply]       # download engine tar.gz, verify sha256, stage it
+dsh-update stage <url|path> [sha256]      # stage an explicit artifact (offline/internal builds)
+dsh-update apply                          # backup -> swap -> restart -> health check (auto rollback on failure)
+dsh-update rollback                       # back to the previous engine
+dsh-update restart                        # restart the engine only
+```
+
+- version semantics are unchanged: keyed on the **`@deepseek-ai/dsh` version**, not the APK;
+- `apply` moves the old layer to `<prefix>/.engine-prev` (node_modules, bin/node, bin/rg, stamp),
+  swaps the new layer in, kills the engine so the guardian restarts it, then health-checks
+  `http://127.0.0.1:3080/`; an unhealthy new tree is rolled back with its stamp restored;
+- the artifact contains the engine layer only, so package management keeps working after updates.
+
+### CI publishing
+
+`.github/workflows/dsh-runtime.yml` now additionally produces:
+
+```
+engine-dsh-aarch64.tar.gz / engine-dsh-x86_64.tar.gz
+engine-manifest.json   { dsh_version, engine_version, assets.<arch>.{url,sha256,size} }
+```
+
+published to the rolling `dsh-engine-latest` release (the default feed) and archived in the
+immutable `dsh-runtime-<dsh version>` release. Until a release exists, `check` falls back to
+comparing the dsh version from the npmmirror registry.
+
+### Verified on device (arm64)
+
+```
+stage: ok (dsh-engine-0.2.0-rc.2-20261018)
+apply: swapped in ...   health: ok (http 401)   apply: ok
+rollback: restored previous engine (dsh-engine-2026.10.18)   health: ok
+```

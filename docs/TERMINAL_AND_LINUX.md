@@ -727,3 +727,52 @@ apt update && apt upgrade
 dsh-update status        # 查看内置引擎版本（引擎随 APK 升级）
 linux shell alpine       # 发行版仍走 proot（与 Termux 环境独立）
 ```
+
+## 十三、dsh-update：引擎层热更新（2026-10-18 恢复，设备实测通过）
+
+包名切到 `com.termux` 后运行时是两层（见上一节）。**热更新只换引擎层**：
+
+```
+<files>/usr/lib/node_modules      ← 换
+<files>/usr/bin/node, bin/rg      ← 换
+<files>/usr/.dsh-engine-version   ← 换
+（apt/dpkg/bash/coreutils 等 bootstrap 一个都不碰）
+```
+
+### 命令
+
+```
+dsh-update status                        # 本地 dsh/node/引擎版本、暂存/回滚状态
+dsh-update check [--manifest URL]         # 本地 dsh 版本 vs feed（未发布时退回 npm registry）
+dsh-update pull [版本] [--apply]          # 从 feed 下载引擎 tar.gz，校验 sha256 后暂存
+dsh-update stage <url|path> [sha256]      # 暂存指定包（离线/内测）
+dsh-update apply                          # 备份→换入→重启→健康检查（失败自动回滚）
+dsh-update rollback                       # 回到上一份引擎
+dsh-update restart                        # 只重启引擎
+```
+
+- 版本判断口径和以前一样：**按 `@deepseek-ai/dsh` 版本**，不是 APK 版本；
+- `apply` 先把旧层 mv 到 `<prefix>/.engine-prev`（含 bin/node、bin/rg、版本 stamp），
+  换入新层后 `pkill` 引擎让守护重启，用 `http://127.0.0.1:3080/` 健康检查；
+  新树不健康自动回滚并恢复旧 stamp；
+- 产物只含引擎层，所以更新引擎不会破坏 `pkg`/`apt`。
+
+### CI 发布
+
+`.github/workflows/dsh-runtime.yml` 在构建完 runtimes 后额外产出：
+
+```
+engine-dsh-aarch64.tar.gz / engine-dsh-x86_64.tar.gz
+engine-manifest.json   { dsh_version, engine_version, assets.<arch>.{url,sha256,size} }
+```
+
+发布到滚动 release `dsh-engine-latest`（默认 feed）与不可变 `dsh-runtime-<dsh版本>` 归档。
+本地没有发布时 `check` 自动退回 npmmirror 的 dsh 版本号比较。
+
+### 设备实测（arm64）
+
+```
+stage: ok (dsh-engine-0.2.0-rc.2-20261018)
+apply: swapped in ...   health: ok (http 401)   apply: ok
+rollback: restored previous engine (dsh-engine-2026.10.18)   health: ok
+```
