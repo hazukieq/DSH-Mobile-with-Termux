@@ -819,8 +819,9 @@ engine-manifest.json   { dsh_version, engine_version, assets.<arch>.{url,sha256,
 ```
 
 published to the rolling `dsh-engine-latest` release (the default feed) and archived in the
-immutable `dsh-runtime-<dsh version>` release. Until a release exists, `check` falls back to
-comparing the dsh version from the npmmirror registry.
+immutable `dsh-runtime-<dsh version>` release. `check` talks to the official GitHub only (direct URL, then the Releases API looking
+for `engine-manifest.json` assets) — it never queries npm. When no release exists it says
+so instead of pretending.
 
 ### Verified on device (arm64)
 

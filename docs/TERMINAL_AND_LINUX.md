@@ -767,7 +767,7 @@ engine-manifest.json   { dsh_version, engine_version, assets.<arch>.{url,sha256,
 ```
 
 发布到滚动 release `dsh-engine-latest`（默认 feed）与不可变 `dsh-runtime-<dsh版本>` 归档。
-本地没有发布时 `check` 自动退回 npmmirror 的 dsh 版本号比较。
+`check` 只走官方 GitHub（直链 → Releases API 找 `engine-manifest.json`），**不查 npm**；还没发布时如实报告 unavailable，不拿 npm 冒充。
 
 ### 设备实测（arm64）
 

@@ -12,7 +12,7 @@
 #
 # 用法:
 #   dsh-update status                       本地 dsh/node/引擎版本、暂存与回滚状态
-#   dsh-update check [--manifest URL]       本地 dsh 版本 vs feed 里的最新 dsh 版本
+#   dsh-update check [--manifest URL]       本地 dsh 版本 vs **GitHub** 上的最新引擎（不经 npm）
 #   dsh-update pull [dsh-version] [--apply] 下载最新引擎包并暂存（--apply 直接切换）
 #   dsh-update stage <url|path> [sha256]    暂存指定引擎包（离线测试用）
 #   dsh-update apply                        备份当前引擎 → 换入暂存 → 重启 + 健康检查
@@ -66,11 +66,27 @@ _jabisha() {
   printf '%s' "$1" | tr '}' '\n' | sed -n "/\"$_ABI\"/p" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
+_GH_API="https://api.github.com/repos/Soodok/Deepseek-Harness-Local-Android"
+
 _fetch_manifest() {  # $1=url|path → 内容
   case "$1" in
     http://*|https://*) command -v curl >/dev/null 2>&1 || _die "curl not found"; curl -fsSL --retry 2 -m 60 "$1" ;;
     *) [ -f "$1" ] || _die "manifest not found: $1"; cat "$1" ;;
   esac
+}
+
+# 官方 feed 只走 GitHub（不查 npm）：
+#   1. 滚动 release 的直链 engine-manifest.json（dsh-engine-latest）
+#   2. 直链还没同步/还没发布时，用 GitHub Releases API 在最近 30 个 release 里
+#      找一个挂了 engine-manifest.json 资产的，按 API 给的 browser_download_url 取
+_feed_manifest() {
+  local json url
+  json=$(_fetch_manifest "$MANIFEST_DEFAULT" 2>/dev/null) && { printf '%s' "$json"; return 0; }
+  command -v curl >/dev/null 2>&1 || return 1
+  json=$(curl -fsSL -m 30 -H 'Accept: application/vnd.github+json' "$_GH_API/releases?per_page=30" 2>/dev/null) || return 1
+  url=$(printf '%s' "$json" | tr ',' '\n' | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*engine-manifest\.json\)".*/\1/p' | head -1)
+  [ -n "$url" ] || return 1
+  _fetch_manifest "$url"
 }
 
 # ── 引擎层操作 ───────────────────────────────────────────────────────────────
@@ -100,33 +116,32 @@ _cmd_status() {
 }
 
 _cmd_check() {
-  local manifest="$MANIFEST_DEFAULT" json local_v feed_v
+  local manifest="$MANIFEST_DEFAULT" json local_v feed_v feed_e local_e
   while [ $# -gt 0 ]; do case "$1" in --manifest) manifest="$2"; shift 2 ;; *) _usage ;; esac; done
-  local_v=$(_dsh_version)
-  if ! json=$(_fetch_manifest "$manifest" 2>/dev/null); then
-    # 引擎包还没发布时也要有用：退回 npm registry 只比 dsh 版本号（不下载）
-    local latest
-    latest=$(curl -fsSL -m 20 https://registry.npmmirror.com/@deepseek-ai/dsh/latest 2>/dev/null \
-      | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1) || latest=""
-    [ -n "$latest" ] || latest=$(curl -fsSL -m 20 https://registry.npmjs.org/@deepseek-ai/dsh/latest 2>/dev/null \
-      | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    echo "dsh: $local_v"
-    echo "npm_latest: ${latest:-?}"
-    echo "feed: unavailable ($manifest)"
-    echo "note: 引擎热更新包随 CI 发布到 dsh-engine-latest；未发布时升级=装新 APK"
-    [ -n "$latest" ] && [ "$latest" != "$local_v" ] && echo "update: yes ($local_v -> $latest)"
-    [ -n "$latest" ] && [ "$latest" = "$local_v" ] && echo "update: no (already $local_v)"
+  local_v=$(_dsh_version); local_e=$(_engine_version)
+  echo "dsh: $local_v"
+  echo "engine: $local_e"
+  echo "abi: $_ABI"
+  if [ "$manifest" = "$MANIFEST_DEFAULT" ]; then json=$(_feed_manifest || true); else json=$(_fetch_manifest "$manifest" 2>/dev/null || true); fi
+  if [ -n "${json:-}" ]; then
+    feed_v=$(_jget "$json" dsh_version); feed_e=$(_jget "$json" engine_version)
+    if [ "$manifest" = "$MANIFEST_DEFAULT" ]; then echo "feed: github (dsh-engine-latest)"; else echo "feed: $manifest"; fi
+    echo "feed_dsh: ${feed_v:-?}"
+    echo "feed_engine: ${feed_e:-?}"
+    if [ -n "$feed_e" ] && [ "$feed_e" = "$local_e" ]; then
+      echo "update: no (already $local_e)"; exit 0
+    fi
+    if [ -n "$feed_v" ] && [ "$feed_v" = "$local_v" ] && [ "${feed_e:-}" = "$local_e" ]; then
+      echo "update: no (already $local_v / $local_e)"; exit 0
+    fi
+    echo "update: yes ($local_v/$local_e -> ${feed_v:-?}/${feed_e:-?})"
     exit 0
   fi
-  feed_v=$(_jget "$json" dsh_version)
-  echo "dsh: $local_v"
-  echo "feed_dsh: ${feed_v:-?}"
-  echo "feed_engine: $(_jget "$json" engine_version)"
-  echo "abi: $_ABI"
-  if [ -n "$feed_v" ] && [ "$feed_v" = "$local_v" ]; then
-    echo "update: no (already $local_v)"; exit 0
-  fi
-  echo "update: yes ($local_v -> ${feed_v:-?})"
+  # 官方 GitHub 上还没有带引擎包的 release：如实报告，不拿 npm 冒充
+  echo "feed: unavailable (github: no release with engine-manifest.json yet)"
+  echo "hint: 引擎热更新包由 .github/workflows/dsh-runtime.yml 发布到 dsh-engine-latest；"
+  echo "      在它发布之前，升级引擎 = 安装包含新引擎的 APK。"
+  echo "update: unknown"
   exit 0
 }
 
@@ -215,7 +230,11 @@ _cmd_pull() {
       *) want="$1"; shift ;;
     esac
   done
-  json=$(_fetch_manifest "$manifest") || _die "manifest fetch failed: $manifest"
+  if [ "$manifest" = "$MANIFEST_DEFAULT" ]; then
+    json=$(_feed_manifest) || _die "feed unavailable: no GitHub release with engine-manifest.json yet"
+  else
+    json=$(_fetch_manifest "$manifest") || _die "manifest fetch failed: $manifest"
+  fi
   url=$(_jabi "$json"); sha=$(_jabisha "$json")
   [ -n "$url" ] || _die "no artifact for abi $_ABI in manifest"
   echo "pull: $(_jget "$json" dsh_version) from $url"
