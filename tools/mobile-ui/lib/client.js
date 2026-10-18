@@ -42,6 +42,10 @@ function createMobileUi() {
   /** Clicks whose label looks like chrome navigation are worth a diagnostics
    *  report: that is how a "tapping this does nothing" complaint gets evidence. */
   var REPORT_CLICK_PATTERN = /侧栏|侧边栏|面板|浏览器|终端|文件|设置|插件|信息|搜索|panel|sidebar|browser|terminal|file|settings|drawer/
+  /** Right-pane memory keys (see setPaneOpen / rememberedPaneKind). */
+  var PANE_OPEN_KEY = 'dshm.paneOpen'
+  var PANE_KIND_KEY = 'dshm.paneKind'
+
   /** localStorage key holding the "skin is turned off" flag. */
   var DISABLED_KEY = 'dsh-mobile-ui:disabled'
   /** Element id of the revert row injected into the shipped settings page. */
@@ -698,10 +702,49 @@ function createMobileUi() {
     return state.paneOpen === true
   }
 
-  /** Publish the right-pane presentation to CSS. */
+  /** Publish the right-pane presentation to CSS (and remember it across loads). */
   function setPaneOpen(open) {
     state.paneOpen = !!open
     document.documentElement.setAttribute('data-dshm-pane', state.paneOpen ? 'open' : 'closed')
+    try {
+      var store = storage()
+      if (store !== null) store.setItem(PANE_OPEN_KEY, state.paneOpen ? '1' : '0')
+    } catch (error) {
+      /* a private-mode origin can refuse storage; memory still works this load */
+    }
+  }
+
+  /** Remember which right-pane tab the user opened last. */
+  function rememberPaneKind(kind) {
+    if (typeof kind !== 'string' || kind.length === 0) return
+    try {
+      var store = storage()
+      if (store !== null) store.setItem(PANE_KIND_KEY, kind)
+    } catch (error) {
+      /* ignore */
+    }
+  }
+
+  /** Last remembered right-pane tab kind, if the engine still registers it. */
+  function rememberedPaneKind() {
+    try {
+      var store = storage()
+      if (store === null) return ''
+      var kind = store.getItem(PANE_KIND_KEY) || ''
+      return typeof kind === 'string' ? kind : ''
+    } catch (error) {
+      return ''
+    }
+  }
+
+  /** Whether the previous page load left the right pane open. */
+  function storedPaneOpen() {
+    try {
+      var store = storage()
+      return store !== null && store.getItem(PANE_OPEN_KEY) === '1'
+    } catch (error) {
+      return false
+    }
   }
 
   /**
@@ -726,7 +769,9 @@ function createMobileUi() {
       return
     }
     var kinds = rightPaneKinds()
+    var remembered = rememberedPaneKind()
     var preferred = ['guide', 'files', 'terminal', 'plan']
+    if (remembered !== '' && preferred.indexOf(remembered) === -1) preferred.unshift(remembered)
     var candidates = preferred
       .filter(function (kind) {
         return kinds.indexOf(kind) !== -1
@@ -771,6 +816,7 @@ function createMobileUi() {
         }
       }
       if (placed) {
+        rememberPaneKind(next)
         reportDiag('rightbar-toggle')
         return
       }
@@ -933,13 +979,26 @@ function createMobileUi() {
     reportDiag('frame-attrs')
   }
 
-  /** Signature of the open modal surfaces (class + size). */
+  /**
+   * Signature of the open modal surfaces (class + size).
+   *
+   * Only dialogs that really own the screen count as "modal": the shipped UI
+   * also marks small popovers (the subagent member list, pickers) as
+   * role="dialog", and treating those as modal used to hide the app bar and
+   * leave an empty band above the popup. A full-screen surface (settings) still
+   * matches, so its bar-hiding rule keeps working.
+   */
   function dialogSignature() {
     var list = qa(DIALOG_SELECTOR)
     var parts = []
+    var vw = window.innerWidth || 0
+    var vh = window.innerHeight || 0
     for (var i = 0; i < list.length && i < 3; i += 1) {
       var rect = rectOf(list[i])
-      parts.push(String(list[i].className || '').slice(0, 24) + ':' + (rect ? rect[2] + 'x' + rect[3] : '?'))
+      if (rect === null || rect[2] === 0 || rect[3] === 0) continue
+      var big = rect[2] >= vw * 0.9 && rect[3] >= vh * 0.5
+      if (!big) continue
+      parts.push(String(list[i].className || '').slice(0, 24) + ':' + rect[2] + 'x' + rect[3])
     }
     return parts.join('|')
   }
@@ -1324,6 +1383,14 @@ function createMobileUi() {
     waitForFrame(function () {
       state.available = true
       mountChrome()
+      /* Restore the right pane the user left open in a previous load. The
+       * engine mounts the column hidden on narrow screens, so this layer is the
+       * only thing that can bring it back. */
+      if (storedPaneOpen()) {
+        window.setTimeout(function () {
+          if (!rightPaneOpen()) toggleRightPane()
+        }, 700)
+      }
       try {
         console.warn('[dsh-mobile-ui] v' + VERSION + ' applied at ' + window.innerWidth + 'x' + window.innerHeight)
       } catch (ignored) {}
