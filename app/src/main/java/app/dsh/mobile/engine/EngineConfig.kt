@@ -898,6 +898,39 @@ object EngineConfig {
             }.onFailure { Log.w(TAG, "engine patch failed on ${f.name}: ${it.message}") }
         }
         if (patched == 0) Log.i(TAG, "engine patch: android terminal inspection already patched")
+        patchInspectorWorkerForAndroid(root)
+    }
+
+    /**
+     * 开发者工具（experimental-inspector）的 Worker 需要 `--expose-internals`。
+     *
+     * 上游 `dsh-experimental-inspector/lib/index.js` 里 `spawnWorker()` 写死
+     * `execArgv: []` —— 桌面端没问题，因为它用**预编译原生 addon** 访问 Node 内部模块；
+     * Android 上我们只能用 JS 兜底（`node-addon-require-builtin` 改成 createRequire），
+     * 而 createRequire('internal/...') 只有在进程启动带 `--expose-internals` 时可用。
+     * Worker 的 execArgv 被显式清空 → 插件激活时报：
+     *   Error: Cannot find module 'internal/modules/esm/loader'
+     * 这里把空的 execArgv 补成 `["--expose-internals"]`（幂等；热更新后重跑）。
+     */
+    private fun patchInspectorWorkerForAndroid(root: File) {
+        val f = File(root, "lib/node_modules/@deepseek-ai/dsh-experimental-inspector/lib/index.js")
+        if (!f.isFile) {
+            Log.i(TAG, "inspector patch: experimental-inspector not present, skip")
+            return
+        }
+        val text = runCatching { f.readText() }.getOrNull() ?: return
+        if (text.contains("execArgv: [\"--expose-internals\"]")) {
+            Log.i(TAG, "inspector patch: worker execArgv already patched")
+            return
+        }
+        if (!text.contains("execArgv: []")) {
+            Log.w(TAG, "inspector patch: anchor 'execArgv: []' not found (engine layout changed?)")
+            return
+        }
+        runCatching {
+            f.writeText(text.replace("execArgv: []", "execArgv: [\"--expose-internals\"]"))
+            Log.i(TAG, "inspector patch: worker execArgv += --expose-internals")
+        }.onFailure { Log.w(TAG, "inspector patch failed: ${it.message}") }
     }
 
     /**
