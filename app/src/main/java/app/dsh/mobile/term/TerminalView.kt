@@ -571,6 +571,71 @@ class TerminalView @JvmOverloads constructor(
         invalidate()
     }
 
+    // ── 粘滞修饰键（v1.3.14）────────────────────────────────────────────────
+    // 按键条上的 CTRL / ALT / SHIFT：点一下点亮，作用于**下一次文本输入**，随后自动熄灭。
+    // 之前注释里说「不做粘滞态」是因为要跟 IME 抢事件；实际只需要在 sendText 这一层
+    // 做变换即可，IME 的 commitText / 硬件键的 unicodeChar 最终都走 sendText。
+    @Volatile var ctrlSticky = false
+        private set
+    @Volatile var altSticky = false
+        private set
+    @Volatile var shiftSticky = false
+        private set
+
+    /** 修饰键状态变化（ExtraKeys 据此刷新高亮） */
+    var onModifiersChanged: (() -> Unit)? = null
+
+    fun toggleCtrl() { ctrlSticky = !ctrlSticky; onModifiersChanged?.invoke() }
+    fun toggleAlt() { altSticky = !altSticky; onModifiersChanged?.invoke() }
+    fun toggleShift() { shiftSticky = !shiftSticky; onModifiersChanged?.invoke() }
+
+    private fun clearModifiers() {
+        ctrlSticky = false
+        altSticky = false
+        shiftSticky = false
+        onModifiersChanged?.invoke()
+    }
+
+    /** 把待生效的修饰键应用到文本上（Ctrl→控制字符，Alt→ESC 前缀，Shift→大写）。 */
+    private fun applyPendingModifiers(text: String): ByteArray {
+        if (!ctrlSticky && !altSticky && !shiftSticky) return text.toByteArray(Charsets.UTF_8)
+        var t = text
+        if (shiftSticky) {
+            t = buildString(t.length) { t.forEach { c -> append(shiftChar(c)) } }
+        }
+        val out = java.io.ByteArrayOutputStream()
+        if (altSticky) out.write(0x1B)
+        if (ctrlSticky) {
+            t.forEach { c -> out.write(ctrlByte(c)) }
+        } else {
+            out.write(t.toByteArray(Charsets.UTF_8))
+        }
+        return out.toByteArray()
+    }
+
+    /** 粘滞 Shift 的字符映射：字母大写 + US 布局的符号上档 */
+    private fun shiftChar(c: Char): Char = when (c) {
+        in 'a'..'z' -> c.uppercaseChar()
+        '1' -> '!'; '2' -> '@'; '3' -> '#'; '4' -> '$'; '5' -> '%'
+        '6' -> '^'; '7' -> '&'; '8' -> '*'; '9' -> '('; '0' -> ')'
+        '-' -> '_'; '=' -> '+'; '[' -> '{'; ']' -> '}'; '\\' -> '|'
+        ';' -> ':'; '\'' -> '"'; ',' -> '<'; '.' -> '>'; '/' -> '?'
+        '`' -> '~'
+        else -> c
+    }
+
+    private fun ctrlByte(c: Char): Int = when {
+        c in 'a'..'z' -> c.code - 'a'.code + 1
+        c in 'A'..'Z' -> c.code - 'A'.code + 1
+        c == ' ' || c == '@' -> 0
+        c == '[' -> 27
+        c == '\\' -> 28
+        c == ']' -> 29
+        c == '^' -> 30
+        c == '_' -> 31
+        else -> c.code and 0x1F
+    }
+
     /**
      * 发送一个物理键（KeyEvent.KEYCODE_* 对应的 VT 序列）。
      * 额外按键条（[TerminalExtraKeysView]）也走这里。
@@ -580,12 +645,14 @@ class TerminalView @JvmOverloads constructor(
         session?.write(seq)
     }
 
-    /** 发送文本（IME 提交、按键条的 "/" "|" 等） */
+    /** 发送文本（IME 提交、按键条的 "/" "|" 等）；粘滞修饰键在这一层生效 */
     fun sendText(text: String) {
         if (text.isEmpty()) return
-        val bytes = text.toByteArray(Charsets.UTF_8)
-        Log.i("TermIme", "sendText bytes=${bytes.size} session=${session != null}")
+        val hadModifier = ctrlSticky || altSticky || shiftSticky
+        val bytes = applyPendingModifiers(text)
+        Log.i("TermIme", "sendText bytes=${bytes.size} session=${session != null} mods=$hadModifier")
         session?.write(bytes)
+        if (hadModifier) clearModifiers()
     }
 
     /** 发送控制字符：'c' → 0x03（^C），'d' → 0x04，'l' → 0x0C… */

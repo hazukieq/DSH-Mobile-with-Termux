@@ -35,6 +35,10 @@ class TerminalExtraKeysView @JvmOverloads constructor(
     var target: TerminalView? = null
         set(value) {
             field = value
+            value?.onModifiersChanged = { updateModifierVisuals() }
+            updateModifierVisuals()
+            // 每次 attach/重建都把按键条复位到最左（CTRL/ALT/SHIFT 紧跟在 TAB 后面）
+            post { scrollTo(0, 0) }
         }
 
     /**
@@ -46,6 +50,11 @@ class TerminalExtraKeysView @JvmOverloads constructor(
      */
     var onToggleKeyboard: (() -> Unit)? = null
 
+    /** 粘滞修饰键的视图（用于高亮） */
+    private var ctrlView: TextView? = null
+    private var altView: TextView? = null
+    private var shiftView: TextView? = null
+
     private val row = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -53,6 +62,11 @@ class TerminalExtraKeysView @JvmOverloads constructor(
 
     init {
         isHorizontalScrollBarEnabled = false
+        // 按键条本身不抢焦点、也不让子键抢焦点：否则焦点落到右侧某个键时
+        // HorizontalScrollView 会自动滚到最右（实测一进终端就看到 PGDN/箭头，CTRL 被滚出屏幕）。
+        isFocusable = false
+        isFocusableInTouchMode = false
+        descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
         setBackgroundColor(BG)
         addView(
             row,
@@ -68,6 +82,10 @@ class TerminalExtraKeysView @JvmOverloads constructor(
         // 顺序按使用频率：先打断/补全，再编辑，最后移动
         key("ESC") { target?.sendKey(android.view.KeyEvent.KEYCODE_ESCAPE) }
         key("TAB") { target?.sendKey(android.view.KeyEvent.KEYCODE_TAB) }
+        // 粘滞修饰键（v1.3.14）：点亮后作用于下一次输入，然后自动熄灭
+        ctrlView = key("CTRL") { target?.toggleCtrl() }
+        altView = key("ALT") { target?.toggleAlt() }
+        shiftView = key("SHIFT") { target?.toggleShift() }
         key("^C") { target?.sendControlChar('c') }
         key("^D") { target?.sendControlChar('d') }
         key("^L") { target?.sendControlChar('l') }
@@ -89,7 +107,7 @@ class TerminalExtraKeysView @JvmOverloads constructor(
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun key(label: String, action: () -> Unit) {
+    private fun key(label: String, action: () -> Unit): TextView {
         val tv = TextView(context).apply {
             text = label
             setTextColor(FG)
@@ -110,6 +128,29 @@ class TerminalExtraKeysView @JvmOverloads constructor(
         lp.topMargin = dp(5)
         lp.bottomMargin = dp(5)
         row.addView(tv, lp)
+        return tv
+    }
+
+    /** 修饰键高亮：点亮时用强调色底 + 深色字，熄灭恢复默认胶囊 */
+    private fun updateModifierVisuals() {
+        val t = target
+        fun apply(v: TextView?, on: Boolean) {
+            v ?: return
+            if (on) {
+                v.background = GradientDrawable().apply {
+                    cornerRadius = dp(7).toFloat()
+                    setColor(ACTIVE_BG)
+                    setStroke(dp(1), ACTIVE_BG)
+                }
+                v.setTextColor(0xFF0B0F13.toInt())
+            } else {
+                v.background = pill()
+                v.setTextColor(FG)
+            }
+        }
+        apply(ctrlView, t?.ctrlSticky == true)
+        apply(altView, t?.altSticky == true)
+        apply(shiftView, t?.shiftSticky == true)
     }
 
     private fun pill(): GradientDrawable = GradientDrawable().apply {
@@ -124,6 +165,8 @@ class TerminalExtraKeysView @JvmOverloads constructor(
         parent?.requestDisallowInterceptTouchEvent(true)
         return super.onTouchEvent(ev)
     }
+
+    private val ACTIVE_BG = 0xFF7DD3FC.toInt()
 
     private companion object {
         const val BG = 0xFF141A21.toInt()
