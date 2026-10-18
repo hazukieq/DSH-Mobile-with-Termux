@@ -44,14 +44,52 @@ window.__ModuleLoader__.load({
       "}",
     ].join("\n");
 
+    /* 引擎布局用内联 grid-template-columns（56px minmax(0,1fr) ...）给左侧栏留位，
+       CSS 无法只改第一轨且不破坏右侧栏宽度，所以这里直接改内联样式：
+       收起态把第一轨从 56px 改成 0px；展开后引擎会自己写回 56px，我们不干预。 */
+    function syncFrameColumns() {
+      var frame = document.querySelector('[class*="_frame"]');
+      if (!frame || !frame.style) return;
+      var collapsed = !!document.querySelector(
+        '[class*="_sidebarCol"] [class*="_root"][class*="_collapsed"]'
+      );
+      if (!collapsed) return;
+      var cur = frame.style.gridTemplateColumns || '';
+      var parts = cur.trim().split(/\s+/);
+      if (parts.length >= 3 && parts[0] !== '0px') {
+        parts[0] = '0px';
+        frame.style.gridTemplateColumns = parts.join(' ');
+      }
+    }
+
     function apply() {
-      if (document.getElementById(STYLE_ID)) return function () { /* 幂等 */ };
-      var style = document.createElement("style");
-      style.id = STYLE_ID;
-      style.textContent = STYLE_TEXT;
-      (document.head || document.documentElement).appendChild(style);
+      var cleanup = function () {};
+      if (!document.getElementById(STYLE_ID)) {
+        var style = document.createElement("style");
+        style.id = STYLE_ID;
+        style.textContent = STYLE_TEXT;
+        (document.head || document.documentElement).appendChild(style);
+        cleanup = function () {
+          try { style.remove(); } catch (e) { /* 卸载阶段忽略 */ }
+        };
+      }
+
+      // 布局帧与侧栏状态的任何变化都重新对齐第一轨宽度
+      var frame = document.querySelector('[class*="_frame"]');
+      var rail = document.querySelector('[class*="_root"]:has(> [class*="_logoRow"])');
+      var mo = null;
+      if (window.MutationObserver) {
+        mo = new MutationObserver(function () { syncFrameColumns(); });
+        if (frame) mo.observe(frame, { attributes: true, attributeFilter: ['style', 'class'] });
+        if (rail) mo.observe(rail, { attributes: true, attributeFilter: ['class'] });
+      }
+      var timer = setInterval(syncFrameColumns, 700);
+      syncFrameColumns();
+
       return function () {
-        try { style.remove(); } catch (e) { /* 卸载阶段忽略 */ }
+        cleanup();
+        try { if (mo) mo.disconnect(); } catch (e) { /* ignore */ }
+        try { clearInterval(timer); } catch (e) { /* ignore */ }
       };
     }
 
