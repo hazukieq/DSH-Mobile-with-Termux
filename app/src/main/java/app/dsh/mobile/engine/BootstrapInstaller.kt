@@ -44,6 +44,8 @@ object BootstrapInstaller {
     fun ensure(ctx: Context, onProgress: (Float) -> Unit = {}) {
         val root = EngineConfig.engineRoot(ctx)            // <filesDir>/usr
         File(ctx.filesDir, "home").mkdirs()
+        // 默认 dotfiles（v1.3.8）：Termux 版基础 zshrc，不覆盖用户已有配置
+        TermuxDotfiles.ensure(ctx)
         listOf("tmp", "var", "etc/apt", "etc/tls").forEach { File(root, it).mkdirs() }
         ensureDshEngine(ctx, root, onProgress)
         // 包名从 app.dsh.mobile 换成 com.termux 后，老数据里的绝对路径要改写，

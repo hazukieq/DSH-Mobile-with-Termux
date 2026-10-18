@@ -1,0 +1,30 @@
+# ~/.zshrc - DSH Mobile default config (v1)
+# Managed by the app: this file is rewritten only while the version marker above
+# is present. Delete/change that marker line to keep your own edits forever.
+# Deliberately Termux-only: no PC aliases (nvm/pyenv/proxy/gcloud/texlive/...).
+
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt append_history share_history inc_append_history hist_ignore_dups hist_ignore_space
+setopt autocd extended_glob no_beep
+
+# completion
+autoload -Uz compinit && compinit -D
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'
+
+# basic aliases
+alias cls='clear'
+alias ll='ls -l'
+alias la='ls -a'
+alias l='ls -CF'
+alias vi='vim'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# prompt: user@host:cwd
+PROMPT='%F{cyan}%n%f@%F{green}%m%f:%F{blue}%~%f$ '
+RPROMPT='%(?..%F{red}[%?]%f)'
+
+export EDITOR=vi
