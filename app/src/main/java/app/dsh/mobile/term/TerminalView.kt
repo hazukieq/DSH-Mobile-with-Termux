@@ -237,6 +237,62 @@ class TerminalView @JvmOverloads constructor(
     // 渲染
     // ------------------------------------------------------------------
 
+    /** DEC 线框字符（ACS）用矢量绘制，保证相邻格连接、不受字体缺字影响。 */
+    private val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private fun boxStrokeWidth(): Float = max(1f, cellHeight / 12f)
+
+    /** 哪些字符属于 DEC 特殊图形映射后的线框/符号集合。 */
+    private fun isBoxDrawing(cp: Int): Boolean = cp == 0x2500 || cp == 0x2502 ||
+        cp == 0x250C || cp == 0x2510 || cp == 0x2514 || cp == 0x2518 ||
+        cp == 0x251C || cp == 0x2524 || cp == 0x2534 || cp == 0x252C || cp == 0x253C ||
+        (cp in 0x23BA..0x23BD)
+
+    private fun drawBoxChar(canvas: Canvas, cp: Int, x: Float, y: Float, w: Float, h: Float) {
+        val cx = x + w / 2f
+        val cy = y + h / 2f
+        val l = x
+        val r = x + w
+        val t = y
+        val b = y + h
+        boxPaint.strokeWidth = boxStrokeWidth()
+        when (cp) {
+            0x2500 -> canvas.drawLine(l, cy, r, cy, boxPaint)
+            0x2502 -> canvas.drawLine(cx, t, cx, b, boxPaint)
+            0x250C -> { canvas.drawLine(cx, cy, r, cy, boxPaint); canvas.drawLine(cx, cy, cx, b, boxPaint) }
+            0x2510 -> { canvas.drawLine(l, cy, cx, cy, boxPaint); canvas.drawLine(cx, cy, cx, b, boxPaint) }
+            0x2514 -> { canvas.drawLine(cx, cy, r, cy, boxPaint); canvas.drawLine(cx, t, cx, cy, boxPaint) }
+            0x2518 -> { canvas.drawLine(l, cy, cx, cy, boxPaint); canvas.drawLine(cx, t, cx, cy, boxPaint) }
+            0x251C -> {
+                canvas.drawLine(l, cy, r, cy, boxPaint)
+                canvas.drawLine(cx, t, cx, b, boxPaint)
+            }
+            0x2524 -> {
+                canvas.drawLine(l, cy, r, cy, boxPaint)
+                canvas.drawLine(cx, t, cx, b, boxPaint)
+            }
+            0x252C -> {
+                canvas.drawLine(l, cy, r, cy, boxPaint)
+                canvas.drawLine(cx, cy, cx, b, boxPaint)
+            }
+            0x2534 -> {
+                canvas.drawLine(l, cy, r, cy, boxPaint)
+                canvas.drawLine(cx, t, cx, cy, boxPaint)
+            }
+            0x253C -> {
+                canvas.drawLine(l, cy, r, cy, boxPaint)
+                canvas.drawLine(cx, t, cx, b, boxPaint)
+            }
+            0x23BA -> canvas.drawLine(l, t + 1f, r, t + 1f, boxPaint)
+            0x23BB -> canvas.drawLine(l, cy * 0.5f + t * 0.5f, r, cy * 0.5f + t * 0.5f, boxPaint)
+            0x23BC -> canvas.drawLine(l, cy * 0.5f + b * 0.5f, r, cy * 0.5f + b * 0.5f, boxPaint)
+            0x23BD -> canvas.drawLine(l, b - 1f, r, b - 1f, boxPaint)
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(colorScheme.bg)
         val s = session ?: return
@@ -297,7 +353,20 @@ class TerminalView @JvmOverloads constructor(
                     continue
                 }
                 applyTextStyle(cell)
-                canvas.drawText(text, (baseX + c * cellWidth).toFloat(), y, textPaint)
+                val cp = if (text.length == 1) text[0].code else 0
+                if (cp != 0 && isBoxDrawing(cp)) {
+                    boxPaint.color = textPaint.color
+                    drawBoxChar(
+                        canvas,
+                        cp,
+                        (baseX + c * cellWidth).toFloat(),
+                        (baseY + r * cellHeight).toFloat(),
+                        cellWidth.toFloat(),
+                        cellHeight.toFloat(),
+                    )
+                } else {
+                    canvas.drawText(text, (baseX + c * cellWidth).toFloat(), y, textPaint)
+                }
                 c += if (cell.wide) 2 else 1
             }
         }

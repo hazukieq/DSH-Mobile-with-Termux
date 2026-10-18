@@ -509,10 +509,15 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
     private var state = S_GROUND
     private var escInter = 0
 
-    /** G0/G1 是否被指定为 DEC 特殊图形（线框）字符集，以及 GL 当前取自 G1。 */
+    /** G0..G3 是否被指定为 DEC 特殊图形（线框）字符集。 */
     private var g0DecSpecial = false
     private var g1DecSpecial = false
+    private var g2DecSpecial = false
+    private var g3DecSpecial = false
+
+    /** GL 当前取自 G1（SO），或下一次单字符用 G2/G3（SS2/SS3，SS2=2 / SS3=3）。 */
     private var glFromG1 = false
+    private var singleShift = 0
 
     private val csiParams = IntArray(MAX_CSI_PARAMS)
     private var csiCount = 0
@@ -546,6 +551,8 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
                 when (escInter) {
                     '('.code -> g0DecSpecial = cp == '0'.code
                     ')'.code -> g1DecSpecial = cp == '0'.code
+                    '*'.code -> g2DecSpecial = cp == '0'.code
+                    '+'.code -> g3DecSpecial = cp == '0'.code
                     '#'.code -> if (cp == '8'.code) decaln()
                 }
                 state = S_GROUND
@@ -630,6 +637,9 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
             'c'.code -> hardResetLocked()
             '='.code -> keypadAppOn = true
             '>'.code -> keypadAppOn = false
+            // SS2 / SS3：下一个可打印字符临时用 G2 / G3
+            'N'.code -> singleShift = 2
+            'O'.code -> singleShift = 3
             // 字符集指定 / DECALN 等两字节 ESC 序列：吃掉下一个字节
             '('.code, ')'.code, '*'.code, '+'.code, '-'.code, '.'.code, '/'.code, '#'.code -> {
                 escInter = cp
@@ -955,8 +965,12 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
     // 打印
     // ------------------------------------------------------------------
 
-    /** 当前 GL 字符集是否为 DEC 特殊图形（curses/dialog 的线框字符）。 */
-    private fun decSpecialActive(): Boolean = if (glFromG1) g1DecSpecial else g0DecSpecial
+    /** 当前字符集是否为 DEC 特殊图形（curses/dialog 的线框字符）。 */
+    private fun decSpecialActive(): Boolean {
+        if (singleShift == 2) return g2DecSpecial
+        if (singleShift == 3) return g3DecSpecial
+        return if (glFromG1) g1DecSpecial else g0DecSpecial
+    }
 
     /**
      * DEC Special Graphics（VT100 ACS）映射表：把 0x60..0x7E 的 ASCII 换成线框/符号。
@@ -1003,7 +1017,9 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
     }
 
     private fun printCp(cp: Int) {
-        val ch = if (decSpecialActive()) decSpecialChar(cp) else cp
+        val special = decSpecialActive()
+        val ch = if (special) decSpecialChar(cp) else cp
+        singleShift = 0
         val w = wcwidth(ch)
         if (w == 0) {
             appendCombining(ch)
