@@ -130,6 +130,8 @@ function createMobileUi() {
     panelButton: null,
     /** This layer's own right-pane presentation flag (see mobile.css). */
     paneOpen: false,
+    /** Dock tab ids whose exited terminal was already auto-closed. */
+    exitedClosed: {},
     /** Disposer returned to cordis, kept so the revert button can tear down. */
     dispose: null,
     /** Last seen frame attribute set / dialog set, for change-triggered reports. */
@@ -701,6 +703,60 @@ function createMobileUi() {
   }
 
   /**
+   * Close a terminal tab once its process has exited.
+   *
+   * The shipped terminal keeps the dead process's scrollback and paints its
+   * "process exited / new terminal" status bar above it, so on a phone the pane
+   * looks frozen: the old output and the new-terminal row share the screen and
+   * the dead tab never goes away. The requested behaviour is to drop that tab as
+   * soon as the process exits, so the pane falls back to a live tab (or closes).
+   */
+  function closeExitedTerminalTabs() {
+    if (!rightPaneOpen()) return
+    var col = q('.pI_x6G_rightbarCol')
+    if (col === null) return
+    var term = col.querySelector('[data-sidebar-terminal]')
+    if (term === null) return
+    var text = String(term.textContent || '')
+    if (!/进程已退出|Process exited|终端已关闭|Terminal closed/.test(text)) return
+    var active = col.querySelector('[role="tab"][aria-selected="true"]')
+    if (active === null) return
+    var tabId = active.getAttribute('data-dockkit-tab')
+    if (tabId === null || tabId === '' || state.exitedClosed[tabId] === true) return
+    state.exitedClosed[tabId] = true
+    var right = rightPaneService()
+    var closed = false
+    if (right && typeof right.closeTab === 'function') {
+      try {
+        right.closeTab(tabId)
+        closed = true
+      } catch (error) {
+        closed = false
+      }
+    }
+    if (!closed) {
+      /* Service path failed: fall back to the tab's own close control. */
+      var close = active.querySelector('[data-dockkit-tab-close]')
+      if (close !== null) {
+        try {
+          close.click()
+          closed = true
+        } catch (error) {
+          closed = false
+        }
+      }
+    }
+    if (closed) {
+      window.setTimeout(function () {
+        if (!rightPaneHasTabs()) setPaneOpen(false)
+      }, 350)
+      try {
+        console.warn('[dsh-mobile-ui] closed exited terminal tab ' + tabId)
+      } catch (ignored) {}
+    }
+  }
+
+  /**
    * Whether this layer is presenting the right pane.
    * Deliberately not `data-rightbar-collapsed`: the shipped column math zeroes
    * the track on narrow viewports, so that attribute is permanently true here.
@@ -1143,6 +1199,7 @@ function createMobileUi() {
     reconcileDrawer()
     checkFrameAttrs()
     checkDialogs()
+    closeExitedTerminalTabs()
     syncRevertRow()
   }
 
