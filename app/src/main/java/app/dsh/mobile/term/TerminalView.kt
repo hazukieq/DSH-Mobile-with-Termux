@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.util.AttributeSet
+import android.util.Log
 import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -513,7 +514,9 @@ class TerminalView @JvmOverloads constructor(
     /** 发送文本（IME 提交、按键条的 "/" "|" 等） */
     fun sendText(text: String) {
         if (text.isEmpty()) return
-        session?.write(text.toByteArray(Charsets.UTF_8))
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        Log.i("TermIme", "sendText bytes=${bytes.size} session=${session != null}")
+        session?.write(bytes)
     }
 
     /** 发送控制字符：'c' → 0x03（^C），'d' → 0x04，'l' → 0x0C… */
@@ -681,6 +684,7 @@ class TerminalView @JvmOverloads constructor(
             imeBuffer.clear()
             // IME 提交空串通常只是清组合态，不能当成输入发送
             val t = text?.toString().orEmpty()
+            Log.i("TermIme", "commitText='${t}'")
             if (t.isNotEmpty()) sendText(t)
             return true
         }
@@ -689,11 +693,18 @@ class TerminalView @JvmOverloads constructor(
         override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
             imeBuffer.clear()
             if (!text.isNullOrEmpty()) imeBuffer.append(text)
+            Log.i("TermIme", "setComposingText='${text}'")
             return true
         }
 
         override fun finishComposingText(): Boolean {
+            // 兜底：有些 IME（vivo 自带/讯飞）只更新组合文本然后 finish，
+            // 并不调 commitText —— 这时把缓冲里的内容当最终文本提交，
+            // 否则用户选了候选词却什么都没进终端（实测现象）。
+            val pending = imeBuffer.toString()
             imeBuffer.clear()
+            Log.i("TermIme", "finishComposingText pending='${pending}'")
+            if (pending.isNotEmpty()) sendText(pending)
             return true
         }
 
@@ -722,8 +733,45 @@ class TerminalView @JvmOverloads constructor(
 
         override fun sendKeyEvent(event: KeyEvent?): Boolean {
             if (event == null) return false
-            if (event.action == KeyEvent.ACTION_DOWN) sendKey(event.keyCode)
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                Log.i("TermIme", "sendKeyEvent code=${event.keyCode} uc=${event.unicodeChar}")
+                // Trime（同文/Rime）等输入法在英文模式下发的是 KeyEvent 而不是
+                // commitText：字母必须从 unicodeChar / keyCode 还原成字符直接写 PTY，
+                // 否则只有方向键/回车能过、英文全被吞（用户实测）。
+                val ch = charForKeyEvent(event)
+                if (ch != null) sendText(ch.toString()) else sendKey(event.keyCode)
+            }
             return true
+        }
+
+        /** KeyEvent → 可打印字符；非打印键返回 null（交给 sendKey 处理转义序列） */
+        private fun charForKeyEvent(e: KeyEvent): Char? {
+            val uc = e.unicodeChar
+            if (uc != 0) {
+                val c = uc.toChar()
+                if (!c.isISOControl()) return c
+            }
+            val kc = e.keyCode
+            val shift = e.isShiftPressed
+            return when {
+                kc in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z ->
+                    ('a'.code + (kc - KeyEvent.KEYCODE_A)).toChar().let { if (shift) it.uppercaseChar() else it }
+                kc in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 ->
+                    ('0'.code + (kc - KeyEvent.KEYCODE_0)).toChar()
+                kc == KeyEvent.KEYCODE_SPACE -> ' '
+                kc == KeyEvent.KEYCODE_COMMA -> if (shift) '<' else ','
+                kc == KeyEvent.KEYCODE_PERIOD -> if (shift) '>' else '.'
+                kc == KeyEvent.KEYCODE_SLASH -> if (shift) '?' else '/'
+                kc == KeyEvent.KEYCODE_MINUS -> if (shift) '_' else '-'
+                kc == KeyEvent.KEYCODE_EQUALS -> if (shift) '+' else '='
+                kc == KeyEvent.KEYCODE_LEFT_BRACKET -> if (shift) '{' else '['
+                kc == KeyEvent.KEYCODE_RIGHT_BRACKET -> if (shift) '}' else ']'
+                kc == KeyEvent.KEYCODE_SEMICOLON -> if (shift) ':' else ';'
+                kc == KeyEvent.KEYCODE_APOSTROPHE -> if (shift) '"' else '\''
+                kc == KeyEvent.KEYCODE_BACKSLASH -> if (shift) '|' else '\\'
+                kc == KeyEvent.KEYCODE_GRAVE -> if (shift) '~' else '`'
+                else -> null
+            }
         }
 
         override fun performEditorAction(editorAction: Int): Boolean {
