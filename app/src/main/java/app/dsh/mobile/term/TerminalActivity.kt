@@ -352,7 +352,7 @@ class TerminalActivity : Activity() {
         const val EXTRA_DISTRO = "distro"
         private const val KEY_LAST_PROFILE = "term_last_profile"
         private const val KEY_FONT_SP = "term_font_sp"
-        private const val DEFAULT_FONT_SP = 13f
+        private const val DEFAULT_FONT_SP = 11.5f
         private const val MIN_FONT_SP = 8f
         private const val MAX_FONT_SP = 26f
 
