@@ -952,7 +952,7 @@ object EngineConfig {
             // 漏掉了这两个，但种子仍在教 agent 使用 → agent 照着调用得到 command not found
             // （Agent 审计 N8 实测）。它们解决的是真问题：agent 常以 `bash -c '... pkill -f X'`
             // 形式执行，完整命令行含 pattern 会命中自己并自杀，必须按 comm 匹配。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { name ->
+            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update", "pc").forEach { name ->
                 val dst = File(bindir, name)
                 runCatching {
                     val text = ctx.assets.open("gates/$name").use { it.readBytes().toString(Charsets.UTF_8) }
@@ -991,7 +991,7 @@ object EngineConfig {
                 dst.setReadable(true, true)
     }.onFailure { Log.w(TAG, "lan-web-proxy deploy failed: ${it.message}") }
 
-            listOf("notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { File(bindir, it).setExecutable(true, false) }
+            listOf("notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update", "pc").forEach { File(bindir, it).setExecutable(true, false) }
             File(bindir, "_dsh_http.sh").setReadable(true, false)
 
             // 部署后自检（v1.2.52）：逐个校验首行不含 \r 且指向存在的解释器。

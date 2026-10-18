@@ -64,6 +64,33 @@ check only when the task or an actual error makes the current state relevant.
 - `notify <message>`, `scr …`, `loop …` — the Android bridge tools described further below; they
   authenticate internally, so there is no need to look for tokens or curl the bridge.
 
+## Calling the desktop agent over USB (`pc` gate)
+
+The phone can hand a task to the user's **computer** (which runs its own dsh) and read the answer back,
+over the USB cable only — no Wi-Fi, no pairing:
+
+```sh
+pc health                      # is the bridge reachable / what is queued
+pc ask "run the test suite and summarise failures"   # dispatch + wait, prints the computer's answer
+pc start "..."                 # dispatch only -> task id
+pc show <id>                   # status + result, poll it any time later
+pc list                        # recent tasks
+pc cancel <id>
+pc session <session-id> "..."  # continue the same computer-side session
+```
+
+- Mechanism: the computer runs `~/.dsh/usb-bridge/bridge.mjs` on 127.0.0.1:9100 and
+  `adb reverse tcp:9100 tcp:9100` exposes it on the phone's loopback; `pc` is just an HTTP
+  client for it. The computer performs the work with `dsh --profile headless` and keeps the
+  full transcript in `~/.dsh/usb-bridge/results/<id>.json|.md`.
+- If `pc` reports *bridge unreachable*, the USB debugging link is down or the computer side
+  has not attached the tunnel: ask the user to reconnect the cable and run
+  `~/.dsh/usb-bridge/attach.sh` on the computer (and `start.sh` if the bridge is not running).
+- Dispatch tasks that genuinely belong on the computer (heavy builds, large repos, desktop
+  windows, files on the computer). Do not use it for work the phone can do itself.
+- The computer agent does not share this conversation: write a self-contained task, mention
+  absolute paths, and state the expected output format.
+
 ## Linux environment (proot, optional)
 
 Native `pkg install` (above) is the normal way to add tools. Separately, there is an optional **Linux userland**: a real distro rootfs
