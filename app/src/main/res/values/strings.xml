@@ -496,4 +496,11 @@ engine: %6$s</string>
     <string name="setting_runtime_check_failed">Check failed: %1$s</string>
     <string name="setting_runtime_pull">Pull and apply</string>
     <string name="setting_runtime_pulling">Pulling dsh runtime…</string>
+    <string name="setting_user_prompt">User instructions</string>
+    <string name="setting_user_prompt_sub">Add your own standing instructions on top of the built-in environment guide</string>
+    <string name="user_prompt_intro">These instructions are appended after the app-managed environment guide and apply to every new session. The app never overwrites what you write here, and upgrades keep it as-is. You can also ask the AI to write here for you.</string>
+    <string name="user_prompt_placeholder">For example: always answer in Chinese. Or: when I say "backup", copy the workspace to Documents.</string>
+    <string name="user_prompt_save">Save</string>
+    <string name="user_prompt_saved">Saved; takes effect in new sessions</string>
+    <string name="user_prompt_path">Stored in the user section of AGENTS.md (app-managed file, your text is never overwritten)</string>
 </resources>

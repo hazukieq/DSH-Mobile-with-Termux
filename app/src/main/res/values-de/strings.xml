@@ -506,4 +506,11 @@ Engine: %6$s</string>
     <string name="setting_runtime_check_failed">Prüfung fehlgeschlagen: %1$s</string>
     <string name="setting_runtime_pull">Laden und anwenden</string>
     <string name="setting_runtime_pulling">dsh-Runtime wird geladen…</string>
+    <string name="setting_user_prompt">Eigene Anweisungen</string>
+    <string name="setting_user_prompt_sub">Eigene dauerhafte Anweisungen über den eingebauten Umgebungsleitfaden hinaus</string>
+    <string name="user_prompt_intro">Diese Anweisungen werden nach dem vom App verwalteten Umgebungsleitfaden angehängt und gelten für jede neue Sitzung. Der App überschreibt deinen Text nie, Aktualisierungen behalten ihn bei. Du kannst die KI auch bitten, hier etwas einzutragen.</string>
+    <string name="user_prompt_placeholder">Zum Beispiel: immer auf Deutsch antworten. Oder: Wenn ich "Backup" sage, kopiere den Workspace nach Documents.</string>
+    <string name="user_prompt_save">Speichern</string>
+    <string name="user_prompt_saved">Gespeichert; gilt in neuen Sitzungen</string>
+    <string name="user_prompt_path">Gespeichert im Nutzerabschnitt von AGENTS.md (app-verwaltet, dein Text wird nie überschrieben)</string>
 </resources>

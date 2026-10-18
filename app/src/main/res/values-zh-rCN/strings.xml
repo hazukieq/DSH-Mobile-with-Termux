@@ -496,4 +496,11 @@ dsh：%2$s
     <string name="setting_runtime_check_failed">检查失败：%1$s</string>
     <string name="setting_runtime_pull">拉取并应用</string>
     <string name="setting_runtime_pulling">正在拉取 dsh 运行时…</string>
+    <string name="setting_user_prompt">自定义指令</string>
+    <string name="setting_user_prompt_sub">在自带的环境说明之上，补写你自己的长期指令</string>
+    <string name="user_prompt_intro">这里的指令会追加到应用自带的环境说明之后，对每个新会话生效。应用永不覆盖你写的内容，升级也会原样保留。也可以直接让 AI 帮你写到这里。</string>
+    <string name="user_prompt_placeholder">例如：始终用中文回答。或者：我说「备份」时，把工作区复制到 Documents 目录。</string>
+    <string name="user_prompt_save">保存</string>
+    <string name="user_prompt_saved">已保存，新会话生效</string>
+    <string name="user_prompt_path">保存在 AGENTS.md 的用户段（由应用管理，你的内容永不被覆盖）</string>
 </resources>

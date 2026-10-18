@@ -243,6 +243,13 @@ class SettingsActivity : Activity() {
             showRuntimeDialog()
         }
 
+        // 自定义指令（v1.3.2，issue #19）：在 App 的环境说明之上补写用户自己的长期指令。
+        // 落点是 AGENTS.md 的用户段 —— 引擎只加载这一个 user-global 指令文件，
+        // 分段管理后升级 App 不会丢用户内容，用户改指令也不会让环境说明变旧。
+        findViewById<android.widget.LinearLayout>(R.id.rowUserPrompt).setOnClickListener {
+            startActivity(android.content.Intent(this, UserPromptActivity::class.java))
+        }
+
         // 语音服务（v1.2.78）：识别 + 合成合并入口，归入扩展中心分组
         findViewById<LinearLayout>(R.id.rowVoiceService).setOnClickListener {
             startActivity(Intent(this, app.dsh.mobile.VoiceServiceActivity::class.java))
