@@ -509,6 +509,11 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
     private var state = S_GROUND
     private var escInter = 0
 
+    /** G0/G1 是否被指定为 DEC 特殊图形（线框）字符集，以及 GL 当前取自 G1。 */
+    private var g0DecSpecial = false
+    private var g1DecSpecial = false
+    private var glFromG1 = false
+
     private val csiParams = IntArray(MAX_CSI_PARAMS)
     private var csiCount = 0
     private var csiCur = -1
@@ -538,7 +543,11 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
             S_ESC -> escDispatch(cp)
             S_ESC_INT -> {
                 // ESC ( B / ESC # 8 之类的两字节序列
-                if (escInter == '#'.code && cp == '8'.code) decaln()
+                when (escInter) {
+                    '('.code -> g0DecSpecial = cp == '0'.code
+                    ')'.code -> g1DecSpecial = cp == '0'.code
+                    '#'.code -> if (cp == '8'.code) decaln()
+                }
                 state = S_GROUND
             }
             S_CSI -> csiByte(cp)
@@ -579,9 +588,9 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
                 curCol = 0
                 wrapPendingFlag = false
             }
-            // SO/SI：字符集 G0/G1 切换。Android shell 场景一律按 ASCII 处理，
-            // 不实现 DEC 特殊图形字符集（line-drawing）—— 那是 curses 之外的极少数场景。
-            C0_SO, C0_SI -> Unit
+            // SO/SI：GL 在 G1 / G0 之间切换（DEC 线框字符集靠这条路径生效）。
+            C0_SO -> glFromG1 = true
+            C0_SI -> glFromG1 = false
         }
     }
 
@@ -946,10 +955,58 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
     // 打印
     // ------------------------------------------------------------------
 
+    /** 当前 GL 字符集是否为 DEC 特殊图形（curses/dialog 的线框字符）。 */
+    private fun decSpecialActive(): Boolean = if (glFromG1) g1DecSpecial else g0DecSpecial
+
+    /**
+     * DEC Special Graphics（VT100 ACS）映射表：把 0x60..0x7E 的 ASCII 换成线框/符号。
+     * dialog、htop、menuconfig 这类 ncurses 程序在非 UTF-8 locale 下会走这条路径，
+     * 不映射就会看到 `lqqqk / x / mqqqj` 这种“字母版线框”。
+     */
+    private fun decSpecialChar(cp: Int): Int {
+        if (cp < 0x5F || cp > 0x7E) return cp
+        return when (cp) {
+            0x5F -> ' '.code          // blank
+            0x60 -> 0x25C6            // ◆
+            0x61 -> 0x2592            // ▒
+            0x62 -> 0x2409            // ␉
+            0x63 -> 0x240C            // ␌
+            0x64 -> 0x240D            // ␍
+            0x65 -> 0x240A            // ␊
+            0x66 -> 0x00B0            // °
+            0x67 -> 0x00B1            // ±
+            0x68 -> 0x2424            // ␤
+            0x69 -> 0x240B            // ␋
+            0x6A -> 0x2518            // ┘
+            0x6B -> 0x2510            // ┐
+            0x6C -> 0x250C            // ┌
+            0x6D -> 0x2514            // └
+            0x6E -> 0x253C            // ┼
+            0x6F -> 0x23BA            // ⎺
+            0x70 -> 0x23BB            // ⎻
+            0x71 -> 0x2500            // ─
+            0x72 -> 0x23BC            // ⎼
+            0x73 -> 0x23BD            // ⎽
+            0x74 -> 0x251C            // ├
+            0x75 -> 0x2524            // ┤
+            0x76 -> 0x2534            // ┴
+            0x77 -> 0x252C            // ┬
+            0x78 -> 0x2502            // │
+            0x79 -> 0x2264            // ≤
+            0x7A -> 0x2265            // ≥
+            0x7B -> 0x03C0            // π
+            0x7C -> 0x2260            // ≠
+            0x7D -> 0x00A3            // £
+            0x7E -> 0x00B7            // ·
+            else -> cp
+        }
+    }
+
     private fun printCp(cp: Int) {
-        val w = wcwidth(cp)
+        val ch = if (decSpecialActive()) decSpecialChar(cp) else cp
+        val w = wcwidth(ch)
         if (w == 0) {
-            appendCombining(cp)
+            appendCombining(ch)
             return
         }
         if (wrapPendingFlag) {
@@ -957,8 +1014,8 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
             curCol = 0
             lineFeed()
         }
-        if (w == 2) printWide(cp) else printNarrow(cp)
-        lastCp = cp
+        if (w == 2) printWide(ch) else printNarrow(ch)
+        lastCp = ch
     }
 
     private fun printNarrow(cp: Int) {
