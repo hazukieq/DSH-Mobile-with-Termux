@@ -2,6 +2,7 @@ package app.dsh.mobile.term
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -192,16 +193,54 @@ class TerminalActivity : Activity() {
      */
     private fun promptExitAfterLastSession() {
         val lastProfile = prefs.getString(KEY_LAST_PROFILE, ShellProfiles.ID_ANDROID) ?: ShellProfiles.ID_ANDROID
-        AlertDialog.Builder(this)
-            .setTitle(R.string.terminal_exit_confirm_title)
-            .setMessage(R.string.terminal_exit_confirm_message)
-            .setCancelable(false)
-            .setPositiveButton(R.string.terminal_exit_confirm_exit) { _, _ ->
-                closeAllAndFinish()
-                finishAffinity()
+        // 自绘弹窗（v1.3.13）：框架 AlertDialog 在部分 ROM（vivo/ColorOS）上会给
+        // 按钮区叠一层半透明底，观感像「弹框透明」。这里整块内容都用实心背景，
+        // 标题/正文/按钮全部自己画，窗口背景透明只留圆角实心卡片。
+        val pad = dp(22)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_dialog_solid)
+            setPadding(pad, dp(20), pad, dp(8))
+        }
+        fun label(text: String, size: Float, color: Int, bottom: Int = 0): TextView =
+            TextView(this).apply {
+                this.text = text
+                textSize = size
+                setTextColor(color)
+                setPadding(0, 0, 0, bottom)
             }
-            .setNegativeButton(R.string.terminal_exit_confirm_new) { _, _ -> openSession(lastProfile) }
-            .show()
+        card.addView(label(getString(R.string.terminal_exit_confirm_title), 18f, 0xFFE8ECF2.toInt(), dp(10)))
+        card.addView(label(getString(R.string.terminal_exit_confirm_message), 15f, 0xFFB8C2CE.toInt(), dp(6)))
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+            setPadding(0, dp(14), 0, dp(6))
+        }
+        val dialog = Dialog(this)
+        fun action(text: String, onClick: () -> Unit) {
+            val tv = label(text, 15f, 0xFF7DD3FC.toInt())
+            tv.setPadding(dp(14), dp(10), dp(14), dp(10))
+            tv.isClickable = true
+            // 不要系统焦点高亮框（某些 ROM 会在第一个可点项上画一块灰底）
+            tv.isFocusable = false
+            tv.setOnClickListener { dialog.dismiss(); onClick() }
+            buttons.addView(tv)
+        }
+        action(getString(R.string.terminal_exit_confirm_new)) { openSession(lastProfile) }
+        action(getString(R.string.terminal_exit_confirm_exit)) {
+            closeAllAndFinish()
+            finishAffinity()
+        }
+        card.addView(buttons)
+        dialog.setContentView(card)
+        dialog.setCancelable(false)
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.55f)
+            setLayout(dp(300), android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.show()
     }
 
     private fun confirmClose(s: TerminalSession) {
