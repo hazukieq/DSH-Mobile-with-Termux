@@ -565,6 +565,12 @@ object EngineConfig {
             |    - id: android-narrow-welcome
             |      name: ./android-plugins/narrow-welcome/index.js
             |
+            |# Narrow-screen sidebar rail (v1.3.0): collapse the 56px icon strip into a single
+            |# floating icon at the top-left; tapping it opens the sidebar as usual.
+            |- insert:
+            |    - id: android-narrow-rail
+            |      name: ./android-plugins/narrow-rail/index.js
+            |
             |""".trimMargin()
         runCatching {
             if (!f.isFile || f.readText() != body) f.writeText(body)
@@ -586,7 +592,7 @@ object EngineConfig {
             // 新增插件的步骤：① 在 assets 建目录（含这三个文件）
             //               ② 在此列表追加目录名
             //               ③ 在 overlay 的 insert 段追加一条 entry（指向 index.js）
-            listOf("narrow-sidebar", "narrow-settings", "narrow-rightbar", "narrow-welcome").forEach { pkg ->
+            listOf("narrow-sidebar", "narrow-settings", "narrow-rightbar", "narrow-welcome", "narrow-rail").forEach { pkg ->
                 listOf("package.json", "index.js", "client.js").forEach { fileName ->
                     val src = ctx.assets.open("android-plugins/$pkg/$fileName")
                         .use { it.readBytes() }
