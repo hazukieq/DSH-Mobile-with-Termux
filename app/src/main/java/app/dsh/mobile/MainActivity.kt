@@ -330,6 +330,15 @@ class MainActivity : Activity() {
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val uri = request?.url ?: return false
+                // 子框架导航一律交给 WebView 自己处理。
+                // ⚠️ 2026-10-19：侧边栏「HTML 预览」空白就是这里造成的 —— 预览把文档
+                // 放进 src=blob:... 的 iframe，WebView 为该子框架导航回调本方法，
+                // 旧实现只认 127.0.0.1（blob:/data: 的 host 为空）→ 当成外部链接
+                // `startActivity(ACTION_VIEW)` 并 return true（取消加载）→ iframe 永远空白。
+                // 主框架之外没有「跳去外部浏览器」的语义，直接放行。
+                if (!request.isForMainFrame) return false
+                // 内联/本地伪协议不可能是外部页面
+                if (uri.scheme == "blob" || uri.scheme == "data" || uri.scheme == "about" || uri.scheme == "javascript") return false
                 // 仅允许回环导航；外部链接交给系统浏览器
                 if (uri.host == "127.0.0.1" || uri.host == "localhost") return false
                 runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
