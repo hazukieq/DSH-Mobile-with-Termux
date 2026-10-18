@@ -643,13 +643,17 @@ class TerminalView @JvmOverloads constructor(
     override fun onCheckIsTextEditor(): Boolean = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        // ⚠️ 这里**绝不能**用 TYPE_TEXT_VARIATION_VISIBLE_PASSWORD：
+        // 那是给「显示明文密码」输入框的，vivo/小米等 ROM 会据此弹出**安全键盘**
+        // （纯英文数字、无中文输入法）—— 用户实测「终端打不了中文、还弹出密码键盘」。
+        // 终端只需要普通文本 + 组合输入（中文候选词）。
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
-            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
-            InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            InputType.TYPE_TEXT_FLAG_MULTI_LINE
         outAttrs.imeOptions = EditorInfo.IME_ACTION_NONE or
             EditorInfo.IME_FLAG_NO_FULLSCREEN or
             EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        outAttrs.initialSelStart = 0
+        outAttrs.initialSelEnd = 0
         return TerminalInputConnection()
     }
 
@@ -660,17 +664,53 @@ class TerminalView @JvmOverloads constructor(
     private inner class TerminalInputConnection : BaseInputConnection(this@TerminalView, false) {
 
         private var lastDeleteAt = 0L
+        /**
+         * IME 的“可编辑区”。
+         *
+         * 终端本身没有可编辑文本，但**中文/日文输入法必须看到一个真正的 Editable**
+         * 才会进入组合输入（拼音→候选词）。BaseInputConnection(editable=false) 时
+         * getEditable() 返回 null，很多 IME 直接退化成「只能打英文」——
+         * 这正是 vivo 上中文打不出来的第二个原因（第一个是 VISIBLE_PASSWORD 弹安全键盘）。
+         * 这里给 IME 一个进程内的缓冲，组合过程只更新它，选词提交时再写 PTY。
+         */
+        private val imeBuffer = android.text.SpannableStringBuilder()
+
+        override fun getEditable(): android.text.Editable = imeBuffer
 
         override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
-            if (text != null) sendText(text.toString())
+            imeBuffer.clear()
+            // IME 提交空串通常只是清组合态，不能当成输入发送
+            val t = text?.toString().orEmpty()
+            if (t.isNotEmpty()) sendText(t)
             return true
         }
 
-        override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean = true
+        /** 中文/日文输入法：拼音阶段反复回调这里，选词后走 commitText */
+        override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
+            imeBuffer.clear()
+            if (!text.isNullOrEmpty()) imeBuffer.append(text)
+            return true
+        }
 
-        override fun finishComposingText(): Boolean = true
+        override fun finishComposingText(): Boolean {
+            imeBuffer.clear()
+            return true
+        }
+
+        override fun setComposingRegion(start: Int, end: Int): Boolean = true
+
+        override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence = imeBuffer
+
+        override fun getTextAfterCursor(n: Int, flags: Int): CharSequence = ""
+
+        override fun getSelectedText(flags: Int): CharSequence? = null
 
         override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+            // 组合输入中按退格 = 删候选拼音，不能给 PTY 发退格
+            if (imeBuffer.isNotEmpty()) {
+                imeBuffer.clear()
+                return true
+            }
             // 部分 IME 在按下/抬起时各调一次 → 20ms 内去重，避免一次退格删两个字符
             val now = System.currentTimeMillis()
             if (now - lastDeleteAt < DELETE_DEDUPE_MS) return true
