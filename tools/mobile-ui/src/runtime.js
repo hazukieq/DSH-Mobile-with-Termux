@@ -686,6 +686,21 @@ function createMobileUi() {
   }
 
   /**
+   * Whether the shipped right pane already owns tabs.
+   *
+   * The engine keeps its dock state (open tabs + active tab) across close/open
+   * and reloads. Calling `openTab(kind)` on every open therefore forces that
+   * kind to the front - which is why the pane kept jumping to the "guide" tab
+   * even when a terminal tab was already there. Only place a tab when the pane
+   * has none.
+   */
+  function rightPaneHasTabs() {
+    var col = q('.pI_x6G_rightbarCol')
+    if (col === null) return false
+    return col.querySelectorAll('[role="tablist"] [role="tab"]').length > 0
+  }
+
+  /**
    * Whether this layer is presenting the right pane.
    * Deliberately not `data-rightbar-collapsed`: the shipped column math zeroes
    * the track on narrow viewports, so that attribute is permanently true here.
@@ -785,6 +800,12 @@ function createMobileUi() {
       } catch (error) {
         /* presentation still works through our own attribute */
       }
+    }
+    /* Existing tabs belong to the engine's dock state: keep the user's active
+     * tab instead of jumping to the first registered kind. */
+    if (rightPaneHasTabs()) {
+      reportDiag('rightbar-toggle')
+      return
     }
     /* Placing a tab needs the session surface to be mounted, which happens one
      * React render after openRightbar(); retry the same kind a few times before
