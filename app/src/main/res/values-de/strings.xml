@@ -506,17 +506,4 @@ Engine: %6$s</string>
     <string name="setting_runtime_check_failed">Prüfung fehlgeschlagen: %1$s</string>
     <string name="setting_runtime_pull">Laden und anwenden</string>
     <string name="setting_runtime_pulling">dsh-Runtime wird geladen…</string>
-    <string name="btn_drawer">Menü öffnen</string>
-    <string name="btn_more_menu">Weitere Optionen</string>
-    <string name="drawer_new_session">Neue Sitzung</string>
-    <string name="drawer_plugins">Plugins</string>
-    <string name="drawer_automation">Automatisierungen</string>
-    <string name="drawer_memory">Gedächtnis</string>
-    <string name="drawer_search">Sitzungen suchen</string>
-    <string name="drawer_settings">Einstellungen</string>
-    <string name="drawer_hide_topbar">Obere Leiste ausblenden</string>
-    <string name="drawer_dsh_settings">DSH-Einstellungen</string>
-    <string name="drawer_sessions">Sitzungen</string>
-    <string name="drawer_sessions_empty">Noch keine Sitzungen</string>
-    <string name="drawer_search_hint">Sitzungen suchen…</string>
 </resources>

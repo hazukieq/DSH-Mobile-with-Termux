@@ -1,7 +1,8 @@
 {
-  "name": "dsh-android-narrow-rail",
-  "version": "1.0.0",
+  "name": "dsh-mobile-ui",
+  "version": "0.1.17",
   "private": true,
+  "description": "Android-app-style mobile UI layer for the DeepSeek Harness Web interface: popup drawer sidebar, collapsed top-info panel, phone-adapted composer.",
   "type": "module",
   "main": "index.js",
   "exports": {

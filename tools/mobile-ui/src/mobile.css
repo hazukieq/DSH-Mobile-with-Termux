@@ -1,0 +1,777 @@
+/* ==========================================================================
+ * dsh-mobile-ui — Android-app-style layer over the shipped DSH Web UI.
+ *
+ * Everything is gated on html[data-dsh-mobile] so the desktop layout is never
+ * touched. Class names are the shipped CSS-module names of DSH 0.2.0-rc.2
+ * (hashed prefixes are version-specific; the semantic suffixes are stable).
+ *
+ * Geometry model
+ *   [ top app bar 52dp (safe-area on top)                ]  z 50
+ *   [ transcript / main panel (padding-top = bar height) ]
+ *   [ composer (sticky bottom, safe-area on bottom)      ]
+ *   left drawer (80) > scrim (40) > bar (50) > right pane (30) > info panel (35)
+ * ========================================================================== */
+
+html[data-dsh-mobile] {
+  --dshm-bar-h: 52px;
+  --dshm-safe-top: env(safe-area-inset-top, 0px);
+  --dshm-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --dshm-bar-total: calc(var(--dshm-bar-h) + var(--dshm-safe-top));
+}
+
+html[data-dsh-mobile],
+html[data-dsh-mobile] body {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+html[data-dsh-mobile] body {
+  margin: 0;
+  min-height: 100%;
+}
+
+/* Hide desktop-only affordances. */
+html[data-dsh-mobile] .pI_x6G_handle,
+html[data-dsh-mobile] .wSkVaW_widthHandle,
+html[data-dsh-mobile] .pI_x6G_leadingSeat {
+  display: none !important;
+}
+
+/* ── Frame: single full-width column; sidebar and right pane become overlays ── */
+html[data-dsh-mobile] .pI_x6G_frame {
+  grid-template-columns: 0 minmax(0, 1fr) 0 !important;
+  grid-template-rows: 100% !important;
+}
+
+/* Pinned grid placement is mandatory, not cosmetic.
+ *
+ * `.pI_x6G_frame` is `display:grid` and the shipped columns rely on implicit
+ * auto-placement. The moment this layer takes `.pI_x6G_sidebarCol` out of flow
+ * (`position:fixed`) — and the right pane is either `display:none` or fixed
+ * too — the only in-flow item left is the center column, which auto-placement
+ * then drops into the *first* track. That track is deliberately 0px wide, so
+ * the transcript, header and composer all collapse to zero width and the page
+ * looks blank/white with just our app bar ("会话无法正常显示").
+ * Naming the track for each column keeps the layout intact no matter which
+ * overlay state the sidebar/right pane is in. */
+html[data-dsh-mobile] .pI_x6G_frame > .pI_x6G_sidebarCol {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+}
+
+html[data-dsh-mobile] .pI_x6G_frame > .pI_x6G_centerCol {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding-top: var(--dshm-bar-total);
+}
+
+html[data-dsh-mobile] .pI_x6G_frame > .pI_x6G_rightbarCol {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+}
+
+/* ── Left sidebar: fixed popup drawer ── */
+html[data-dsh-mobile] .pI_x6G_sidebarCol {
+  position: fixed !important;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 80;
+  box-sizing: border-box;
+  width: min(86vw, 330px) !important;
+  max-width: 86vw;
+  padding-top: var(--dshm-safe-top);
+  padding-bottom: var(--dshm-safe-bottom);
+  overflow: hidden;
+  border-right: 0 !important;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base));
+  transform: translate3d(-102%, 0, 0);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+  box-shadow: none;
+}
+
+html[data-dsh-mobile][data-dshm-drawer='open'] .pI_x6G_sidebarCol {
+  transform: translate3d(0, 0, 0);
+  box-shadow: 10px 0 34px rgba(0, 0, 0, 0.28);
+}
+
+html[data-dsh-mobile] .pI_x6G_sidebarCol > * {
+  height: 100%;
+}
+
+html[data-dsh-mobile] .pI_x6G_sidebarCol .hHd-Xa_root {
+  width: 100% !important;
+}
+
+/* Bigger touch targets in the drawer. */
+html[data-dsh-mobile] .pI_x6G_sidebarCol button {
+  min-height: 40px;
+}
+
+html[data-dsh-mobile] .pI_x6G_sidebarCol .hHd-Xa_newSession {
+  min-height: 44px;
+}
+
+/* Third-party skins (dsh-codex-ui) render their own sidebar root; keep the
+ * drawer geometry independent of which sidebar package occupies the column. */
+html[data-dsh-mobile] .pI_x6G_sidebarCol .dcu-root {
+  width: 100% !important;
+  height: 100%;
+}
+
+html[data-dsh-mobile] .pI_x6G_sidebarCol .dcu-expanded-shell {
+  width: 100% !important;
+}
+
+/* Drawer safety net: if the occupant still reports its compact posture when the
+ * drawer is open, present its expanded surface anyway instead of a 56px rail. */
+html[data-dsh-mobile][data-dshm-drawer='open'] .pI_x6G_sidebarCol .dcu-root.dcu-compact {
+  width: 100% !important;
+}
+
+html[data-dsh-mobile][data-dshm-drawer='open'] .pI_x6G_sidebarCol .dcu-root.dcu-compact .dcu-expanded-shell {
+  display: flex !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+html[data-dsh-mobile][data-dshm-drawer='open'] .pI_x6G_sidebarCol .dcu-root.dcu-compact .dcu-compact-shell {
+  display: none !important;
+}
+
+/* Phone screens must never scroll sideways. */
+html[data-dsh-mobile],
+html[data-dsh-mobile] body {
+  overflow-x: hidden;
+}
+
+html[data-dsh-mobile] .pI_x6G_centerCol {
+  overflow-x: hidden;
+}
+
+/* ── Right pane (files / terminal / browser / docs): full-screen overlay ──
+ *
+ * The shipped frame decides the right pane's visibility from a computed grid
+ * column, and that computation zeroes the track on a phone:
+ *
+ *   computeColumns(360, 56, 300) → available = 360 - 56 - 400 = -96 < 300 → 0
+ *   "data-rightbar-collapsed": cols.rightbar === 0
+ *
+ * So on any narrow viewport `layout.openRightbar()` sets rightbarShown=true but
+ * the attribute comes straight back and the pane can never appear. This layer
+ * therefore owns the presentation: `html[data-dshm-pane="open"]` (set by the app
+ * bar button) is the single source of truth, and the pane renders as an overlay
+ * regardless of what the desktop column math says.
+ */
+html[data-dsh-mobile] .pI_x6G_frame .pI_x6G_rightbarCol {
+  display: none;
+}
+
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol {
+  display: block !important;
+  position: fixed !important;
+  /* Offset from the top instead of using padding-top: a child's percentage
+   * height resolves against the viewport for a fixed box, so padding would push
+   * the pane's own tab strip up underneath the app bar. */
+  top: var(--dshm-bar-total) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  z-index: 30;
+  box-sizing: border-box;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  padding-top: 0 !important;
+  background: var(--dsw-alias-bg-base);
+}
+
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol > * {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  border-radius: 0 !important;
+}
+
+/* The pane shell sizes itself from the width it believes its column owns (0px
+ * here), so every layer inside is pinned to the overlay box instead. */
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol [class*='_panel'],
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol [class*='_panelBody'],
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol [class*='_tabBody'],
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol [class*='_session'],
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol [class*='_hero'],
+html[data-dsh-mobile][data-dshm-pane='open'] .pI_x6G_frame .pI_x6G_rightbarCol [class*='_guide'] {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}
+
+/* ── Top app bar ── */
+html[data-dsh-mobile] #dshm-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--dshm-bar-total);
+  padding-top: var(--dshm-safe-top);
+  padding-left: 2px;
+  padding-right: 2px;
+  background: var(--dsw-alias-bg-base);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  backdrop-filter: saturate(180%) blur(14px);
+}
+
+html[data-dsh-mobile] #dshm-bar {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+html[data-dsh-mobile] .dshm-icon-btn {
+  touch-action: manipulation;
+}
+
+html[data-dsh-mobile] #dshm-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 2px;
+  font-family: var(--dsw-font-family);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html[data-dsh-mobile] .dshm-icon-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html[data-dsh-mobile] .dshm-icon-btn:active {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+html[data-dsh-mobile] .dshm-icon-btn[hidden] {
+  display: none !important;
+}
+
+html[data-dsh-mobile] .dshm-icon-btn svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+/* ── Scrims ── */
+html[data-dsh-mobile] .dshm-scrim,
+html[data-dsh-mobile] .dshm-info-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+html[data-dsh-mobile] .dshm-info-scrim {
+  z-index: 34;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+html[data-dsh-mobile][data-dshm-drawer='open'] .dshm-scrim {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .dshm-info-scrim {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Top-info panel: the shipped conversation header, collapsed by default ── */
+html[data-dsh-mobile] .wSkVaW_header {
+  display: none !important;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_header {
+  display: grid !important;
+  position: fixed !important;
+  top: var(--dshm-bar-total);
+  left: 0;
+  right: 0;
+  z-index: 35;
+  box-sizing: border-box;
+  grid-template-columns: auto minmax(0, 1fr) !important;
+  min-height: 0 !important;
+  /* Nearly the whole screen: the shipped header holds the session title, the
+   * action row and the tabs, and 64vh cut it off mid-row. */
+  max-height: calc(100dvh - var(--dshm-bar-total) - 12px);
+  padding: 12px 14px 12px !important;
+  overflow-y: auto;
+  background-color: var(--dsw-alias-bg-base, #fff);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.22);
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_titleRow {
+  flex-wrap: wrap;
+  row-gap: 8px;
+  min-height: 0;
+  padding-inline-start: 0 !important;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_titleCluster {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_crumbs {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_crumb {
+  max-width: 74vw;
+  font-size: 15px;
+  padding: 6px 8px;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_headerActions,
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_headerUtilities {
+  gap: 6px;
+  margin-left: 6px !important;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_headerActions button,
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_headerUtilities button,
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_headerCorner button {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_tabs {
+  gap: 8px;
+  margin-top: 10px;
+  padding-left: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_tabs::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_tab {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_tab::after {
+  display: none;
+}
+
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_tabActive {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* ── Conversation / transcript ── */
+html[data-dsh-mobile] .wSkVaW_body,
+html[data-dsh-mobile] .wSkVaW_embeddedBody {
+  --dsh-chat-content-width: 100%;
+  --dsh-composer-card-max-width: 100%;
+  --dsh-composer-side-clearance: 10px;
+  --dsh-composer-dock-inset: 4px;
+}
+
+html[data-dsh-mobile] .EvIC1a_scroll {
+  padding: 12px 12px 6px;
+}
+
+html[data-dsh-mobile] .EvIC1a_column {
+  max-width: 100% !important;
+}
+
+html[data-dsh-mobile] .EvIC1a_toBottomSlot {
+  padding-right: calc(var(--dsh-composer-side-clearance) + 12px);
+}
+
+html[data-dsh-mobile] .EvIC1a_toBottom {
+  width: 40px;
+  height: 40px;
+}
+
+/* ── Composer ── */
+html[data-dsh-mobile] .uV2eYG_root,
+html[data-dsh-mobile] .uV2eYG_hero {
+  padding-bottom: calc(6px + var(--dshm-safe-bottom));
+  padding-left: var(--dsh-composer-side-clearance);
+  padding-right: var(--dsh-composer-side-clearance);
+}
+
+html[data-dsh-mobile] .uV2eYG_card {
+  gap: 6px;
+  padding-top: 6px;
+  border-radius: 22px;
+}
+
+html[data-dsh-mobile] .uV2eYG_input {
+  min-height: 40px;
+  padding: 6px 6px 0 14px;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+html[data-dsh-mobile] .uV2eYG_placeholder {
+  inset: 6px 6px auto 14px;
+  font-size: 16px;
+}
+
+html[data-dsh-mobile] .uV2eYG_row {
+  gap: 6px;
+  padding: 0 4px 4px;
+}
+
+html[data-dsh-mobile] .uV2eYG_tools,
+html[data-dsh-mobile] .uV2eYG_modes,
+html[data-dsh-mobile] .uV2eYG_trailing {
+  gap: 8px;
+}
+
+html[data-dsh-mobile] .uV2eYG_add {
+  width: 34px;
+  height: 34px;
+}
+
+html[data-dsh-mobile] .uV2eYG_select {
+  max-width: 46vw;
+  height: 32px;
+}
+
+html[data-dsh-mobile] .uV2eYG_primary {
+  width: 40px;
+  height: 40px;
+  transform: none;
+}
+
+html[data-dsh-mobile] .uV2eYG_primary svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ── Blank-session hero ── */
+html[data-dsh-mobile] .pXSMma_root {
+  padding: 0 16px;
+}
+
+html[data-dsh-mobile] .pXSMma_headline {
+  font-size: 22px;
+  line-height: 28px;
+}
+
+/* ── Menus / dialogs: keep them on top of the mobile chrome ── */
+/* Menus/popovers live in the shipped overlay layer (z-index 20), which sits
+ * *below* every piece of mobile chrome (pane 30, scrims 34/40, bar 50) — a
+ * dropdown opened from the top panel therefore rendered under the app bar and
+ * looked broken. Lift the layer above the chrome, and keep individual floating
+ * surfaces above the layer. */
+html[data-dsh-mobile] .pI_x6G_overlayLayer {
+  z-index: 300 !important;
+}
+
+html[data-dsh-mobile] [role='dialog'],
+html[data-dsh-mobile] [role='menu'],
+html[data-dsh-mobile] [role='listbox'],
+html[data-dsh-mobile] [class*='_menu'],
+html[data-dsh-mobile] [class*='_popover'],
+html[data-dsh-mobile] [data-trigger-menu] {
+  z-index: 900;
+}
+
+/* A dropdown opened from inside the top panel must not be clipped by the
+ * panel's own overflow box. Note: `overflow-y: auto` alone would force the other
+ * axis to `auto` too, so the panel opts out of scrolling entirely — it is nearly
+ * full height now, and paint-through beats a half-cut menu. */
+html[data-dsh-mobile][data-dshm-info='open'] .wSkVaW_header {
+  overflow: visible;
+}
+
+/* ── Modal surfaces (设置 / pickers / confirmations) ──
+ * Desktop draws these as a centred card sized against a wide window. On a
+ * 360dp screen either the card overflows or its two-column shell (nav + body)
+ * squeezes both halves into unusable slivers, so:
+ *   1. nothing may exceed the viewport, and
+ *   2. a true modal (`aria-modal`) becomes a full-bleed sheet below our app bar,
+ *      which is the Android pattern for a settings screen. */
+html[data-dsh-mobile] [role='dialog'] {
+  box-sizing: border-box;
+  max-width: 100vw !important;
+  max-height: calc(100dvh - var(--dshm-bar-total)) !important;
+}
+
+html[data-dsh-mobile] [role='dialog'][aria-modal='true'] {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* A full-screen settings page owns the whole surface: hide the app bar behind it
+ * so the dialog really is the page (it carries its own close control). */
+html[data-dsh-mobile][data-dshm-modal='open'] #dshm-bar {
+  display: none !important;
+}
+
+/* Level the dialog's own top padding with the safe area now that the bar is gone. */
+html[data-dsh-mobile][data-dshm-modal='open'] [role='dialog'][aria-modal='true'] {
+  padding-top: var(--dshm-safe-top);
+}
+
+/* ── Revert row injected into the shipped settings page ── */
+html[data-dsh-mobile] #dshm-revert-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 16px 24px 20px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+html[data-dsh-mobile] #dshm-revert-row .dshm-revert-title {
+  font-family: var(--dsw-font-family);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+html[data-dsh-mobile] #dshm-revert-row .dshm-revert-desc {
+  font-family: var(--dsw-font-family);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+html[data-dsh-mobile] #dshm-revert-row .dshm-revert-btn {
+  align-self: flex-start;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 22px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html[data-dsh-mobile] #dshm-revert-row .dshm-revert-btn:active {
+  background: var(--dsw-alias-interactive-bg-pressed, var(--dsw-alias-interactive-bg-hover));
+}
+
+/* ── Settings detail pass ── */
+
+/* The shipped switch is 36x20 and must keep that size; it is a flex item, so it
+ * also has to be forbidden from shrinking. */
+html[data-dsh-mobile] [role='dialog'] [role='switch'] {
+  flex: 0 0 auto !important;
+  width: 36px;
+  height: 20px;
+  min-height: 0 !important;
+  padding: 2px;
+}
+
+/* The dialog header is a row of actions + close. `.VOzbGW_actions` has no width
+ * of its own, so its buttons used to spill past the panel edge and sit on top of
+ * the close control. */
+html[data-dsh-mobile] .VOzbGW_header {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+html[data-dsh-mobile] .VOzbGW_actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 40px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+html[data-dsh-mobile] .VOzbGW_actions::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-dsh-mobile] .VOzbGW_close {
+  flex: 0 0 auto;
+  margin-left: auto;
+  /* 28px wide was below a comfortable touch target. */
+  width: 40px;
+  height: 40px;
+}
+
+/* Setting rows are a label column plus a control column. At 360dp the label gets
+ * squeezed into a 4-line sliver; let the control drop to its own line instead. */
+html[data-dsh-mobile] [role='dialog'] [class*='_row'] {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+html[data-dsh-mobile] [role='dialog'] [class*='_row'] > * {
+  min-width: 0;
+}
+
+/* Buttons keep their label on one line; a wrapped "添加插
+件" pill looks broken. */
+html[data-dsh-mobile] [role='dialog'] button {
+  white-space: nowrap;
+}
+
+/* A dialog's own header/nav rows must wrap instead of clipping at 360dp. */
+html[data-dsh-mobile] [role='dialog'][aria-modal='true'] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html[data-dsh-mobile] [role='dialog'] [class*='_header'],
+html[data-dsh-mobile] [role='dialog'] [class*='_nav'],
+html[data-dsh-mobile] [role='dialog'] [class*='_toolbar'] {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+/* NOTE: never put a blanket min-height on [role='dialog'] button — the shipped
+ * switch is a 36x20 <button role="switch">, and forcing 40px turned it into a
+ * 36x40 pill/circle. Touch sizing is applied per control instead. */
+
+/* ── Settings surface (dsh-client-ui-settings-general) ──
+ * Desktop shell = fixed 188px navigation rail beside the content column. On a
+ * 360dp screen that left the body 172px wide and every option row squeezed into
+ * a 3457px-tall sliver ("被拉变形"). Reflow the rail into a horizontal,
+ * scrollable tab strip and hand the body the full width. */
+html[data-dsh-mobile] .VOzbGW_panel {
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+html[data-dsh-mobile] .VOzbGW_panel > .VOzbGW_nav {
+  order: 0;
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  box-sizing: border-box;
+  padding: 8px 12px !important;
+  border-right: 0 !important;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+html[data-dsh-mobile] .VOzbGW_navTitle {
+  display: none !important;
+}
+
+html[data-dsh-mobile] .VOzbGW_panel > .VOzbGW_nav > .VOzbGW_navList {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 8px;
+  width: 100% !important;
+  height: auto !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+html[data-dsh-mobile] .VOzbGW_navList::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-dsh-mobile] .VOzbGW_panel > .VOzbGW_nav .VOzbGW_navCell {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-height: 40px;
+  padding: 8px 14px !important;
+  border-radius: 999px;
+}
+
+html[data-dsh-mobile] .VOzbGW_navCell.VOzbGW_active {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+html[data-dsh-mobile] .VOzbGW_panel > .VOzbGW_content {
+  order: 1;
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  /* `min-height: 0` is what lets a column flex item shrink below its content
+   * height. Without it the options body measured 1245px inside a 598px panel and
+   * simply ran off the bottom of the screen instead of scrolling. */
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+html[data-dsh-mobile] .VOzbGW_panel .VOzbGW_options {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Content halves of the settings shell must never measure against the old rail. */
+html[data-dsh-mobile] .VOzbGW_content > *,
+html[data-dsh-mobile] .VOzbGW_options,
+html[data-dsh-mobile] .VOzbGW_panel [class*='_WvWnq_section'] {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}
+
+

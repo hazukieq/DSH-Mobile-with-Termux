@@ -1,0 +1,8 @@
+# dsh-mobile-ui profile patch layer
+#
+# One loader entry. The host half is a no-op; the browser half is picked up by
+# dsh-client-modules through this package's `dsh.client` declaration and served
+# at /plugins/dsh-mobile-ui/client.js, exactly like the shipped ui-* packages.
+- insert:
+    - id: mobile-ui
+      name: 'dsh-mobile-ui'

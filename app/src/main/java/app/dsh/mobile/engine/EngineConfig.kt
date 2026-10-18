@@ -537,25 +537,15 @@ object EngineConfig {
             |# plugin form so it never conflicts with other UI plugins and survives
             |# engine upgrades.
             |#
-            |#   narrow-sidebar  - portrait + sidebar expanded: sidebar takes the full
-            |#                     width and the squeezed conversation column hides.
-            |#   narrow-settings - narrow screens: the settings dialog stacks vertically
-            |#                     (nav becomes a horizontally scrollable top bar) instead
-            |#                     of squeezing the content column to ~150px.
-            |#   narrow-rightbar - narrow screens: the right panel (diff / changes view)
-            |#                     is promoted to a full-screen overlay while open, which
-            |#                     works around computeColumns() collapsing it to width 0.
+            |# dsh-mobile-ui (v0.1.17, by the user's earlier mobile-ui work): the Android
+            |# app-style layer over the shipped Web UI. One client plugin that turns the
+            |# sidebar into a popup drawer, collapses the conversation header behind an
+            |# info button, and adapts the composer; the host half registers three
+            |# rollback routes (/__mobile-ui/{state,rollback,restore}). Everything is gated
+            |# on html[data-dsh-mobile] so the desktop layout is untouched.
             |- insert:
-            |    - id: android-narrow-sidebar
-            |      name: ./android-plugins/narrow-sidebar/index.js
-            |
-            |- insert:
-            |    - id: android-narrow-settings
-            |      name: ./android-plugins/narrow-settings/index.js
-            |
-            |- insert:
-            |    - id: android-narrow-rightbar
-            |      name: ./android-plugins/narrow-rightbar/index.js
+            |    - id: mobile-ui
+            |      name: ./android-plugins/mobile-ui/index.js
             |
             |# Narrow-screen welcome page (v1.3.0): the desktop layout pins the copy block at
             |# 520px absolute, which overflows a phone viewport; this client plugin turns it
@@ -564,12 +554,6 @@ object EngineConfig {
             |- insert:
             |    - id: android-narrow-welcome
             |      name: ./android-plugins/narrow-welcome/index.js
-            |
-            |# Narrow-screen sidebar rail (v1.3.0): collapse the 56px icon strip into a single
-            |# floating icon at the top-left; tapping it opens the sidebar as usual.
-            |- insert:
-            |    - id: android-narrow-rail
-            |      name: ./android-plugins/narrow-rail/index.js
             |
             |""".trimMargin()
         runCatching {
@@ -592,7 +576,7 @@ object EngineConfig {
             // 新增插件的步骤：① 在 assets 建目录（含这三个文件）
             //               ② 在此列表追加目录名
             //               ③ 在 overlay 的 insert 段追加一条 entry（指向 index.js）
-            listOf("narrow-sidebar", "narrow-settings", "narrow-rightbar", "narrow-welcome", "narrow-rail").forEach { pkg ->
+            listOf("narrow-welcome", "mobile-ui").forEach { pkg ->
                 listOf("package.json", "index.js", "client.js").forEach { fileName ->
                     val src = ctx.assets.open("android-plugins/$pkg/$fileName")
                         .use { it.readBytes() }

@@ -41,13 +41,6 @@ class MainActivity : Activity() {
 
     private lateinit var webView: WebView
     private lateinit var statusBar: TextView
-    private lateinit var topTitle: TextView
-    private lateinit var drawerPanel: android.view.View
-    private lateinit var drawerScrim: android.view.View
-    private lateinit var sessionsPanel: android.view.View
-    private lateinit var sessionsList: android.widget.LinearLayout
-    private lateinit var sessionsFilter: android.widget.EditText
-    private val sessionRows = mutableListOf<Pair<String, String>>()
     private var urlLoaded = false
     /** 已经加载过的引擎 URL（含 token）。引擎热更新/重启后 token 会变，据此重载 WebView。 */
     private var loadedWebUrl: String? = null
@@ -120,9 +113,6 @@ class MainActivity : Activity() {
         // 若写在 apply{} 里会在赋值完成前执行而触发 UninitializedPropertyAccessException。
         webView = findViewById<WebView>(R.id.webView)
         setupWebView()
-        // 原生外壳（v1.3.0）：顶栏固定 App 名，页面自己的标题留在网页内
-        runCatching { webView.addJavascriptInterface(NativeBridge(), "DshAndroid") }
-        setupNativeChrome()
         // 读回用户保存的页面缩放与屏幕朝向偏好
         readUiPrefs()
         applyOrientation(orientationMode)
@@ -378,7 +368,6 @@ class MainActivity : Activity() {
                 if (view == null) return
                 // 环境自检：把 WebView 版本与关键 API 存在性写进日志，用户报障时一眼定位
                 view.evaluateJavascript(WEBVIEW_SELFCHECK_JS, null)
-                view.evaluateJavascript(NativeJs.ACTIONS, null)
                 // v1.3.1 补丁（issue #17「选择横屏进入卡死」）：收遮罩必须放在
                 // 模式分支**之前**。此前 desktopMode 分支先 return，遮罩永不淡出，
                 // 全屏可点击的遮罩把后续所有触摸都吃掉 = 看起来卡死。
@@ -775,15 +764,6 @@ class MainActivity : Activity() {
     }
 
     override fun onBackPressed() {
-        // 抽屉打开时返回键先收抽屉（原生 App 习惯）
-        if (::drawerPanel.isInitialized && drawerOpen) {
-            if (::sessionsPanel.isInitialized && sessionsPanel.visibility == View.VISIBLE) {
-                hideSessionsPanel()
-            } else {
-                closeDrawer()
-            }
-            return
-        }
         // WebView 有历史则先回退，保持类原生浏览体验
         if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
@@ -1729,201 +1709,4 @@ class MainActivity : Activity() {
                 "m.setAttribute('content','width='+W+', initial-scale='+(cw/W).toFixed(4)+', maximum-scale=5, user-scalable=yes');" +
                 "})()"
     }
-
-    // ==================== 原生外壳（v1.3.0 第二轮） ====================
-    // 用户要求：安卓原生 App 布局 —— 顶部固定一条 topbar（[☰] 标题 [⋮]），
-    // 其它入口全部收进抽屉/菜单，点击才展开。这里的实现尽量不侵入引擎：
-    //   · 顶栏标题来自网页 document.title（JS 桥回传，随会话/面板变化）
-    //   · 抽屉条目直接 click 引擎自己的按钮（新建/插件/自动化/记忆/搜索）
-    //   · 旧的重启/隐藏/设置 handler 原样复用（隐藏按钮 performClick）
-
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    private fun setupNativeChrome() {
-        topTitle = findViewById(R.id.topTitle)
-        drawerPanel = findViewById(R.id.drawerPanel)
-        drawerScrim = findViewById(R.id.drawerScrim)
-        drawerPanel.translationX = -dp(320).toFloat()
-        // 顶栏固定 App 名（用户要求）：页面标题保留在网页内容里，不再同步 document.title
-        topTitle.text = getString(R.string.app_name)
-
-        findViewById<View>(R.id.btnDrawer).setOnClickListener { openDrawer() }
-        drawerScrim.setOnClickListener { closeDrawer() }
-
-        findViewById<View>(R.id.drawerNew).setOnClickListener {
-            closeDrawer()
-            runJs("window.__dshNative && window.__dshNative.newSession()")
-        }
-        findViewById<View>(R.id.drawerPlugins).setOnClickListener {
-            closeDrawer()
-            runJs("window.__dshNative && window.__dshNative.panel(0)")
-        }
-        findViewById<View>(R.id.drawerAutomation).setOnClickListener {
-            closeDrawer()
-            runJs("window.__dshNative && window.__dshNative.panel(1)")
-        }
-        findViewById<View>(R.id.drawerMemory).setOnClickListener {
-            closeDrawer()
-            runJs("window.__dshNative && window.__dshNative.panel(2)")
-        }
-        // 会话列表（抽屉二级页）：JS 拉取引擎会话后回填原生列表
-        sessionsPanel = findViewById(R.id.drawerSessionsPanel)
-        sessionsList = findViewById(R.id.sessionsList)
-        sessionsFilter = findViewById(R.id.sessionsFilter)
-        findViewById<View>(R.id.drawerSessions).setOnClickListener {
-            showSessionsPanel()
-            renderSessions("")
-            runJs("window.__dshNative && window.__dshNative.requestSessions()")
-        }
-        findViewById<View>(R.id.btnSessionsBack).setOnClickListener { hideSessionsPanel() }
-        sessionsFilter.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) { renderSessions(s?.toString().orEmpty()) }
-        })
-        findViewById<View>(R.id.drawerDshSettings).setOnClickListener {
-            closeDrawer()
-            runJs("window.__dshNative && window.__dshNative.openSettings()")
-        }
-
-        // ⋮ 更多菜单：重启引擎 / 隐藏顶栏 / 设置（全部复用旧 handler）
-        val overflow = findViewById<View>(R.id.btnOverflow)
-        overflow.setOnClickListener { anchor ->
-            val popup = android.widget.PopupMenu(this, anchor)
-            popup.menu.add(0, 1, 0, getString(R.string.btn_restart))
-            popup.menu.add(0, 2, 1, getString(R.string.drawer_hide_topbar))
-            popup.menu.add(0, 3, 2, getString(R.string.settings_title))
-            popup.setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    1 -> findViewById<TextView>(R.id.btnRestart).performClick()
-                    2 -> findViewById<TextView>(R.id.btnHide).performClick()
-                    3 -> startActivity(Intent(this, SettingsActivity::class.java))
-                }
-                true
-            }
-            popup.show()
-        }
-    }
-
-    private var drawerOpen = false
-
-    private fun openDrawer() {
-        if (drawerOpen) return
-        drawerOpen = true
-        drawerScrim.visibility = View.VISIBLE
-        drawerScrim.alpha = 0f
-        drawerScrim.animate().alpha(1f).setDuration(180).start()
-        drawerPanel.visibility = View.VISIBLE
-        drawerPanel.animate().translationX(0f).setDuration(220).start()
-    }
-
-    private fun closeDrawer() {
-        if (!drawerOpen) return
-        drawerOpen = false
-        if (::sessionsPanel.isInitialized) {
-            sessionsPanel.visibility = View.GONE
-            drawerPanel.translationX = -dp(320).toFloat()
-        }
-        drawerScrim.animate().alpha(0f).setDuration(160).withEndAction {
-            drawerScrim.visibility = View.GONE
-        }.start()
-        drawerPanel.animate().translationX(-dp(320).toFloat()).setDuration(200).withEndAction {
-            drawerPanel.visibility = View.INVISIBLE
-        }.start()
-    }
-
-    private fun runJs(js: String) {
-        runCatching { webView.evaluateJavascript(js, null) }
-    }
-
-    // ---------- 会话列表二级页 ----------
-    private fun showSessionsPanel() {
-        sessionsPanel.visibility = View.VISIBLE
-        sessionsPanel.translationX = dp(320).toFloat()
-        sessionsPanel.animate().translationX(0f).setDuration(200).start()
-        drawerPanel.animate().translationX(-dp(320).toFloat()).setDuration(200).start()
-    }
-
-    private fun hideSessionsPanel() {
-        drawerPanel.translationX = -dp(320).toFloat()
-        drawerPanel.animate().translationX(0f).setDuration(200).start()
-        sessionsPanel.animate().translationX(dp(320).toFloat()).setDuration(180)
-            .withEndAction { sessionsPanel.visibility = View.GONE }.start()
-    }
-
-    /** 渲染会话行（filter 为本地过滤词，空 = 全部）。 */
-    private fun renderSessions(filter: String) {
-        sessionsList.removeAllViews()
-        val q = filter.trim()
-        var shown = 0
-        sessionRows.forEachIndexed { index, row ->
-            val (title, meta) = row
-            if (q.isNotEmpty() && !title.contains(q, ignoreCase = true)) return@forEachIndexed
-            shown++
-            val tv = android.widget.TextView(this).apply {
-                text = if (meta.isBlank()) title else "$title\n$meta"
-                setTextColor(0xFFE5E9F0.toInt())
-                textSize = 15f
-                setPadding(dp(20), dp(12), dp(20), dp(12))
-                val bg = android.util.TypedValue().also {
-                    theme.resolveAttribute(android.R.attr.selectableItemBackground, it, true)
-                }
-                setBackgroundResource(bg.resourceId)
-                setOnClickListener {
-                    closeDrawer()
-                    runJs("window.__dshNative && window.__dshNative.openSession($index)")
-                }
-            }
-            sessionsList.addView(tv)
-        }
-        if (shown == 0) {
-            val empty = android.widget.TextView(this).apply {
-                text = getString(R.string.drawer_sessions_empty)
-                setTextColor(0xFF6B7280.toInt())
-                textSize = 14f
-                setPadding(dp(20), dp(16), dp(20), dp(16))
-            }
-            sessionsList.addView(empty)
-        }
-    }
-
-    /** 网页回传会话列表（JSON 数组：title / meta / selected）。 */
-    inner class NativeBridge {
-        @android.webkit.JavascriptInterface
-        fun onSessions(json: String?) {
-            val parsed = runCatching {
-                val arr = org.json.JSONArray(json ?: "[]")
-                (0 until arr.length()).map { i ->
-                    val o = arr.getJSONObject(i)
-                    o.optString("title") to o.optString("meta")
-                }
-            }.getOrDefault(emptyList())
-            runOnUiThread {
-                sessionRows.clear()
-                sessionRows.addAll(parsed)
-                if (::sessionsFilter.isInitialized) renderSessions(sessionsFilter.text?.toString().orEmpty())
-            }
-        }
-    }
-
-    /** 原生外壳用的注入脚本（独立 object，避免和已有的 companion object 冲突）。 */
-    private object NativeJs {
-        /** 抽屉动作：click 引擎自己的按钮（类名后缀稳定，不依赖中英文 aria-label）。 */
-        const val ACTIONS = "(function(){if(window.__dshN)return;window.__dshN=1;" +
-            "function click(sel){var e=document.querySelector(sel);if(e){e.click();return true}return false}" +
-            "window.__dshNative=window.__dshNative||{};Object.assign(window.__dshNative,{" +
-            "newSession:function(){return click('button[class*=\"_newSession\"]')}," +
-            "panel:function(i){var r=document.querySelectorAll('nav[class*=\"_panelList\"] button[class*=\"_panelRow\"]');" +
-            "if(r[i]){r[i].click();return true}var a=document.querySelectorAll('button[class*=\"_panelRow\"]');" +
-            "if(a[i]){a[i].click();return true}return false}," +
-            "search:function(){return click('button[class*=\"_searchButton\"]')}," +
-            "openSettings:function(){" +
-            "var trig=null,bs=document.querySelectorAll('button[aria-haspopup]');" +
-            "for(var i=0;i<bs.length;i++){if(bs[i].getAttribute('aria-haspopup')==='menu'){trig=bs[i];break}}" +
-            "if(!trig)return false; trig.click();" +
-            "setTimeout(function(){var items=document.querySelectorAll('[role=\"menuitem\"], [role=\"menu\"] button');" +
-            "if(items.length)items[0].click();},180); return true}" +
-            "});})();"
-    }
-
 }
