@@ -11,6 +11,8 @@
 # 布局：
 #   bin/node            wrapper -> ../lib/dsh-engine/node-bin（私有 LD_LIBRARY_PATH）
 #   bin/rg              wrapper -> ../lib/dsh-engine/rg-bin
+#   bin/bash            wrapper -> ../lib/dsh-engine/bash-bin（引擎启动即可用 shell；
+#                       后台 bootstrap 解压后会被官方 bash 覆盖）
 #   lib/dsh-engine/node-bin, rg-bin
 #   lib/dsh-engine/lib/*.so*       node/rg 的 NEEDED 闭包
 #   lib/node_modules/**            dsh 适配闭包（npm 布局，dshEntry 路径依赖它）
@@ -42,7 +44,7 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/engine-layer.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 RT="$WORK/rt"
 mkdir -p "$RT"
-unzip -q "$RUNTIME" "bin/node" "bin/rg" "lib/node_modules/*" "lib/*.so*" "etc/tls/*" -d "$RT"
+unzip -q "$RUNTIME" "bin/node" "bin/rg" "bin/bash" "lib/node_modules/*" "lib/*.so*" "etc/tls/*" -d "$RT"
 TREE="$OUT/engine-tree"
 rm -rf "$TREE"; mkdir -p "$TREE/lib/dsh-engine/lib" "$TREE/bin"
 cp -a "$RT/lib/node_modules" "$TREE/lib/node_modules"
@@ -71,7 +73,7 @@ def find_lib(name):
     return None
 
 seen, queue = set(), []
-for b in ('node', 'rg'):
+for b in ('node', 'rg', 'bash'):
     src = os.path.join(rt, 'bin', b)
     if not os.path.isfile(src):
         continue
@@ -92,7 +94,7 @@ while queue:
 print('[engine] private libs:', len(os.listdir(os.path.join(tree, 'lib/dsh-engine/lib'))))
 PY
 
-for n in node rg; do
+for n in node rg bash; do
 cat > "$TREE/bin/$n" <<WRAP
 #!/system/bin/sh
 # [dsh-android] $n wrapper: 私有 lib 目录（不覆盖 Termux bootstrap 的库）
@@ -102,7 +104,7 @@ WRAP
 chmod 755 "$TREE/bin/$n"
 done
 
-DSH_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' "$TREE/lib/node_modules/@deepseek-ai/dsh/package.json" | head -1)"
+DSH_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$TREE/lib/node_modules/@deepseek-ai/dsh/package.json" | head -1)"
 [[ -n "$DSH_VERSION" ]] || { echo "cannot read dsh version" >&2; exit 1; }
 [[ -n "$ENGINE_VERSION" ]] || ENGINE_VERSION="dsh-engine-$DSH_VERSION-$(date +%Y%m%d)"
 printf '%s' "$ENGINE_VERSION" > "$TREE/.dsh-engine-version"
@@ -146,6 +148,6 @@ cat > "$OUT/engine-manifest.json" <<JSON
   }
 }
 JSON
-echo "[engine] $OUT/engine-dsh-$ARCH.zip  $((sha256sum "$OUT/engine-dsh-$ARCH.zip" | cut -d' ' -f1))"
+echo "[engine] $OUT/engine-dsh-$ARCH.zip  $(sha256sum "$OUT/engine-dsh-$ARCH.zip" | cut -d' ' -f1)"
 echo "[engine] $OUT/engine-dsh-$ARCH.tar.gz $SHA"
 echo "[engine] dsh=$DSH_VERSION engine=$ENGINE_VERSION"

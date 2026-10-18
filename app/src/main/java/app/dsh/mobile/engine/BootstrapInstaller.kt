@@ -3,7 +3,6 @@ package app.dsh.mobile.engine
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 /**
  * 运行时装配（2026-10-18 包名切换为 com.termux 之后）。
@@ -15,22 +14,29 @@ import java.util.concurrent.TimeUnit
  *     包名就是 com.termux、前缀就是 `/data/data/com.termux/files/usr`，
  *     所以仓库里的 deb 路径天然正确 —— 不需要 proot、不需要改 deb。
  *
- *  2. **适配版 dsh 引擎**：assets/engine-dsh-aarch64.zip（node_modules 闭包 + ripgrep）
- *     解到同一个前缀的 `lib/node_modules`。
- *     ⚠️ **不能用 npm 安装 dsh** —— 上游包在 Termux/Android 上装不起来，
- *        本项目存在的意义就是这份适配过的运行时。npm 还会把**更新的嵌套依赖**
- *        （如 node-addon-require-builtin）带进来，覆盖适配版、导致
- *        "No usable native binding found for node-addon-require-builtin-android-arm64"。
+ *  2. **适配版 dsh 引擎**：assets/engine-dsh-aarch64.zip（node + node_modules + bash + rg；
+ *    node/rg 走 wrapper，真实二进制与依赖库在 `lib/dsh-engine/` 私有目录）。
+ *    ⚠️ **不能用 npm 安装 dsh** —— 上游包在 Termux/Android 上装不起来，
+ *       本项目存在的意义就是这份适配过的运行时。npm 还会把**更新的嵌套依赖**
+ *       （如 node-addon-require-builtin）带进来，覆盖适配版、导致
+ *       "No usable native binding found for node-addon-require-builtin-android-arm64"。
  *
- * 首次启动还要装 node（Termux 原生包，nodejs-lts）。之所以不把 node 打进 APK：
- * 它和引擎的 node_modules 需要版本匹配，交给仓库统一升级更稳。
+ * ## 启动顺序（首启不再卡 bootstrap）
+ *
+ *  - **同步**：只解引擎层（一次性，约 30s），随后立刻起引擎 —— UI 马上可用。
+ *    node/bash/rg 由引擎层自带，不依赖 Termux 仓库。
+ *  - **后台**：Termux bootstrap（apt/dpkg/pkg/coreutils）异步解压，解完把 apt 源
+ *    写成国内镜像（默认清华 TUNA）。首启不再等 23MB 的 nodejs-lts 下载。
+ *
+ * ⚠️ 不再 `pkg install nodejs-lts`：那会覆盖 `bin/node` 的 wrapper，还多下 116MB。
+ *    引擎层自带 node 后完全不需要；用户手动装了也会被 wrapper 自愈逻辑修回来。
  */
 object BootstrapInstaller {
     private const val TAG = "BootstrapInstaller"
     const val ASSET = "bootstrap-aarch64.zip"
     const val VERSION = "bootstrap-2026.10.11-r1"
     const val ENGINE_ASSET = "engine-dsh-aarch64.zip"
-    const val ENGINE_VERSION = "dsh-engine-0.2.1-rc.2-20261018"
+    const val ENGINE_VERSION = "dsh-engine-0.2.1-rc.2-20261019"
     private const val STAMP = ".bootstrap-version"
     private const val ENGINE_STAMP = ".dsh-engine-version"
     const val DSH_PKG = "lib/node_modules/@deepseek-ai/dsh/lib/bin.js"
@@ -38,31 +44,61 @@ object BootstrapInstaller {
     fun ensure(ctx: Context, onProgress: (Float) -> Unit = {}) {
         val root = EngineConfig.engineRoot(ctx)            // <filesDir>/usr
         File(ctx.filesDir, "home").mkdirs()
-        File(root, "tmp").mkdirs()
-        val stamp = File(root, STAMP)
-        val installed = File(root, "bin/bash").isFile && File(root, "bin/pkg").isFile
-        if (!installed || !stamp.isFile || stamp.readText().trim() != VERSION) {
-            extractAsset(ctx, root, ASSET)
-            stamp.writeText(VERSION)
-            // 只有 bootstrap 的 zip 会丢权限位；引擎包是 tar（保留 mode），不用扫。
-            restoreExecBits(root)
-        }
+        listOf("tmp", "var", "etc/apt", "etc/tls").forEach { File(root, it).mkdirs() }
         ensureDshEngine(ctx, root, onProgress)
         // 包名从 app.dsh.mobile 换成 com.termux 后，老数据里的绝对路径要改写，
         // 否则会话恢复会去 mkdir 旧包名目录（EACCES）→ 主页起不来。
         LegacyDataMigrator.migrate(ctx)
+        // 源文件便宜，每次都确认（旧版可能是国外默认源）。
+        writeChinaAptSources(root)
+        // Termux 基础环境后台补：不阻塞引擎启动。
+        if (!bootstrapReady(root)) startBootstrapInBackground(ctx)
         onProgress(1f)
+    }
+
+    /** bootstrap 是否已是最新（只看标记；bin/bash 由引擎层 wrapper 先顶着）。 */
+    private fun bootstrapReady(root: File): Boolean {
+        val stamp = File(root, STAMP)
+        return stamp.isFile && stamp.readText().trim() == VERSION &&
+            File(root, "bin/pkg").isFile && File(root, "bin/apt").isFile
+    }
+
+    /** 后台解 Termux bootstrap + 写国内 apt 源。幂等；失败只记日志，下次启动重试。 */
+    private fun startBootstrapInBackground(ctx: Context) {
+        Thread({
+            val root = EngineConfig.engineRoot(ctx)
+            runCatching {
+                val t0 = System.currentTimeMillis()
+                Log.i(TAG, "bootstrap: background install started")
+                extractAsset(ctx, root, ASSET)
+                restoreExecBits(root)
+                writeChinaAptSources(root)
+                File(root, STAMP).writeText(VERSION)
+                Log.i(TAG, "bootstrap: ready in ${System.currentTimeMillis() - t0}ms")
+            }.onFailure { Log.w(TAG, "bootstrap background install failed: ${it::class.simpleName}: ${it.message}", it) }
+        }, "termux-bootstrap").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * 默认 apt 源写国内镜像（清华 TUNA），避免首启访问国外 bootstrap 默认源。
+     * 只在文件缺失时写一次，之后用户可以自己改。
+     */
+    private fun writeChinaAptSources(root: File) {
+        runCatching {
+            val f = File(root, "etc/apt/sources.list")
+            if (f.isFile && f.readText().contains("tuna.tsinghua.edu.cn")) return
+            f.parentFile?.mkdirs()
+            f.writeText(
+                "# The main termux repository (China mirror: TUNA).\n" +
+                "# DSH Mobile writes this once; edit freely afterwards.\n" +
+                "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main\n"
+            )
+            Log.i(TAG, "bootstrap: apt sources set to TUNA mirror")
+        }
     }
 
     /** node（Termux 原生包）+ 内置适配版 dsh 引擎（不走 npm）。 */
     private fun ensureDshEngine(ctx: Context, root: File, onProgress: (Float) -> Unit) {
-        val node = File(root, "bin/node")
-        if (!node.canExecute()) {
-            Log.i(TAG, "installing nodejs-lts via pkg")
-            onProgress(0.7f)
-            val rc = exec(root, listOf("bin/pkg", "install", "-y", "nodejs-lts"), 1800)
-            if (rc != 0) exec(root, listOf("bin/pkg", "install", "-y", "nodejs"), 1800)
-        }
         val dshJs = File(root, DSH_PKG)
         val stamp = File(root, ENGINE_STAMP)
         // ⚠️ 不能拿 ENGINE_VERSION 做相等判断：dsh-update 热更新会换成别的版本
@@ -78,7 +114,39 @@ object BootstrapInstaller {
             stamp.writeText(ENGINE_VERSION)
             restoreExecBits(root)
         }
+        healEngineWrappers(root)
         onProgress(1f)
+    }
+
+    /**
+     * 自愈引擎层 wrapper。
+     *
+     * 用户（或某个包）可能 `pkg install nodejs` / `ripgrep`，把 `$PREFIX/bin/node`
+     * 换成真 ELF —— 引擎随即挂掉。这里检查：如果 bin/node 不再是我们的 shell wrapper
+     * 而 `lib/dsh-engine/node-bin` 还在，就把 wrapper 写回去（bash/rg 同理）。
+     */
+    private fun healEngineWrappers(root: File) {
+        listOf("node", "rg", "bash").forEach { name ->
+            val real = File(root, "lib/dsh-engine/$name-bin")
+            if (!real.isFile) return@forEach
+            val link = File(root, "bin/$name")
+            val isWrapper = runCatching {
+                link.isFile && link.length() < 2048 &&
+                    link.readText().take(256).contains("dsh-engine/$name-bin")
+            }.getOrDefault(false)
+            if (isWrapper) return@forEach
+            runCatching {
+                link.parentFile?.mkdirs()
+                link.writeText(
+                    "#!/system/bin/sh\n" +
+                        "# [dsh-android] $name wrapper: private libs (do not replace with a pkg binary)\n" +
+                        "d=\$(cd \"\${0%/*}/..\" && pwd)\n" +
+                        "LD_LIBRARY_PATH=\"\$d/lib/dsh-engine/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\" exec \"\$d/lib/dsh-engine/$name-bin\" \"\$@\"\n"
+                )
+                link.setExecutable(true, false)
+                Log.w(TAG, "engine wrapper healed: bin/$name")
+            }.onFailure { Log.w(TAG, "heal bin/$name failed: ${it.message}") }
+        }
     }
 
     /** 解 assets 里的 zip 到 root（合并覆盖，保留 bootstrap 已有文件）。 */
@@ -147,27 +215,4 @@ object BootstrapInstaller {
         }
     }.getOrDefault(false)
 
-    private fun exec(root: File, argv: List<String>, timeoutSec: Long): Int {
-        val pb = ProcessBuilder(argv)
-        pb.directory(root)
-        val env = pb.environment()
-        env["PATH"] = File(root, "bin").absolutePath + ":/system/bin:/system/xbin"
-        env["PREFIX"] = root.absolutePath
-        env["HOME"] = File(root.parentFile, "home").absolutePath
-        env["TMPDIR"] = File(root, "tmp").absolutePath
-        env["LD_LIBRARY_PATH"] = File(root, "lib").absolutePath
-        env["TERM"] = "xterm-256color"
-        env["DEBIAN_FRONTEND"] = "noninteractive"
-        pb.redirectErrorStream(true)
-        val p = pb.start()
-        val t = Thread {
-            runCatching { p.inputStream.bufferedReader().forEachLine { line -> Log.i(TAG, argv.joinToString(" ") + ": " + line) } }
-        }
-        t.start()
-        if (!p.waitFor(timeoutSec, TimeUnit.SECONDS)) { p.destroyForcibly(); Log.w(TAG, "timeout: $argv") }
-        t.join(2000)
-        val rc = runCatching { p.exitValue() }.getOrDefault(-1)
-        Log.i(TAG, argv.joinToString(" ") + " exit=" + rc)
-        return rc
-    }
 }

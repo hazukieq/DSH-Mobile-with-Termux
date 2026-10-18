@@ -172,6 +172,7 @@ Only if a custom LAN URL is required, write a small node reverse proxy that list
 - `shizuku` — same sandbox, plus the `shz` bridge above.
 - `root` — the engine runs as uid 0: full access, but stay inside $HOME unless the user asks otherwise; breaking the host breaks your own workspace.
   - git trap: repos the app created are app-owned → `fatal: detected dubious ownership`. Pass `-c safe.directory='*'`.
+  - **`pkg` / `apt` refuse to run as root** ("Cannot run 'pkg' command as root") and root-owned files under `$PREFIX` break the app later. If a task needs packages, tell the user to switch to Normal/Shizuku mode, install, then switch back; do not force-install as root.
 
 ## Showing the user something visual
 
