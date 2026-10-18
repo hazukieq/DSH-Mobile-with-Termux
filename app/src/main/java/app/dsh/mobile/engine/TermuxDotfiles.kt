@@ -19,9 +19,12 @@ import java.io.File
 object TermuxDotfiles {
     private const val TAG = "TermuxDotfiles"
     private const val ASSET = "termux/zshrc"
+    private const val PLUGIN_ASSET = "termux/zsh-autosuggestions.zsh"
+    private const val PLUGIN_DIR = ".dsh-mobile"
+    private const val PLUGIN_FILE = "zsh-autosuggestions.zsh"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun ensure(ctx: Context) {
         val body = runCatching {
@@ -30,6 +33,9 @@ object TermuxDotfiles {
             Log.w(TAG, "zshrc asset missing: ${it.message}")
             return
         }
+        val plugin = runCatching {
+            ctx.assets.open(PLUGIN_ASSET).use { it.readBytes() }
+        }.getOrNull()
         // 交互终端 HOME = dsh-home；同时写一份到 Termux 标准 home，覆盖两种入口。
         val homes = listOf(
             EngineConfig.dshHome(ctx),
@@ -38,6 +44,15 @@ object TermuxDotfiles {
         homes.forEach { home ->
             runCatching {
                 home.mkdirs()
+                // 指令联想插件（v2）：内容随 APK 走，直接覆盖同步；放在 ~/.dsh-mobile/ 不碰用户文件
+                if (plugin != null) {
+                    val dir = File(home, PLUGIN_DIR).apply { mkdirs() }
+                    val pf = File(dir, PLUGIN_FILE)
+                    if (!pf.isFile || !pf.readBytes().contentEquals(plugin)) {
+                        pf.writeBytes(plugin)
+                        Log.i(TAG, "zsh-autosuggestions deployed at ${pf.absolutePath}")
+                    }
+                }
                 val dst = File(home, FILE_NAME)
                 val existing = if (dst.isFile) dst.readText() else null
                 when {
