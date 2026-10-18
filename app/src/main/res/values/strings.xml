@@ -496,4 +496,13 @@ engine: %6$s</string>
     <string name="setting_runtime_check_failed">Check failed: %1$s</string>
     <string name="setting_runtime_pull">Pull and apply</string>
     <string name="setting_runtime_pulling">Pulling dsh runtime…</string>
+    <string name="btn_drawer">Open menu</string>
+    <string name="btn_more_menu">More options</string>
+    <string name="drawer_new_session">New session</string>
+    <string name="drawer_plugins">Plugins</string>
+    <string name="drawer_automation">Automations</string>
+    <string name="drawer_memory">Memory</string>
+    <string name="drawer_search">Search sessions</string>
+    <string name="drawer_settings">Settings</string>
+    <string name="drawer_hide_topbar">Hide top bar</string>
 </resources>

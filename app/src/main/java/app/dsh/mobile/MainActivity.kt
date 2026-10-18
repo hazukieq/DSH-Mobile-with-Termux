@@ -41,6 +41,9 @@ class MainActivity : Activity() {
 
     private lateinit var webView: WebView
     private lateinit var statusBar: TextView
+    private lateinit var topTitle: TextView
+    private lateinit var drawerPanel: android.view.View
+    private lateinit var drawerScrim: android.view.View
     private var urlLoaded = false
     /** 已经加载过的引擎 URL（含 token）。引擎热更新/重启后 token 会变，据此重载 WebView。 */
     private var loadedWebUrl: String? = null
@@ -113,6 +116,9 @@ class MainActivity : Activity() {
         // 若写在 apply{} 里会在赋值完成前执行而触发 UninitializedPropertyAccessException。
         webView = findViewById<WebView>(R.id.webView)
         setupWebView()
+        // 原生外壳（v1.3.0）：顶栏标题由网页回传，抽屉/⋮ 菜单替代旧的横条按钮
+        runCatching { webView.addJavascriptInterface(TitleBridge(), "DshAndroid") }
+        setupNativeChrome()
         // 读回用户保存的页面缩放与屏幕朝向偏好
         readUiPrefs()
         applyOrientation(orientationMode)
@@ -368,6 +374,8 @@ class MainActivity : Activity() {
                 if (view == null) return
                 // 环境自检：把 WebView 版本与关键 API 存在性写进日志，用户报障时一眼定位
                 view.evaluateJavascript(WEBVIEW_SELFCHECK_JS, null)
+                view.evaluateJavascript(NativeJs.TITLE, null)
+                view.evaluateJavascript(NativeJs.ACTIONS, null)
                 // v1.3.1 补丁（issue #17「选择横屏进入卡死」）：收遮罩必须放在
                 // 模式分支**之前**。此前 desktopMode 分支先 return，遮罩永不淡出，
                 // 全屏可点击的遮罩把后续所有触摸都吃掉 = 看起来卡死。
@@ -764,6 +772,8 @@ class MainActivity : Activity() {
     }
 
     override fun onBackPressed() {
+        // 抽屉打开时返回键先收抽屉（原生 App 习惯）
+        if (::drawerPanel.isInitialized && drawerOpen) { closeDrawer(); return }
         // WebView 有历史则先回退，保持类原生浏览体验
         if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
@@ -1709,4 +1719,152 @@ class MainActivity : Activity() {
                 "m.setAttribute('content','width='+W+', initial-scale='+(cw/W).toFixed(4)+', maximum-scale=5, user-scalable=yes');" +
                 "})()"
     }
+
+    // ==================== 原生外壳（v1.3.0 第二轮） ====================
+    // 用户要求：安卓原生 App 布局 —— 顶部固定一条 topbar（[☰] 标题 [⋮]），
+    // 其它入口全部收进抽屉/菜单，点击才展开。这里的实现尽量不侵入引擎：
+    //   · 顶栏标题来自网页 document.title（JS 桥回传，随会话/面板变化）
+    //   · 抽屉条目直接 click 引擎自己的按钮（新建/插件/自动化/记忆/搜索）
+    //   · 旧的重启/隐藏/设置 handler 原样复用（隐藏按钮 performClick）
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun setupNativeChrome() {
+        topTitle = findViewById(R.id.topTitle)
+        drawerPanel = findViewById(R.id.drawerPanel)
+        drawerScrim = findViewById(R.id.drawerScrim)
+        drawerPanel.translationX = -dp(320).toFloat()
+        topTitle.text = getString(R.string.app_name)
+
+        findViewById<View>(R.id.btnDrawer).setOnClickListener { openDrawer() }
+        drawerScrim.setOnClickListener { closeDrawer() }
+
+        findViewById<View>(R.id.drawerNew).setOnClickListener {
+            closeDrawer()
+            runJs("window.__dshNative && window.__dshNative.newSession()")
+        }
+        findViewById<View>(R.id.drawerPlugins).setOnClickListener {
+            closeDrawer()
+            runJs("window.__dshNative && window.__dshNative.panel(0)")
+        }
+        findViewById<View>(R.id.drawerAutomation).setOnClickListener {
+            closeDrawer()
+            runJs("window.__dshNative && window.__dshNative.panel(1)")
+        }
+        findViewById<View>(R.id.drawerMemory).setOnClickListener {
+            closeDrawer()
+            runJs("window.__dshNative && window.__dshNative.panel(2)")
+        }
+        findViewById<View>(R.id.drawerSearch).setOnClickListener {
+            closeDrawer()
+            runJs("window.__dshNative && window.__dshNative.search()")
+        }
+        findViewById<View>(R.id.drawerSettings).setOnClickListener {
+            closeDrawer()
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        findViewById<View>(R.id.drawerRestart).setOnClickListener {
+            closeDrawer()
+            findViewById<TextView>(R.id.btnRestart).performClick()
+        }
+        findViewById<View>(R.id.drawerHideBar).setOnClickListener {
+            closeDrawer()
+            findViewById<TextView>(R.id.btnHide).performClick()
+        }
+
+        // ⋮ 更多菜单：重启引擎 / 隐藏顶栏 / 设置（全部复用旧 handler）
+        val overflow = findViewById<View>(R.id.btnOverflow)
+        overflow.setOnClickListener { anchor ->
+            val popup = android.widget.PopupMenu(this, anchor)
+            popup.menu.add(0, 1, 0, getString(R.string.btn_restart))
+            popup.menu.add(0, 2, 1, getString(R.string.drawer_hide_topbar))
+            popup.menu.add(0, 3, 2, getString(R.string.settings_title))
+            popup.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> findViewById<TextView>(R.id.btnRestart).performClick()
+                    2 -> findViewById<TextView>(R.id.btnHide).performClick()
+                    3 -> startActivity(Intent(this, SettingsActivity::class.java))
+                }
+                true
+            }
+            popup.show()
+        }
+    }
+
+    private var drawerOpen = false
+
+    private fun openDrawer() {
+        if (drawerOpen) return
+        drawerOpen = true
+        drawerScrim.visibility = View.VISIBLE
+        drawerScrim.alpha = 0f
+        drawerScrim.animate().alpha(1f).setDuration(180).start()
+        drawerPanel.visibility = View.VISIBLE
+        drawerPanel.animate().translationX(0f).setDuration(220).start()
+    }
+
+    private fun closeDrawer() {
+        if (!drawerOpen) return
+        drawerOpen = false
+        drawerScrim.animate().alpha(0f).setDuration(160).withEndAction {
+            drawerScrim.visibility = View.GONE
+        }.start()
+        drawerPanel.animate().translationX(-dp(320).toFloat()).setDuration(200).withEndAction {
+            drawerPanel.visibility = View.INVISIBLE
+        }.start()
+    }
+
+    private fun runJs(js: String) {
+        runCatching { webView.evaluateJavascript(js, null) }
+    }
+
+    /** 网页 document.title 回传（JS 桥）。 */
+    inner class TitleBridge {
+        @android.webkit.JavascriptInterface
+        fun setTitle(title: String?) {
+            val t = title?.trim().orEmpty()
+            if (t.isEmpty()) return
+            runOnUiThread { if (::topTitle.isInitialized) topTitle.text = t }
+        }
+    }
+
+    /** 原生外壳用的注入脚本（独立 object，避免和已有的 companion object 冲突）。 */
+    private object NativeJs {
+        /** 标题观察：把 document.title 去掉 " — DeepSeek Harness" 后缀后回传原生顶栏。 */
+        const val TITLE = "(function(){" +
+            "if(window.__dshT) return; window.__dshT = 1;" +
+            "function pick(){" +
+            "var t=(document.title||'').trim();" +
+            "var sep=String.fromCharCode(8212);" +
+            "if(t.indexOf(sep)>=0) t=t.split(sep)[0].trim();" +
+            "if(!t||t==='DeepSeek Harness'){" +
+            "var cs=document.querySelectorAll('h1,h2,[class*=\"_title\"]');" +
+            "for(var i=0;i<cs.length;i++){" +
+            "var e=cs[i], r=e.getBoundingClientRect();" +
+            "if(r.width<20||r.height<10||r.top<0||r.top>260) continue;" +
+            "var x=(e.innerText||'').split(String.fromCharCode(10))[0].trim();" +
+            "if(!x||x.length>40) continue; t=x; break;" +
+            "}" +
+            "}" +
+            "return t||'DeepSeek Harness';" +
+            "}" +
+            "function push(){ var t=pick();" +
+            "if(window.__dshLT!==t){ window.__dshLT=t; try { DshAndroid.setTitle(t); } catch(e) {} } }" +
+            "setInterval(push, 1200);" +
+            "try { new MutationObserver(push).observe(document.documentElement, {childList:true, subtree:true}); } catch(e) {}" +
+            "push();" +
+            "})();"
+
+        /** 抽屉动作：click 引擎自己的按钮（类名后缀稳定，不依赖中英文 aria-label）。 */
+        const val ACTIONS = "(function(){if(window.__dshN)return;window.__dshN=1;" +
+            "function click(sel){var e=document.querySelector(sel);if(e){e.click();return true}return false}" +
+            "window.__dshNative={" +
+            "newSession:function(){return click('button[class*=\"_newSession\"]')}," +
+            "panel:function(i){var r=document.querySelectorAll('nav[class*=\"_panelList\"] button[class*=\"_panelRow\"]');" +
+            "if(r[i]){r[i].click();return true}var a=document.querySelectorAll('button[class*=\"_panelRow\"]');" +
+            "if(a[i]){a[i].click();return true}return false}," +
+            "search:function(){return click('button[class*=\"_searchButton\"]')}" +
+            "};})();"
+    }
+
 }

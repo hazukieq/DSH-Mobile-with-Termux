@@ -496,4 +496,13 @@ dsh：%2$s
     <string name="setting_runtime_check_failed">检查失败：%1$s</string>
     <string name="setting_runtime_pull">拉取并应用</string>
     <string name="setting_runtime_pulling">正在拉取 dsh 运行时…</string>
+    <string name="btn_drawer">打开菜单</string>
+    <string name="btn_more_menu">更多操作</string>
+    <string name="drawer_new_session">新会话</string>
+    <string name="drawer_plugins">插件</string>
+    <string name="drawer_automation">自动化任务</string>
+    <string name="drawer_memory">记忆系统</string>
+    <string name="drawer_search">搜索会话</string>
+    <string name="drawer_settings">设置</string>
+    <string name="drawer_hide_topbar">隐藏顶栏</string>
 </resources>
