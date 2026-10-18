@@ -706,6 +706,15 @@ object EngineConfig {
             "ANDROID_DATA=/data",
             "ANDROID_ROOT=/system",
             "ANDROID_STORAGE=/storage",
+            // 社区插件安装（dsh plugin add → pnpm）：pnpm 10+ 的 strictDepBuilds 默认
+            // 为 true，只要依赖里带 build script（mnemon、puppeteer 等）就被记成
+            // "ignored builds" 并**直接让整次安装失败**：
+            //   ERR_PNPM_IGNORED_BUILDS / Ignored build scripts: mnemon@1.3.0, puppeteer@…
+            // 手机上没有交互式 `pnpm approve-builds`，所以一律降级为警告继续装。
+            "npm_config_strict_dep_builds=false",
+            "NPM_CONFIG_STRICT_DEP_BUILDS=false",
+            // 让 pnpm 别把「被忽略的构建脚本」当致命错误（pnpm v12 新 strict 模式）
+            "npm_config_allow_unused=false",
             // 权限三件套的单一驱动源（v1.2.52）：上游 dsh-base 用这一个变量同时决定
             // sandbox-policy.mode、approval.policy 与默认预设，保证三者组合一致。
             // Android 没有 landlock/seatbelt，任何受限模式都会让 shell 工具拒绝执行
