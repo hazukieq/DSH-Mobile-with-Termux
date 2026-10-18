@@ -506,4 +506,7 @@ dsh：%2$s
     <string name="drawer_settings">设置</string>
     <string name="drawer_hide_topbar">隐藏顶栏</string>
     <string name="drawer_dsh_settings">DSH 设置</string>
+    <string name="drawer_sessions">会话列表</string>
+    <string name="drawer_sessions_empty">暂无会话</string>
+    <string name="drawer_search_hint">搜索会话…</string>
 </resources>

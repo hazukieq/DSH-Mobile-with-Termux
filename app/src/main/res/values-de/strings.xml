@@ -516,4 +516,7 @@ Engine: %6$s</string>
     <string name="drawer_settings">Einstellungen</string>
     <string name="drawer_hide_topbar">Obere Leiste ausblenden</string>
     <string name="drawer_dsh_settings">DSH-Einstellungen</string>
+    <string name="drawer_sessions">Sitzungen</string>
+    <string name="drawer_sessions_empty">Noch keine Sitzungen</string>
+    <string name="drawer_search_hint">Sitzungen suchen…</string>
 </resources>

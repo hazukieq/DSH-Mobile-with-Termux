@@ -29,20 +29,23 @@ window.__ModuleLoader__.load({
 
     const STYLE_TEXT = [
       "@media (max-width: 720px) {",
-      "  /* v1.3.0 第二轮：原生顶栏 + 原生抽屉接管导航，收起态直接隐藏整条图标栏。",
-      "     抽屉条目通过 click 引擎自己的按钮驱动 WebUI，所以不需要侧边栏图标。 */",
+      "  /* 引擎自己的侧边栏不再参与布局：收起时完全隐藏，展开也只是一闪而过（会立刻被自动折叠）。 */",
       "  [class*=\"_root\"]:has(> [class*=\"_logoRow\"])[class*=\"_collapsed\"] {",
       "    display: none !important;",
       "  }",
-      "  /* 收起态外层还有一列固定宽度的 sidebarCol 会留下左侧空白，一并压到 0 */",
       "  [class*=\"_sidebarCol\"]:has([class*=\"_root\"][class*=\"_collapsed\"]) {",
       "    width: 0 !important;",
       "    min-width: 0 !important;",
       "    flex: 0 0 0 !important;",
       "    overflow: hidden !important;",
       "  }",
+      "  /* 拉取会话列表时临时隐藏侧栏，避免闪一下 */",
+      "  html.dsh-collecting [class*=\"_sidebarCol\"] {",
+      "    visibility: hidden !important;",
+      "  }",
       "}",
     ].join("\n");
+
 
     /* 引擎布局用内联 grid-template-columns（56px minmax(0,1fr) ...）给左侧栏留位，
        CSS 无法只改第一轨且不破坏右侧栏宽度，所以这里直接改内联样式：
@@ -62,6 +65,80 @@ window.__ModuleLoader__.load({
       }
     }
 
+
+    /* ------------- 引擎侧栏：永远不占布局，且不保持展开 ------------- */
+    function railRoot() {
+      return document.querySelector('[class*="_sidebarCol"] [class*="_root"]:has(> [class*="_logoRow"])')
+        || document.querySelector('[class*="_root"]:has(> [class*="_logoRow"])');
+    }
+    function isCollapsed(root) {
+      return !!root && String(root.className || '').indexOf('_collapsed') >= 0;
+    }
+    /* 引擎用内联 grid-template-columns 给左侧留 56px；这里无条件把第一轨压到 0，
+       展开/收起都不再占用内容宽度（展开态由自动折叠逻辑立即收掉）。 */
+    function syncFrameColumns() {
+      var frame = document.querySelector('[class*="_frame"]');
+      if (!frame || !frame.style) return;
+      var parts = (frame.style.gridTemplateColumns || '').trim().split(/\s+/);
+      if (parts.length >= 3 && parts[0] !== '0px') {
+        parts[0] = '0px';
+        frame.style.gridTemplateColumns = parts.join(' ');
+      }
+    }
+    /* 自动折叠：只要引擎把侧栏展开（搜索/快捷键等），立刻点它的「收起侧边栏」。 */
+    function autoCollapse() {
+      if (window.__dshCollecting) return;
+      var root = railRoot();
+      if (!root || isCollapsed(root)) return;
+      var btn = document.querySelector('button[aria-label="收起侧边栏"]')
+        || document.querySelector('button[class*="_toggle"]');
+      if (btn) btn.click();
+    }
+    function tick() { syncFrameColumns(); autoCollapse(); }
+
+    /* ------------- 会话列表（给原生抽屉二级页用） ------------- */
+    function collectSessions() {
+      var toggle = document.querySelector('button[aria-label="打开侧边栏"]');
+      if (!toggle) { try { DshAndroid.onSessions('[]'); } catch (e) {} return; }
+      window.__dshCollecting = true;
+      document.documentElement.classList.add('dsh-collecting');
+      toggle.click();
+      setTimeout(function () {
+        var rows = [].slice.call(document.querySelectorAll('[class*="_sessionRow"]'));
+        // innerText 在侧栏被 visibility:hidden 时返回空串（我们在收集期间隐藏了侧栏），
+        // 必须用 textContent + 结构选择器取值。
+        var out = rows.map(function (r) {
+          var titleEl = r.querySelector('span[class*="_title"]');
+          var timeEl = r.querySelector('span[class*="_time"]');
+          return {
+            title: (titleEl ? titleEl.textContent : '').trim(),
+            meta: (timeEl ? timeEl.textContent : '').trim(),
+            selected: String(r.className || '').indexOf('_selected') >= 0
+          };
+        });
+        var close = document.querySelector('button[aria-label="收起侧边栏"]');
+        if (close) close.click();
+        document.documentElement.classList.remove('dsh-collecting');
+        window.__dshCollecting = false;
+        try { DshAndroid.onSessions(JSON.stringify(out)); } catch (e) {}
+      }, 260);
+    }
+    function openSession(index) {
+      var toggle = document.querySelector('button[aria-label="打开侧边栏"]');
+      if (!toggle) return false;
+      window.__dshCollecting = true;
+      document.documentElement.classList.add('dsh-collecting');
+      toggle.click();
+      setTimeout(function () {
+        var rows = [].slice.call(document.querySelectorAll('[class*="_sessionRow"]'));
+        if (rows[index]) rows[index].click();
+        var close = document.querySelector('button[aria-label="收起侧边栏"]');
+        if (close) close.click();
+        document.documentElement.classList.remove('dsh-collecting');
+        window.__dshCollecting = false;
+      }, 220);
+      return true;
+    }
     function apply() {
       var cleanup = function () {};
       if (!document.getElementById(STYLE_ID)) {
@@ -69,27 +146,29 @@ window.__ModuleLoader__.load({
         style.id = STYLE_ID;
         style.textContent = STYLE_TEXT;
         (document.head || document.documentElement).appendChild(style);
-        cleanup = function () {
-          try { style.remove(); } catch (e) { /* 卸载阶段忽略 */ }
-        };
+        cleanup = function () { try { style.remove(); } catch (e) {} };
       }
 
-      // 布局帧与侧栏状态的任何变化都重新对齐第一轨宽度
-      var frame = document.querySelector('[class*="_frame"]');
-      var rail = document.querySelector('[class*="_root"]:has(> [class*="_logoRow"])');
+      // 从 webview 侧给原生抽屉回传会话列表 / 打开会话
+      window.__dshNative = window.__dshNative || {};
+      window.__dshNative.requestSessions = collectSessions;
+      window.__dshNative.openSession = openSession;
+
       var mo = null;
       if (window.MutationObserver) {
-        mo = new MutationObserver(function () { syncFrameColumns(); });
+        mo = new MutationObserver(function () { tick(); });
+        var frame = document.querySelector('[class*="_frame"]');
+        var rail = document.querySelector('[class*="_root"]:has(> [class*="_logoRow"])');
         if (frame) mo.observe(frame, { attributes: true, attributeFilter: ['style', 'class'] });
         if (rail) mo.observe(rail, { attributes: true, attributeFilter: ['class'] });
       }
-      var timer = setInterval(syncFrameColumns, 700);
-      syncFrameColumns();
+      var timer = setInterval(tick, 250);
+      tick();
 
       return function () {
         cleanup();
-        try { if (mo) mo.disconnect(); } catch (e) { /* ignore */ }
-        try { clearInterval(timer); } catch (e) { /* ignore */ }
+        try { if (mo) mo.disconnect(); } catch (e) {}
+        try { clearInterval(timer); } catch (e) {}
       };
     }
 
