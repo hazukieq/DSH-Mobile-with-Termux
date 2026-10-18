@@ -25,6 +25,15 @@ class EngineProcess private constructor(
     /** PTY 跟踪的子进程 PID（su -c 模式下是 su 外壳；真正 node 在其子进程组） */
     val pid: Int get() = Pty.nativeChildPid()
 
+    /**
+     * 本次进程 stdout 里出现的 `dsh web: http://...?token=...`。
+     * 直接从管道抓，比回头读 engine.log 可靠：ROOT 模式下日志文件/时序都可能拿不到，
+     * 而管道路径与进程同生共死、不落后于健康探测。
+     */
+    @Volatile var tokenUrl: String? = null
+
+    private val tokenRegex = Regex("dsh web: (http://127\\.0\\.0\\.1:\\d+/\\?token=\\S+)")
+
     private val pumpThread = Thread({ pumpLoop() }, "dsh-log-pump").apply {
         isDaemon = true
         start()
@@ -71,6 +80,7 @@ class EngineProcess private constructor(
                     if (n > 0) {
                         val chunk = String(buf, 0, n, Charsets.UTF_8)
                         Log.d(TAG, chunk.trim())
+                        tokenRegex.findAll(chunk).lastOrNull()?.let { tokenUrl = it.groupValues[1] }
                         if (logFile.length() < maxLogBytes) {
                             logFile.appendText(chunk)
                         } else {
@@ -112,7 +122,10 @@ class EngineProcess private constructor(
             // 且自带一份**不完整**的 su 路径表（漏了 /vendor/bin、/data/adb/magisk、
             // /data/adb/ksu），Magisk/KernelSU 设备上会直接跳过击杀 → 孤儿占着 3080/3083。
             // runSu 内部用 findSu() 覆盖全部路径，并按设备实测挑可用的 su 形式。
-            Privilege.runSu("kill -9 -- -$pid 2>/dev/null; pkill -9 -P $pid 2>/dev/null; true")
+            Privilege.runSu(
+                "kill -9 -- -$pid 2>/dev/null; pkill -9 -P $pid 2>/dev/null; " +
+                    "pkill -9 -f 'dsh-engine/node-bin' 2>/dev/null; true"
+            )
         }
         pumpThread.join(1_000)
     }

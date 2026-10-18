@@ -73,7 +73,7 @@ class EngineSupervisor(private val ctx: Context) {
                 delay(500)
                 val cur = _state.value
                 if (cur !is State.Healthy && cur !is State.SafeMode) return@launch
-                val found = extractTokenUrl() ?: return@repeat
+                val found = process?.tokenUrl ?: extractTokenUrl() ?: return@repeat
                 when (cur) {
                     is State.Healthy -> _state.value = cur.copy(tokenUrl = found)
                     is State.SafeMode -> _state.value = cur.copy(tokenUrl = found)
@@ -346,7 +346,8 @@ class EngineSupervisor(private val ctx: Context) {
                     }
                     backoffIndex = 0
                     val safe = guardian.inSafeMode()
-                    val tokenUrl = extractTokenUrl()
+                    // 优先用进程 stdout 抓到的 token（不依赖日志文件权限/时序）
+                    val tokenUrl = proc.tokenUrl ?: extractTokenUrl()
                     Log.i(TAG, "token url extracted: ${if (tokenUrl == null) "null" else "yes (len=" + tokenUrl.length + ")"}")
                     val t1 = System.currentTimeMillis()
                     val restartMs = restartStartedAt?.let { " (total restart took ${t1 - it}ms)" } ?: ""
@@ -407,7 +408,10 @@ class EngineSupervisor(private val ctx: Context) {
                 // v1.2.108：走 runSu —— 旧实现硬编码 `su -c`，toybox 风格 su 报
                 // `invalid uid/gid '-c'` 后被 runCatching 吞掉，root 孤儿杀不掉 →
                 // 端口一直占着 → EADDRINUSE 无限重启（正是上一条注释描述的现场）。
-                Privilege.runSu("pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
+                Privilege.runSu(
+                    "pkill -9 -f 'dsh-engine/node-bin' 2>/dev/null; " +
+                        "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true"
+                )
                 Log.w(TAG, "EADDRINUSE: killed orphan engine node(s)")
                 deterministicFailure = null   // 已处置，不计入 guardian（与配置无关）
                 backoffIndex = 0
@@ -497,7 +501,10 @@ class EngineSupervisor(private val ctx: Context) {
         Log.w(TAG, "port ${EngineConfig.DEFAULT_PORT} occupied before start — killing orphan engine node(s)")
         runCatching {
             ProcessBuilder("/system/bin/sh", "-c",
-                "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
+                // v8 起 bin/node 是 wrapper，真实进程是 lib/dsh-engine/node-bin；
+                // 两个 pattern 都匹配，否则孤儿杀不掉 → EADDRINUSE 无限重启。
+                "pkill -9 -f 'dsh-engine/node-bin' 2>/dev/null; " +
+                    "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
                 .start().waitFor()
         }
         // v1.2.108：走 runSu（同上，toybox 设备上旧写法静默失败）
@@ -539,7 +546,20 @@ class EngineSupervisor(private val ctx: Context) {
                 conn.readTimeout = 2_000
                 val code = conn.responseCode
                 conn.disconnect()
-                if (code in 200..499) return@withContext true // Web UI 起来即算就绪
+                if (code in 200..499) {
+                    // 二次确认：ROOT 模式下前任引擎的孤儿可能还占着端口并回 401，
+                    // 只凭一次 401 就宣告健康会把「新进程已 EADDRINUSE 退出」当成成功
+                    // （表现为页面 401 白屏 + 引擎每 12s「异常退出」循环）。
+                    delay(250)
+                    if (proc.exitFuture.isDone) return@withContext false
+                    val again = runCatching {
+                        (URL(url).openConnection() as HttpURLConnection).run {
+                            connectTimeout = 2_000; readTimeout = 2_000
+                            val c = responseCode; disconnect(); c
+                        }
+                    }.getOrDefault(-1)
+                    if (again in 200..499) return@withContext true
+                }
             } catch (_: Exception) {
                 // 引擎尚未监听，继续等
             }
