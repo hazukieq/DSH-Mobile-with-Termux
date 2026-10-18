@@ -1,4 +1,4 @@
-# ~/.zshrc - DSH Mobile default config (v3)
+# ~/.zshrc - DSH Mobile default config (v4)
 # Managed by the app: this file is rewritten only while the version marker above
 # is present. Delete/change that marker line to keep your own edits forever.
 # Deliberately Termux-only: no PC aliases (nvm/pyenv/proxy/gcloud/texlive/...).
@@ -8,10 +8,6 @@ HISTSIZE=10000
 SAVEHIST=10000
 setopt append_history share_history inc_append_history hist_ignore_dups hist_ignore_space
 setopt autocd extended_glob no_beep
-
-# ---- 指令纠错（oh-my-zsh ENABLE_CORRECTION 的等价物，zsh 内建）----
-# 拼错命令时提示 "correct 'lls' to 'lls'?"；不想被问就注释掉这一行。
-setopt correct
 
 # ---- 指令联想（内置 zsh-autosuggestions v0.7.1，无需 oh-my-zsh）----
 # 依据历史输入给出灰色补全：→ / End 接受，Ctrl+E 接受整条。

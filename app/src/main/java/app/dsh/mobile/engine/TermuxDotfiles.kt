@@ -26,7 +26,7 @@ object TermuxDotfiles {
     private const val HIGHLIGHT_DIR = "zsh-syntax-highlighting"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 3
+    private const val VERSION = 4
 
     fun ensure(ctx: Context) {
         val body = runCatching {
