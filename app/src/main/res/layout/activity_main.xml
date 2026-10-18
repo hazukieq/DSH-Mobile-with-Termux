@@ -47,7 +47,6 @@
     <!-- 工具栏：70% 半透明悬浮层；点文字空白区隐藏，点把手唤回 -->
     <LinearLayout
         android:id="@+id/statusBarRow"
-        android:visibility="gone"
         android:layout_width="match_parent"
         android:layout_height="40dp"
         android:orientation="horizontal"

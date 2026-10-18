@@ -1,6 +1,7 @@
 # AI_CONTEXT
 
 ## Current progress
+- **恢复原生顶部工具栏（2026-10-19 第四十一轮，v40）**：用户反馈「顶部那个横条不见了」。根因是 `bcdf3a3 revert(native)` 把 `activity_main.xml` 的 `statusBarRow` 默认值改成了 `android:visibility="gone"`，而代码里没有任何地方在启动时把它设回可见（`toggleToolbar()` 也依赖它先可见/把手先可见），于是顶部工具栏+小把手都永久消失。修复：去掉 `statusBarRow` 的默认 gone（恢复 v1.3.0 基线行为：工具栏可见、`handleBar` 默认隐藏、点「隐藏」后收起成小横条胶囊）。versionName 1.3.6 / versionCode 246，vivo 实测已显示「引擎已就绪 · dsh http://127.0.0… 重启 隐藏 ⚙」横栏。手机1 本轮 adb 掉线未安装。
 - **引擎层上游修复合入（2026-10-19 第四十轮，v39）**：在 v38 选择性移植基础上，按用户「引擎层修复现在合」把 v1.3.1/v1.3.3 的引擎可靠性修复逐段并入（三路 merge-file + 手工解冲突，保留我们的 mobile-ui/原生终端/热更新改造）：
   ① EngineSupervisor：端口冲突自动清场（`portInUse/looksLikePortConflict/reclaimPort/waitPortFree` + `MAX_PORT_RECLAIMS=8`，不再误把历史 EADDRINUSE 当日志证据、清场次数有上限）、插件恢复（`PluginRecovery.onHealthy/quarantineOne`，坏插件自动停用并做有界重启，`recoveredPlugin` 通知走 `State.Healthy.notice`）、健康分支补回我们的 `proc.tokenUrl` 优先 + `retryTokenUrlWhenReady()` + `RuntimeUpdater.onEngineHealthy()`；`ExtensionManager` 已移除故删掉 clearPendingRestart 调用；孤儿清场命令改为匹配 `*files/usr/bin/node*|*dsh-engine/node-bin*`（我们真实路径，上游写的是 files/engine/bin/node）。
   ② Privilege：采用上游 `runPrivileged`（Shizuku 优先）+ `hasUnreadableEntries` 自检 + restorecon，保留我们「前缀目录是 usr 不是 engine」的修正。
