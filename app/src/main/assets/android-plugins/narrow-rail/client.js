@@ -34,6 +34,13 @@ window.__ModuleLoader__.load({
       "  [class*=\"_root\"]:has(> [class*=\"_logoRow\"])[class*=\"_collapsed\"] {",
       "    display: none !important;",
       "  }",
+      "  /* 收起态外层还有一列固定宽度的 sidebarCol 会留下左侧空白，一并压到 0 */",
+      "  [class*=\"_sidebarCol\"]:has([class*=\"_root\"][class*=\"_collapsed\"]) {",
+      "    width: 0 !important;",
+      "    min-width: 0 !important;",
+      "    flex: 0 0 0 !important;",
+      "    overflow: hidden !important;",
+      "  }",
       "}",
     ].join("\n");
 

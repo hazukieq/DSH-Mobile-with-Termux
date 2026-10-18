@@ -216,20 +216,11 @@
             android:layout_marginHorizontal="20dp"
             android:background="#22FFFFFF" />
 
+        <!-- dsh 自己的设置（引擎设置弹窗）；原生设置只在 ⋮ 菜单里 -->
         <TextView
-            android:id="@+id/drawerSettings"
+            android:id="@+id/drawerDshSettings"
             style="@style/DrawerItem"
-            android:text="@string/drawer_settings" />
-
-        <TextView
-            android:id="@+id/drawerRestart"
-            style="@style/DrawerItem"
-            android:text="@string/btn_restart" />
-
-        <TextView
-            android:id="@+id/drawerHideBar"
-            style="@style/DrawerItem"
-            android:text="@string/drawer_hide_topbar" />
+            android:text="@string/drawer_dsh_settings" />
     </LinearLayout>
 
     <!-- ==================== 启动动画（v1.3.1） ====================

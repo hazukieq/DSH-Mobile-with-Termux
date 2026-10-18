@@ -116,8 +116,7 @@ class MainActivity : Activity() {
         // 若写在 apply{} 里会在赋值完成前执行而触发 UninitializedPropertyAccessException。
         webView = findViewById<WebView>(R.id.webView)
         setupWebView()
-        // 原生外壳（v1.3.0）：顶栏标题由网页回传，抽屉/⋮ 菜单替代旧的横条按钮
-        runCatching { webView.addJavascriptInterface(TitleBridge(), "DshAndroid") }
+        // 原生外壳（v1.3.0）：顶栏固定 App 名，页面自己的标题留在网页内
         setupNativeChrome()
         // 读回用户保存的页面缩放与屏幕朝向偏好
         readUiPrefs()
@@ -374,7 +373,6 @@ class MainActivity : Activity() {
                 if (view == null) return
                 // 环境自检：把 WebView 版本与关键 API 存在性写进日志，用户报障时一眼定位
                 view.evaluateJavascript(WEBVIEW_SELFCHECK_JS, null)
-                view.evaluateJavascript(NativeJs.TITLE, null)
                 view.evaluateJavascript(NativeJs.ACTIONS, null)
                 // v1.3.1 补丁（issue #17「选择横屏进入卡死」）：收遮罩必须放在
                 // 模式分支**之前**。此前 desktopMode 分支先 return，遮罩永不淡出，
@@ -1734,6 +1732,7 @@ class MainActivity : Activity() {
         drawerPanel = findViewById(R.id.drawerPanel)
         drawerScrim = findViewById(R.id.drawerScrim)
         drawerPanel.translationX = -dp(320).toFloat()
+        // 顶栏固定 App 名（用户要求）：页面标题保留在网页内容里，不再同步 document.title
         topTitle.text = getString(R.string.app_name)
 
         findViewById<View>(R.id.btnDrawer).setOnClickListener { openDrawer() }
@@ -1759,17 +1758,9 @@ class MainActivity : Activity() {
             closeDrawer()
             runJs("window.__dshNative && window.__dshNative.search()")
         }
-        findViewById<View>(R.id.drawerSettings).setOnClickListener {
+        findViewById<View>(R.id.drawerDshSettings).setOnClickListener {
             closeDrawer()
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
-        findViewById<View>(R.id.drawerRestart).setOnClickListener {
-            closeDrawer()
-            findViewById<TextView>(R.id.btnRestart).performClick()
-        }
-        findViewById<View>(R.id.drawerHideBar).setOnClickListener {
-            closeDrawer()
-            findViewById<TextView>(R.id.btnHide).performClick()
+            runJs("window.__dshNative && window.__dshNative.openSettings()")
         }
 
         // ⋮ 更多菜单：重启引擎 / 隐藏顶栏 / 设置（全部复用旧 handler）
@@ -1818,43 +1809,8 @@ class MainActivity : Activity() {
         runCatching { webView.evaluateJavascript(js, null) }
     }
 
-    /** 网页 document.title 回传（JS 桥）。 */
-    inner class TitleBridge {
-        @android.webkit.JavascriptInterface
-        fun setTitle(title: String?) {
-            val t = title?.trim().orEmpty()
-            if (t.isEmpty()) return
-            runOnUiThread { if (::topTitle.isInitialized) topTitle.text = t }
-        }
-    }
-
     /** 原生外壳用的注入脚本（独立 object，避免和已有的 companion object 冲突）。 */
     private object NativeJs {
-        /** 标题观察：把 document.title 去掉 " — DeepSeek Harness" 后缀后回传原生顶栏。 */
-        const val TITLE = "(function(){" +
-            "if(window.__dshT) return; window.__dshT = 1;" +
-            "function pick(){" +
-            "var t=(document.title||'').trim();" +
-            "var sep=String.fromCharCode(8212);" +
-            "if(t.indexOf(sep)>=0) t=t.split(sep)[0].trim();" +
-            "if(!t||t==='DeepSeek Harness'){" +
-            "var cs=document.querySelectorAll('h1,h2,[class*=\"_title\"]');" +
-            "for(var i=0;i<cs.length;i++){" +
-            "var e=cs[i], r=e.getBoundingClientRect();" +
-            "if(r.width<20||r.height<10||r.top<0||r.top>260) continue;" +
-            "var x=(e.innerText||'').split(String.fromCharCode(10))[0].trim();" +
-            "if(!x||x.length>40) continue; t=x; break;" +
-            "}" +
-            "}" +
-            "return t||'DeepSeek Harness';" +
-            "}" +
-            "function push(){ var t=pick();" +
-            "if(window.__dshLT!==t){ window.__dshLT=t; try { DshAndroid.setTitle(t); } catch(e) {} } }" +
-            "setInterval(push, 1200);" +
-            "try { new MutationObserver(push).observe(document.documentElement, {childList:true, subtree:true}); } catch(e) {}" +
-            "push();" +
-            "})();"
-
         /** 抽屉动作：click 引擎自己的按钮（类名后缀稳定，不依赖中英文 aria-label）。 */
         const val ACTIONS = "(function(){if(window.__dshN)return;window.__dshN=1;" +
             "function click(sel){var e=document.querySelector(sel);if(e){e.click();return true}return false}" +
@@ -1863,7 +1819,13 @@ class MainActivity : Activity() {
             "panel:function(i){var r=document.querySelectorAll('nav[class*=\"_panelList\"] button[class*=\"_panelRow\"]');" +
             "if(r[i]){r[i].click();return true}var a=document.querySelectorAll('button[class*=\"_panelRow\"]');" +
             "if(a[i]){a[i].click();return true}return false}," +
-            "search:function(){return click('button[class*=\"_searchButton\"]')}" +
+            "search:function(){return click('button[class*=\"_searchButton\"]')}," +
+            "openSettings:function(){" +
+            "var trig=null,bs=document.querySelectorAll('button[aria-haspopup]');" +
+            "for(var i=0;i<bs.length;i++){if(bs[i].getAttribute('aria-haspopup')==='menu'){trig=bs[i];break}}" +
+            "if(!trig)return false; trig.click();" +
+            "setTimeout(function(){var items=document.querySelectorAll('[role=\"menuitem\"], [role=\"menu\"] button');" +
+            "if(items.length)items[0].click();},180); return true}" +
             "};})();"
     }
 

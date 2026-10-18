@@ -505,4 +505,5 @@ engine: %6$s</string>
     <string name="drawer_search">Search sessions</string>
     <string name="drawer_settings">Settings</string>
     <string name="drawer_hide_topbar">Hide top bar</string>
+    <string name="drawer_dsh_settings">DSH settings</string>
 </resources>
