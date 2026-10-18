@@ -37,10 +37,19 @@ class EngineSupervisor(private val ctx: Context) {
         data object Starting : State
 
         /** 正常健康；tokenUrl = 0.2.0+ WebUI 认证地址（engine.log 的 dsh web: 输出） */
-        data class Healthy(val port: Int, val tokenUrl: String? = null) : State
+        data class Healthy(
+            val port: Int,
+            val tokenUrl: String? = null,
+            /** 本次启动前自动摘掉的第三方插件；仅在恢复后的首个 Healthy 状态携带。 */
+            val recoveredPlugin: String? = null,
+        ) : State
 
         /** 安全模式：配置被隔离后以空配置拉起，功能受限但可用 */
-        data class SafeMode(val port: Int, val tokenUrl: String? = null) : State
+        data class SafeMode(
+            val port: Int,
+            val tokenUrl: String? = null,
+            val recoveredPlugin: String? = null,
+        ) : State
         data class Backoff(val delayMs: Long, val attempt: Int) : State
         data class Failed(val reason: String) : State
         data object Stopped : State
@@ -126,6 +135,8 @@ class EngineSupervisor(private val ctx: Context) {
     }
 
     private var process: EngineProcess? = null
+    /** 启动前摘掉的插件名；恢复成功后的首个 Healthy 状态会带上它，随后清空。 */
+    @Volatile private var recoveredPlugin: String? = null
     /** 本次引擎启动时 engine.log 的长度：extractTokenUrl 只搜此偏移之后的日志段 */
     @Volatile private var logOffsetAtSpawn = 0L
     private var loopJob: Job? = null
@@ -266,8 +277,31 @@ class EngineSupervisor(private val ctx: Context) {
         return "$status:${tail.hashCode()}"
     }
 
+    /**
+     * **本次启动**的日志尾部是否出现「端口被占」类失败。
+     *
+     * 只读 [logOffsetAtSpawn] 之后的内容 —— 引擎日志是**追加**的，整份读会把
+     * 上一次启动留下的 EADDRINUSE 当成本次失败（那样每次启动都会误触发清场）。
+     */
+    private fun looksLikePortConflict(): Boolean = runCatching {
+        val f = logFile()
+        if (!f.isFile) return@runCatching false
+        val len = f.length()
+        val from = logOffsetAtSpawn.coerceIn(0L, len)
+        // 只取本次启动写下的尾部（最多 8KB，足够覆盖一段启动堆栈）
+        val tail = java.io.RandomAccessFile(f, "r").use { raf ->
+            raf.seek(maxOf(from, len - 8192))
+            val buf = ByteArray((len - maxOf(from, len - 8192)).toInt())
+            raf.readFully(buf)
+            String(buf, Charsets.UTF_8)
+        }
+        tail.contains("EADDRINUSE") || tail.contains("address already in use", ignoreCase = true)
+    }.getOrDefault(false)
+
     private suspend fun supervisionLoop() {
         var backoffIndex = 0
+        // 端口清场计数（v1.3.1）：防「非引擎进程永久占端口」时绕过退避无限重试
+        var portReclaimCount = 0
         while (kotlinx.coroutines.currentCoroutineContext().isActive && !userStop) {
             // 仅当引擎「自行死亡」（fork 失败 / 启动期退出）才值得让 guardian 定罪；
             // 健康超时自杀、安装异常、Healthy 后运行中退出都不算配置崩溃。
@@ -300,14 +334,22 @@ class EngineSupervisor(private val ctx: Context) {
                 withContext(Dispatchers.IO) { AgentBridge.start(ctx) }
                 step("bridge")
 
-                // Root 提权自愈（m1.27）：非 Root 模式启动前，若 dsh-home 被上次 Root 引擎
-                // 污染成 root 属主（EACCES 读不了），chown 回 app uid，否则引擎必崩。
-                if (Privilege.getMode(ctx) != PrivMode.ROOT) {
-                    val needFix = withContext(Dispatchers.IO) { Privilege.dshHomeNeedsOwnershipFix(ctx) }
-                    if (needFix) {
-                        Log.w(TAG, "found dsh-home files owned by non-app uid (likely Root-mode residue); fixing ownership")
-                        withContext(Dispatchers.IO) { Privilege.fixHomeOwnership(ctx) }
-                    }
+                // 属性自愈（v1.3.1 扩展到**所有模式**，含 Root）。
+                //
+                // ⚠️ 旧实现只在非 Root 模式跑（`mode != ROOT`），漏掉了两类真实故障
+                // （用户反馈「安卓 11 上异常退出后无法使用，删掉重装又好了」）：
+                //   · Root 引擎以 uid 0 写出的文件属主是 root，而 **App 自己**（非 root）
+                //     读不了 engine/ 与 dsh-home/：`.runtime-version` 版本戳、
+                //     `profile-guardian.meta`、插件、AGENTS.md → 启动链路 EACCES 累积；
+                //   · 与模式无关的属性损坏（SELinux 标签错、权限位被剥）同样致命。
+                // 用户只能靠「删掉重装」恢复（卸载清空私有目录 = 变相重置属性），
+                // 这正是该缺陷最典型的现场指纹。
+                // 现在无论什么模式都查一遍，检测到就修（chown + chmod + restorecon）。
+                val needFix = withContext(Dispatchers.IO) { Privilege.dshHomeNeedsOwnershipFix(ctx) }
+                if (needFix) {
+                    Log.w(TAG, "found files with broken ownership/permissions (root residue or bad labels); healing")
+                    val fixed = withContext(Dispatchers.IO) { Privilege.fixHomeOwnership(ctx) }
+                    Log.w(TAG, "attribute healing ${if (fixed) "succeeded" else "unavailable (no shizuku/su)"}")
                 }
                 step("home-owner-check")
 
@@ -333,48 +375,99 @@ class EngineSupervisor(private val ctx: Context) {
                 step("user-data")
 
                 _state.value = State.Starting
-                val proc = withContext(Dispatchers.IO) { spawnEngine() }
+                // 旧 marker 可能来自上一次被强杀的引擎；本次 fork 前先清掉，
+                // 否则一个 stale 的 degraded 结果会把正常插件误摘掉。
+                withContext(Dispatchers.IO) { PluginRecovery.prepareForBoot(ctx) }
+                val bootId = java.util.UUID.randomUUID().toString()
+                val proc = withContext(Dispatchers.IO) { spawnEngine(bootId) }
                 process = proc
                 step("spawn")
 
                 val healthy = pollHealth(EngineConfig.DEFAULT_PORT, proc)
                 step("health-poll")
                 if (healthy) {
-                    withContext(Dispatchers.IO) {
-                        guardian.resetCrashStreak()
-                        guardian.snapshotLastGood()
+                    var pluginRecoveryRequested = false
+                    // HTTP 已监听不代表 Cordis Loader 的关键 entry 已成功激活。
+                    // 等待内置 probe 写出本次 boot 的 marker；缺失只记诊断，不阻断慢设备。
+                    val health = withContext(Dispatchers.IO) { awaitPluginHealth(proc, bootId) }
+                    if (health != null) {
+                        Log.i(
+                            TAG,
+                            "plugin health: ok=${health.ok} missing=${health.missingServices.joinToString(",")} " +
+                                "failed=${health.failedEntries.joinToString(",") { "${it.id}:${it.name}" }}",
+                        )
+                    } else {
+                        Log.w(TAG, "plugin health marker missing or unreadable; keeping engine available")
                     }
-                    backoffIndex = 0
-                    val safe = guardian.inSafeMode()
-                    // 优先用进程 stdout 抓到的 token（不依赖日志文件权限/时序）
-                    val tokenUrl = proc.tokenUrl ?: extractTokenUrl()
-                    Log.i(TAG, "token url extracted: ${if (tokenUrl == null) "null" else "yes (len=" + tokenUrl.length + ")"}")
-                    val t1 = System.currentTimeMillis()
-                    val restartMs = restartStartedAt?.let { " (total restart took ${t1 - it}ms)" } ?: ""
-                    restartStartedAt = null
-                    Log.i(TAG, (if (safe) "engine healthy in SAFE MODE on :${EngineConfig.DEFAULT_PORT}" else "engine healthy on :${EngineConfig.DEFAULT_PORT}") + restartMs)
-                    _state.value =
-                        if (safe) State.SafeMode(EngineConfig.DEFAULT_PORT, tokenUrl)
-                        else State.Healthy(EngineConfig.DEFAULT_PORT, tokenUrl)
-                    // 0.2.1 起 `dsh web:` 那行可能比健康探测晚几百毫秒才打印：
-                    // extractTokenUrl() 只等 600ms，拿不到就会把裸地址交给 WebView，
-                    // 服务端返回纯文本 "dsh web authentication required"（白屏）。
-                    // 所以健康态先放行，token 迟到时补发一次 state（UI 会据此重载）。
-                    if (tokenUrl == null) retryTokenUrlWhenReady()
-                    // 运行时热更新（2026-10-18）：健康启动的这一刻回收上一版 engine.old
-                    // （apply 成功时登记的 .runtime-reclaim 决定要不要真删）。放在这里而不是
-                    // apply 自己的健康等待里 —— apply 那次不能删，回滚点必须活到下一次启动。
-                    // 内部 runCatching，任何异常都不影响启动。
-                    RuntimeUpdater.onEngineHealthy(ctx)
-                    // Shizuku 模式：引擎就绪后启动 ADB 级访问桥（shz 包装器回呼用）；其他模式自动关停
-                    withContext(Dispatchers.IO) {
-                        ShizukuHttpBridge.start(ctx, EngineConfig.DEFAULT_PORT)
+                    if (health?.ok == true) {
+                        withContext(Dispatchers.IO) { PluginRecovery.onHealthy(ctx) }
                     }
-                    // 阻塞等待进程退出（被杀/崩溃）。Healthy 后退出视为资源类偶发，
-                    // 不计入 guardian（那是普通退避该管的事，与配置无关）。
-                    val status = proc.exitFuture.get()
-                    if (userStop) break
-                    Log.w(TAG, "engine exited, raw status=0x${status.toString(16)}")
+                    if (health != null && !health.ok) {
+                        val action = withContext(Dispatchers.IO) { PluginRecovery.quarantineOne(ctx, health) }
+                        if (action != null) {
+                            recoveredPlugin = action.packageName
+                            pluginRecoveryRequested = true
+                            Log.e(
+                                TAG,
+                                "plugin recovery: disabled ${action.packageName}; reason=${action.reason}; " +
+                                    "restart=${action.attempt}/${3}",
+                            )
+                            // 不把 degraded engine 暴露给 WebView；只重启一次本轮，
+                            // PluginRecovery 的持久化上限负责阻止无限重启风暴。
+                            proc.stop(graceMs = 1_500)
+                            deterministicFailure = null
+                            backoffIndex = 0
+                        } else {
+                            Log.e(TAG, "plugin recovery: no safe candidate; leaving profile unchanged")
+                        }
+                    }
+                    if (pluginRecoveryRequested) {
+                        // 这次是有界的插件修复重启，不进入 ProfileGuardian 的配置定罪计数。
+                    } else {
+                        // 端口已监听但健康探针明确报告 degraded 时，不能把坏 profile
+                        // 快照成 last-good；否则后续崩溃回滚会再次恢复同一坏插件。
+                        if (health?.ok != false) {
+                            withContext(Dispatchers.IO) {
+                                guardian.resetCrashStreak()
+                                guardian.snapshotLastGood()
+                            }
+                        } else {
+                            Log.w(TAG, "plugin health degraded; keeping previous last-good snapshot")
+                        }
+                        backoffIndex = 0
+                        val safe = guardian.inSafeMode()
+                        // 优先用进程 stdout 抓到的 token（不依赖日志文件权限/时序）
+                        val tokenUrl = proc.tokenUrl ?: extractTokenUrl()
+                        Log.i(TAG, "token url extracted: ${if (tokenUrl == null) "null" else "yes (len=" + tokenUrl.length + ")"}")
+                        val notice = recoveredPlugin
+                        recoveredPlugin = null
+                        val t1 = System.currentTimeMillis()
+                        val restartMs = restartStartedAt?.let { " (total restart took ${t1 - it}ms)" } ?: ""
+                        restartStartedAt = null
+                        Log.i(TAG, (if (safe) "engine healthy in SAFE MODE on :${EngineConfig.DEFAULT_PORT}" else "engine healthy on :${EngineConfig.DEFAULT_PORT}") + restartMs)
+                        _state.value =
+                            if (safe) State.SafeMode(EngineConfig.DEFAULT_PORT, tokenUrl, notice)
+                            else State.Healthy(EngineConfig.DEFAULT_PORT, tokenUrl, notice)
+                        // 0.2.1 起 `dsh web:` 那行可能比健康探测晚几百毫秒才打印：
+                        // extractTokenUrl() 只等 600ms，拿不到就会把裸地址交给 WebView，
+                        // 服务端返回纯文本 "dsh web authentication required"（白屏）。
+                        // 所以健康态先放行，token 迟到时补发一次 state（UI 会据此重载）。
+                        if (tokenUrl == null) retryTokenUrlWhenReady()
+                        // 运行时热更新（2026-10-18）：健康启动的这一刻回收上一版 engine.old
+                        // （apply 成功时登记的 .runtime-reclaim 决定要不要真删）。放在这里而不是
+                        // apply 自己的健康等待里 —— apply 那次不能删，回滚点必须活到下一次启动。
+                        // 内部 runCatching，任何异常都不影响启动。
+                        RuntimeUpdater.onEngineHealthy(ctx)
+                        // Shizuku 模式：引擎就绪后启动 ADB 级访问桥（shz 包装器回呼用）；其他模式自动关停
+                        withContext(Dispatchers.IO) {
+                            ShizukuHttpBridge.start(ctx, EngineConfig.DEFAULT_PORT)
+                        }
+                        // 阻塞等待进程退出（被杀/崩溃）。Healthy 后退出视为资源类偶发，
+                        // 不计入 guardian（那是普通退避该管的事，与配置无关）。
+                        val status = proc.exitFuture.get()
+                        if (userStop) break
+                        Log.w(TAG, "engine exited, raw status=0x${status.toString(16)}")
+                    }
                 } else if (proc.exitFuture.isDone) {
                     // 启动期内进程自己死了——唯一进入自愈判定的信号
                     deterministicFailure = failureSignature(lastExitStatus)
@@ -386,36 +479,64 @@ class EngineSupervisor(private val ctx: Context) {
             } catch (e: EngineStartException) {
                 if (userStop) break
                 Log.e(TAG, "supervision failure", e)
-                deterministicFailure = failureSignature(null)
+                // ⚠️ v1.3.1：su 探测失败（"no usable su"）是**环境瞬时问题**，不是坏配置。
+                // 场景：App 被强杀后立刻重启，magiskd 对该 app 的 su 会话尚未重建、
+                // 或设备刚开机 daemon 还没就绪 —— 三个探针各 2s 超时 → usableSuPrefix()
+                // 返回 null。旧实现把它当确定性崩溃计入 guardian（签名 "null:<hash>"），
+                // 于是「一次异常杀死 + 几轮 su 忙」就足以让 guardian 回滚用户配置、
+                // 进而 SAFE MODE（归档配置）——这正是用户报的二次启动起不来的放大机制。
+                // 现在明确隔离：这类失败只退避重试，绝不判罪。
+                if (e.message?.contains("no usable su") == true) {
+                    Log.w(TAG, "su unavailable right now — treating as transient, not a config failure")
+                    deterministicFailure = null
+                } else {
+                    deterministicFailure = failureSignature(null)
+                }
+            } catch (e: EngineArchMismatchException) {
+                // 确定性故障（v1.3.3，issue #23）：APK 里带的 runtime 就是错的架构，
+                // 重试多少次都必然失败 —— 直接进 Failed 并说清原因，别让用户看着
+                // 「连续 14 次启动失败」的模糊文案反复重装。
+                Log.e(TAG, "runtime architecture mismatch — stopping (retrying cannot help)", e)
+                _state.value = State.Failed(ctx.getString(R.string.error_runtime_arch_mismatch))
+                return
             } catch (e: Exception) {
                 if (userStop) break
                 Log.e(TAG, "supervision failure", e)
             }
 
             // ---- 自愈判定：仅对「引擎真死」且签名连续一致时逐步升级 ----
-            // 【v1.2.22】Root→普通切换后 root 孤儿 node 霸占 3080 → 普通引擎
-            // EADDRINUSE 真死循环（孤儿在服务所以页面/AI 看似正常）。检测到
-            // EADDRINUSE 立即用 su 清掉 engine/bin/node 的全部残留后重试。
-            if (deterministicFailure?.contains("EADDRINUSE") == true) {
-                // 【v1.2.32】孤儿两种来源：Root 残留（需 su）/ 普通模式 App 被强杀后遗留
-                // （node 与 App 同 uid，直接 pkill 即可）。此前仅 su 分支 → 普通模式
-                // 孤儿永占 3080 → 无限 EADDRINUSE 重启（用户实测 62 次仍在增长）。
-                runCatching {
-                    ProcessBuilder("/system/bin/sh", "-c",
-                        "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
-                        .start().waitFor()
+            // ---- 环境类失败处置（v1.3.1）：与配置无关，绝不交给 guardian 判罪 ----
+            // 【历史事故】v1.2.22 / v1.2.32 / v1.2.108 三轮修复都写在这个分支里，
+            // 但判断条件是 `deterministicFailure.contains("EADDRINUSE")` —— 而签名是
+            // `"<退出码>:<哈希>"`，**永远不可能包含该字面量**，所以这段自愈从未执行过。
+            // 后果（用户报的「Root 模式被杀死后二次启动起不来」）：
+            //   Root 引擎的 node 是 su 的**孙进程**（PDEATHSIG 只挂到 su 外壳上），
+            //   App 被强杀时 node 可能以 uid 0 成为孤儿继续占着 3080 →
+            //   新引擎 EADDRINUSE 启动即退 → 本该「清场重试、不计入自愈」，
+            //   实际被 guardian 当成「坏配置连续崩溃」→ 回滚 profiles →
+            //   SAFE MODE（归档用户配置）→ MAX_RESTART 后 State.Failed。
+            // 证据门槛（两道，必须同时成立）：
+            //   ① **端口真的被占** —— 硬证据，且清场对空闲端口是无害 no-op；
+            //   ② 本次确实处于失败路径（有失败签名，或日志确证端口冲突）。
+            // 加②是为了防两类误判：一是日志里**历史**的 EADDRINUSE 被当成本次失败；
+            // 二是「健康超时自杀」时我们刚停的进程尚未释放端口（那条路径
+            // deterministicFailure 恒为 null，且日志无端口冲突 → 不触发）。
+            // ⚠️ 阻塞调用（socket 探测 / Thread.sleep / su）必须切到 IO：
+            // 监督循环本身跑在 Dispatchers.Default 上。
+            val portEvidence = withContext(Dispatchers.IO) {
+                portInUse() && (deterministicFailure != null || looksLikePortConflict())
+            }
+            if (portEvidence) {
+                if (portReclaimCount < EngineConfig.MAX_PORT_RECLAIMS) {
+                    portReclaimCount++
+                    withContext(Dispatchers.IO) { reclaimPort() }
+                    deterministicFailure = null   // 已处置，不计入 guardian（与配置无关）
+                    backoffIndex = 0
+                    delay(1_200)                  // 等端口真正释放再下一轮
+                } else {
+                    Log.e(TAG, "port reclaim exceeded ${EngineConfig.MAX_PORT_RECLAIMS} attempts — giving up (occupied by a foreign process?)")
+                    portReclaimCount = 0
                 }
-                // v1.2.108：走 runSu —— 旧实现硬编码 `su -c`，toybox 风格 su 报
-                // `invalid uid/gid '-c'` 后被 runCatching 吞掉，root 孤儿杀不掉 →
-                // 端口一直占着 → EADDRINUSE 无限重启（正是上一条注释描述的现场）。
-                Privilege.runSu(
-                    "pkill -9 -f 'dsh-engine/node-bin' 2>/dev/null; " +
-                        "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true"
-                )
-                Log.w(TAG, "EADDRINUSE: killed orphan engine node(s)")
-                deterministicFailure = null   // 已处置，不计入 guardian（与配置无关）
-                backoffIndex = 0
-                delay(1500)                   // 等端口释放再下一轮
             }
             deterministicFailure?.let { sig ->
                 when (
@@ -448,11 +569,28 @@ class EngineSupervisor(private val ctx: Context) {
         }
     }
 
+    /** 等待本次引擎写出插件健康标记；marker 本身不包含凭证或用户路径。 */
+    private suspend fun awaitPluginHealth(
+        proc: EngineProcess,
+        bootId: String,
+    ): PluginRecovery.Health? = withContext(Dispatchers.IO) {
+        val deadline = System.currentTimeMillis() + 20_000L
+        while (System.currentTimeMillis() < deadline && !proc.exitFuture.isDone) {
+            val health = PluginRecovery.readHealth(ctx, bootId)
+            if (health != null) {
+                Log.i(TAG, "plugin health marker received (ok=${health.ok})")
+                return@withContext health
+            }
+            Thread.sleep(200L)
+        }
+        null
+    }
+
     /** 最近一次子进程退出码；仅在进程已退出后可读，避免阻塞 */
     private val lastExitStatus: Int?
         get() = process?.exitFuture?.takeIf { it.isDone }?.get()
 
-    private fun spawnEngine(): EngineProcess {
+    private fun spawnEngine(bootId: String): EngineProcess {
         // 【v1.2.32】启动前孤儿清理：App 被强杀/force-stop 后，引擎 node 可能成孤儿
         // 继续占着 3080（普通模式与 App 同 uid；Root 模式需 su）。此时新引擎必然
         // EADDRINUSE 无限重启（用户实测 62 次）。pkill 只匹配我们的引擎路径，
@@ -482,43 +620,93 @@ class EngineSupervisor(private val ctx: Context) {
             nodeBin = EngineConfig.nodeBin(ctx),
             entryJs = EngineConfig.dshEntry(ctx),
             cwd = EngineConfig.workspaces(ctx),
-            env = EngineConfig.buildEnv(ctx, EngineConfig.DEFAULT_PORT),
+            env = EngineConfig.buildEnv(ctx, EngineConfig.DEFAULT_PORT, bootId),
             logFile = logFile(),
             suPath = suPath,
             patchPath = runCatching { EngineConfig.ensureAndroidOverlay(ctx).absolutePath }.getOrNull(),
         )
     }
 
-    /** 端口被占则清理孤儿引擎 node（同 uid pkill，su 兜底），等内核释放端口后返回。 */
-    private fun cleanupOrphanEngine() {
-        val inUse = runCatching {
+    /** 引擎默认端口当前是否真被占用。
+     *
+     * ⚠️ 旧实现把探测失败（超时/异常）当作「端口空闲」（getOrDefault(false)）——
+     * 而 `listen backlog` 打满、引擎事件循环卡住时 connect 恰好会超时，于是
+     * **明明占着却被判为空闲，跳过整个清场**，新引擎照样 EADDRINUSE。
+     * 现在区分两种结果：连上 = 占用；连不上但内核报 RST/拒绝 = 空闲；
+     * 其它（超时/未知）**按占用处理** —— 宁可多清一次（清场对空闲端口是 no-op），
+     * 也不能漏掉真正的占用者。 */
+    private fun portInUse(timeoutMs: Int = 700): Boolean {
+        return try {
             java.net.Socket().use { s ->
-                s.connect(java.net.InetSocketAddress("127.0.0.1", EngineConfig.DEFAULT_PORT), 300)
+                s.connect(java.net.InetSocketAddress("127.0.0.1", EngineConfig.DEFAULT_PORT), timeoutMs)
                 true
             }
-        }.getOrDefault(false)
-        if (!inUse) return
-        Log.w(TAG, "port ${EngineConfig.DEFAULT_PORT} occupied before start — killing orphan engine node(s)")
+        } catch (e: java.net.ConnectException) {
+            false            // 明确拒绝 = 没人在听 = 空闲
+        } catch (e: Exception) {
+            true             // 超时/未知一律按占用（保守：清场无害，漏清致命）
+        }
+    }
+
+    /**
+     * 强制回收 3080：清掉所有占着它的引擎 node 残留（v1.3.1）。
+     *
+     * ⚠️ Root 模式的孤儿为什么清不干净（用户报的二次启动失败）：
+     * 引擎以 `su -c "exec node …"` 启动，PTY 的直接子进程只是 **su 外壳** ——
+     * `dsh_pty.c` 的 `PR_SET_PDEATHSIG` 挂在外壳上，App 被强杀时信号**传不到 node**，
+     * 于是 node 以 uid 0 变孤儿继续监听 3080。而 app uid 的 `pkill` 对 root 进程
+     * 必然 EPERM，唯一的指望是 su 那条。
+     *
+     * 因此这里做三件事：
+     *  ① 同 uid pkill（普通模式的孤儿）；
+     *  ② su 兜底 pkill（Root 模式的孤儿）—— 用 `findSu` 覆盖 Magisk/KernelSU 路径；
+     *  ③ **兜底再确认**：清完仍被占就再补一轮，并把结果写进日志（不再静默）。
+     *
+     * ⚠️ 必须排除 LAN 反向代理（`lan-web-proxy`）：它的 cmdline 里同样含
+     * `files/engine/bin/node`，误杀会让「局域网访问」在每次引擎重启后静默失效。
+     */
+    private fun reclaimPort() {
+        Log.w(TAG, "port ${EngineConfig.DEFAULT_PORT} in use — reclaiming (orphan engine node)")
+        // shell 脚本里的 $ 用 $ 拼接（Kotlin 会把 "$p" 当模板变量解析）
+        val d = "$"
+        val killCmd =
+            "for p in " + d + "(ls /proc | grep -E '^[0-9]+" + d + "'); do " +
+                "c=" + d + "(tr '\\0' ' ' < /proc/" + d + "p/cmdline 2>/dev/null) || continue; " +
+                "case \"" + d + "c\" in *files/usr/bin/node*|*dsh-engine/node-bin*) " +
+                "case \"" + d + "c\" in *lan-web-proxy*) continue;; esac; " +
+                "kill -9 " + d + "p 2>/dev/null;; esac; done; true"
+        // ① 同 uid（普通模式孤儿）
         runCatching {
-            ProcessBuilder("/system/bin/sh", "-c",
-                // v8 起 bin/node 是 wrapper，真实进程是 lib/dsh-engine/node-bin；
-                // 两个 pattern 都匹配，否则孤儿杀不掉 → EADDRINUSE 无限重启。
-                "pkill -9 -f 'dsh-engine/node-bin' 2>/dev/null; " +
-                    "pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
-                .start().waitFor()
+            ProcessBuilder("/system/bin/sh", "-c", killCmd).start().waitFor()
         }
-        // v1.2.108：走 runSu（同上，toybox 设备上旧写法静默失败）
-        Privilege.runSu("pkill -9 -f 'files/usr/bin/node' 2>/dev/null; true")
-        // 轮询等端口释放（旧实现平睡 1.5s，每次重启白等；通常几十毫秒内就释放）
-        val waitUntil = System.currentTimeMillis() + 1_500
-        while (System.currentTimeMillis() < waitUntil) {
-            val free = runCatching {
-                java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", EngineConfig.DEFAULT_PORT), 200) }
-                false
-            }.getOrDefault(true)
-            if (free) break
-            Thread.sleep(100)
+        // ② su 兜底（Root 模式孤儿；su 不可用时 runSu 自己会静默返回 null）
+        Privilege.runSu(killCmd)
+        // ③ 等端口真正释放；仍占用则再补一轮 su 清场（可能是刚被拉起的新进程）
+        waitPortFree(1_800)
+        if (portInUse(400)) {
+            Log.w(TAG, "port still in use after first sweep — retrying via su")
+            Privilege.runSu(killCmd)
+            waitPortFree(1_800)
         }
+        if (portInUse(300)) {
+            Log.e(TAG, "port ${EngineConfig.DEFAULT_PORT} STILL in use after sweeps — next boot will likely fail")
+        }
+    }
+
+    /** 轮询等端口释放，返回是否已空闲 */
+    private fun waitPortFree(budgetMs: Long): Boolean {
+        val until = System.currentTimeMillis() + budgetMs
+        while (System.currentTimeMillis() < until) {
+            if (!portInUse(250)) return true
+            Thread.sleep(120)
+        }
+        return !portInUse(250)
+    }
+
+    /** 启动前端口体检：占用则清场（不做静默跳过）。 */
+    private fun cleanupOrphanEngine() {
+        if (!portInUse()) return
+        reclaimPort()
     }
 
     /** 稳定窗：windowMs 内进程退出返回 false（启动失败），挺过窗口返回 true */

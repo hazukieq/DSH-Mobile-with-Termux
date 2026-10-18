@@ -188,8 +188,12 @@ class EngineService : Service() {
         // status_starting，而随后的 Starting 事件被丢弃、Healthy 事件又被
         // `if (text == lastNotifText) return` 之类的时序问题挡住时，小字就永远不更新。
         val text = when (state) {
-            is EngineSupervisor.State.Healthy -> getString(R.string.status_healthy)
-            is EngineSupervisor.State.SafeMode -> getString(R.string.status_healthy)
+            is EngineSupervisor.State.Healthy -> state.recoveredPlugin?.let {
+                getString(R.string.status_plugin_recovered, it)
+            } ?: getString(R.string.status_healthy)
+            is EngineSupervisor.State.SafeMode -> state.recoveredPlugin?.let {
+                getString(R.string.status_plugin_recovered, it)
+            } ?: getString(R.string.status_healthy)
             is EngineSupervisor.State.Installing -> getString(R.string.status_installing)
             is EngineSupervisor.State.Starting -> getString(R.string.status_starting)
             is EngineSupervisor.State.Backoff ->

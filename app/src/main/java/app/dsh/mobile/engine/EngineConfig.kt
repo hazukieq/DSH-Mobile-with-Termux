@@ -36,6 +36,16 @@ object EngineConfig {
     /** 运行时前缀目录名（Termux 标准是 `usr`；改包名后必须与 Termux 对齐） */
     const val PREFIX_DIR = "usr"
 
+    /**
+     * 端口冲突自动清场的最大连续次数（v1.3.1）。
+     *
+     * 端口被**我们的**孤儿引擎占用时，清场后即可恢复，通常一次足够；但若端口被
+     * 完全无关的进程（用户自己跑的、别的 app 的）永久占用，清场永远不会成功 ——
+     * 那时必须放行走正常退避与 State.Failed，让用户看到明确错误，
+     * 而不是绕过 MAX_RESTART 无声地无限重试。
+     */
+    const val MAX_PORT_RECLAIMS = 8
+
     fun engineRoot(ctx: android.content.Context): File =
         File(ctx.filesDir, EngineConfig.PREFIX_DIR).apply { mkdirs() }
 
@@ -506,10 +516,67 @@ object EngineConfig {
             |        name: danger-full-access
             |        description: Full file access without approval prompts.
             |
-            |# Registers DSH_ANDROID_PRIV_MODE as a managed shell variable. The value
-            |# cannot arrive by process inheritance: shell-env rebuilds the DSH_*
-            |# namespace per shell call and injects only registered contributions.
-            |# A relative name is resolved against this overlay's directory.
+            |# Critical host services are repeated in this last overlay deliberately.
+            |# Profile bundle patches and the user's profile patch are applied before
+            |# --patch, and a later row with the same id replaces the complete row.
+            |# This prevents an installed plugin from disabling the directory picker,
+            |# workspace controller, loader, or web server by accident. The complete
+            |# config is repeated because patching replaces, rather than merges, config.
+            |- id: typert
+            |  name: '@deepseek-ai/dsh-typert-registry'
+            |  disabled: false
+            |
+            |- id: typert-loader
+            |  name: '@deepseek-ai/dsh-typert-loader'
+            |  disabled: false
+            |
+            |- id: typert-gateway
+            |  name: '@deepseek-ai/dsh-api-gateway'
+            |  disabled: false
+            |
+            |- id: directory-picker
+            |  name: '@deepseek-ai/dsh-host-directory-picker-auto'
+            |  inject: [webServer, loader]
+            |  disabled: false
+            |
+            |- id: session-persistence-jsonl
+            |  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+            |  config:
+            |    root: !!js dshHomePath('sessions')
+            |  disabled: false
+            |
+            |- id: storage-domain
+            |  name: '@deepseek-ai/dsh-storage-domain'
+            |  config:
+            |    backend: json
+            |  disabled: false
+            |
+            |- id: workspace-controller
+            |  name: '@deepseek-ai/dsh-api-workspace-controller'
+            |  disabled: false
+            |
+            |- id: workspace
+            |  name: '@deepseek-ai/dsh-workspace'
+            |  disabled: false
+            |
+            |- id: webserver
+            |  name: '@deepseek-ai/dsh-host-webserver'
+            |  inject: [webStartup]
+            |  disabled: false
+            |  config:
+            |    host: !!js ctx.webStartup.host ?? '127.0.0.1'
+            |    port: !!js ctx.webStartup.port ?? 3080
+            |    compression: gzip
+            |    compressionLevel: 1
+            |    compressionThresholdBytes: 1024
+            |
+            |# This probe is intentionally last: Cordis keeps failed imports as
+            |# entries without a fiber, while the HTTP port can still be healthy.
+            |# The app consumes its marker and can quarantine only a user bundle.
+            |- insert:
+            |    - id: android-plugin-health
+            |      name: ./android-plugins/plugin-health.mjs
+            |
             |- insert:
             |    - id: android-priv-mode
             |      name: ./android-plugins/priv-mode.mjs
@@ -563,7 +630,7 @@ object EngineConfig {
         // sit beside it. Deploy from assets (kept in sync by the same idempotent check).
         runCatching {
             // 单文件插件（.mjs）：overlay 直接指向文件
-            listOf("priv-mode.mjs", "bridge-token.mjs", "fast-mode.mjs").forEach { fileName ->
+            listOf("priv-mode.mjs", "bridge-token.mjs", "fast-mode.mjs", "plugin-health.mjs").forEach { fileName ->
                 val src = ctx.assets.open("android-plugins/$fileName").use { it.readBytes() }
                 val dst = File(f.parentFile, "android-plugins/$fileName")
                 deployOne(dst, src.toString(Charsets.UTF_8), fileName)
@@ -620,6 +687,22 @@ object EngineConfig {
     }
 
     /**
+     * 引擎默认 shell 路径（v1.3.1，issue #18）。
+     *
+     * 首选自带 bash（`<engineRoot>/bin/bash`，门脚本与 /dev/tcp 都依赖 bash 特性）；
+     * 若因解压不完整等原因缺失，退回 runtime 里的 `bin/sh`，再退回系统 toybox sh。
+     * 绝不返回 Termux 前缀——那条路径在本机永远不存在。
+     */
+    private fun shellPathFor(root: File): String {
+        val bash = File(root, "bin/bash")
+        if (bash.canExecute()) return bash.absolutePath
+        val sh = File(root, "bin/sh")
+        if (sh.exists()) return sh.absolutePath
+        Log.w(TAG, "engine bash missing at ${bash.absolutePath}; falling back to /system/bin/sh")
+        return "/system/bin/sh"
+    }
+
+    /**
      * 组装子进程环境变量。
      * PATH/LD_LIBRARY_PATH/PREFIX 对齐 Termux 布局，保证 bionic 二进制能找到依赖库。
      *
@@ -629,7 +712,7 @@ object EngineConfig {
      * 模拟器因无 com.termux 目录呈 ENOENT 静默通过故未暴露）。显式指回自带 etc/tls
      * 与宿主 Termux 彻底隔离。
      */
-    fun buildEnv(ctx: android.content.Context, port: Int): Array<String> {
+    fun buildEnv(ctx: android.content.Context, port: Int, bootId: String? = null): Array<String> {
         val root = engineRoot(ctx)
         // 运行权限模式（m1.24）：注入给 AI 侧感知，令其按模式调整执行行为
         val privMode = Privilege.getMode(ctx)
@@ -676,10 +759,15 @@ object EngineConfig {
                     listOfNotNull(linuxProotLib.takeIf { linuxProotReady })
                 ).joinToString(":"),
             "PREFIX=$root",
-            // WebUI 侧边栏终端的默认 shell 由 dsh-subprocess-local 取
-            // process.env.SHELL || userInfo().shell 决定；Android 没有 passwd 条目，
-            // 不设就是 /bin/sh（toybox），用户看到的就是「不是真正的 bash」。
-            "SHELL=" + File(root, "bin/bash").absolutePath,
+            // SHELL（v1.3.1，issue #18「终端错误」）：必须显式注入。
+            // 引擎的 dsh-subprocess-local 按 `process.env.SHELL || os.userInfo().shell`
+            // 推导默认 shell（terminalEnvironment），而 runtime 里的 node 是 Termux 官方
+            // 构建——它在二进制内把 passwd 的 shell 硬编码成
+            // /data/data/com.termux/files/usr/bin/bash（本机不存在，且与用户是否装过
+            // Termux 无关）。不设 SHELL 时引擎就会拿这个坏路径去 resolveExecutable →
+            // `subprocess-local: command "..." is not an executable file`（持久 bash
+            // 工具与 Web 终端一起报错）。注入后 SHELL 优先级最高，且指向自带 bash。
+            "SHELL=${shellPathFor(root)}",
             "HOME=${dshHome(ctx)}",
             "DSH_HOME=${dshHome(ctx)}",
             "TMPDIR=${tmpDir(ctx)}",
@@ -724,6 +812,7 @@ object EngineConfig {
             "DSH_LINUX_DEFAULT=" + runCatching {
                 app.dsh.mobile.linux.LinuxEnv.installedIds(ctx).firstOrNull().orEmpty()
             }.getOrDefault(""),
+            *(bootId?.let { arrayOf("DSH_ANDROID_BOOT_ID=$it") } ?: emptyArray()),
         )
         // 包管理器镜像（2026-10-05，Issue 反馈「pnpm 连不上 GitHub」）：
         // runtime 内没有任何 .npmrc，corepack/npm 默认走 registry.npmjs.org —— 国内直连常
@@ -1078,12 +1167,14 @@ object EngineConfig {
                     Log.i(TAG, "android.jar staged: ${jar.length()} bytes (expected $want)")
                 }
             }.onFailure { Log.w(TAG, "android.jar staging failed: ${it.message}") }
+
         } catch (e: Exception) {
             Log.w(TAG, "agent gates: ${e.message}")
         }
     }
 
     private const val TAG = "EngineConfig"
+
 
     /**
      * npm 生态默认镜像。corepack / npm / pnpm 在 runtime 内无任何 .npmrc，

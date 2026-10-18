@@ -90,22 +90,48 @@ object OrphanReaper {
      * app 域看不到脱离进程树的孤儿，su 视角不受这个限制 —— KernelSU/Magisk 设备上
      * 这才是真正收得掉孤儿的那条路。仍坚持「cmdline 必须含本 app 的 engine/dsh-home
      * 绝对路径」，绝不误杀用户自己的进程。
+     *
+     * ⚠️ v1.3.1：**不再只认 `ppid == 1`**（用户报「Root 模式被杀死后二次启动起不来」）。
+     * 旧实现的 ppid 过滤有个致命盲区：Root 引擎链是
+     * `App → (PTY fork) → su 外壳 → magiskd/ksud → node`，如果 **su 外壳或
+     * magiskd 仍活着**（App 被 kill -9 时 PDEATHSIG 只挂到 su 外壳上，node 完全
+     * 收不到信号），node 的 ppid 就**不等于 1**，旧实现在这里直接 continue，
+     * 于是它带着 uid 0 一直占着 3080 —— 端口清不掉 → 新引擎 EADDRINUSE → 启动失败。
+     *
+     * 现在改为按「**是不是我们的引擎、且不是当前正在用的那个**」判定，并额外要求
+     * 「父进程不在本 app 进程树内」以排除活着的正常引擎：
+     *   · cmdline 必含 engine/dsh-home 绝对路径（同旧逻辑，防误杀）
+     *   · 排除 lan-web-proxy（同 cmdline 特征，误杀会让局域网访问静默失效）
+     *   · 排除 init(1) 之外的**非孤儿**：父进程若属于本 app（uid 相同且是 app 自身
+     *     或它的直接子进程），说明是正常运行的引擎，跳过
+     *
+     * 这样既不漏 Root 孤儿，也不会误杀正在服务的引擎。
      */
     private fun reapWithPrivileged(ctx: Context): Int {
         val marks = marksOf(ctx)
         if (marks.isEmpty()) return 0
         val out = Privilege.runSu("ps -A -o PID,PPID,ARGS 2>/dev/null") ?: return 0
+        // 本 app 当前活着的进程（含正在运行的引擎），这些绝不能杀
+        val alive = runCatching {
+            File("/proc").listFiles()
+                ?.mapNotNull { it.name.toIntOrNull() }
+                ?.toSet() ?: emptySet()
+        }.getOrDefault(emptySet())
         var killed = 0
         for (line in out.lineSequence()) {
             // limit=3：ARGS 里含空格，第三段要保留整串
             val t = line.trim().split(Regex("\\s+"), limit = 3)
             if (t.size < 3) continue
             val pid = t[0].toIntOrNull() ?: continue
-            if (t[1] != "1") continue
+            val ppid = t[1].toIntOrNull() ?: continue
             val cmd = t[2]
             if (cmd.contains("ps -A")) continue
+            if (cmd.contains("lan-web-proxy")) continue
             if (marks.none { cmd.contains(it) }) continue
-            Log.w(TAG, "reaping orphan (root) pid=$pid cmd=${cmd.take(140)}")
+            // 父进程还活着且是本 app 的进程（含引擎自身/直接子进程）→ 正在服务，跳过。
+            // 真孤儿的父进程要么是 1，要么是 app 域之外的服务进程（su/magiskd）。
+            if (ppid != 1 && alive.contains(ppid)) continue
+            Log.w(TAG, "reaping orphan (root) pid=$pid ppid=$ppid cmd=${cmd.take(140)}")
             Privilege.runSu("kill -9 $pid")
             killed++
         }

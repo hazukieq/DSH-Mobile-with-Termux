@@ -410,16 +410,33 @@ object Privilege {
     fun findSu(): String? = SU_PATHS.firstOrNull { java.io.File(it).exists() }
 
     /**
-     * 自愈：把 dsh-home 递归 chown 回 app uid（Root 整体提权会new进程把 dsh-home 里新建/写过的
-     * 文件变成 root 属主，之后任何非 Root 启动都会 EACCES 读不了——m1.26 引擎崩溃根因）。
-     * 仅当设备有 su 时执行（su -c chown），否则跳过；失败不报错仅告警。
-     * @return 是否需要 chown（即有文件非 app uid 属主）
+     * 检测 dsh-home / engine 下是否有「App 用不了」的条目（v1.3.1）。
+     *
+     * ## 三类损坏，检测方式各不相同
+     *  ① **权限位被剥**（`chmod 000`）—— 实测最隐蔽：文件属主仍是 app，`File.canRead()`
+     *     在 API 上会因为拿不到 stat 而返回 false（看似够用），但 Android 的
+     *     `canRead()` 语义包含 root/权限位判断差异，**不能只靠它**。这里改用
+     *     「实际尝试打开」判定：能 open 才算可用。
+     *  ② **属主变成 root**（Root 引擎以 uid 0 写出的文件）—— App 侧看不出来（stat 可能
+     *     也被拒），必须靠特权通道 `find -not -user <uid>` 查。
+     *  ③ **SELinux 标签错** —— App 侧无法直接判断（`getfilecon` 不可用），
+     *     同样交给特权通道的 restorecon 兜。
+     *
+     * ⚠️ 旧实现在「没有 shizuku/su」时直接 return false（放弃）——那是错的：
+     * ①②里**属于 app 自己的那部分**（绝大多数）不需要任何特权就能修，
+     * 放弃等于把用户推向「删掉重装」（用户实测的原话）。
      */
     fun dshHomeNeedsOwnershipFix(ctx: Context): Boolean {
         val home = EngineConfig.dshHome(ctx)
         return runCatching {
             // v1.2.173：改用 runPrivileged（Shizuku 优先）—— Shizuku 模式下 su 是拒绝 shim。
             val engine = java.io.File(home.parentFile, "usr")
+            // ① 自己就能判定的部分：实际尝试读取，读不了就是要修
+            if (hasUnreadableEntries(ctx, listOf(home, engine))) {
+                Log.w(TAG, "ownership check: found entries this app cannot read (mode/owner damage)")
+                return true
+            }
+            // ② 需要特权才能判定的部分：属主是否属于别的 uid
             val uid = android.os.Process.myUid()
             val out = runPrivileged(
                 ctx,
@@ -427,7 +444,7 @@ object Privilege {
                     " -not -user " + uid + " -print -quit 2>/dev/null",
             )
             if (out == null) {
-                Log.w(TAG, "ownership check skipped: no privileged channel (shizuku/su)")
+                Log.i(TAG, "ownership check: no privileged channel; app-own damage check only")
                 return false
             }
             val bad = out.isNotBlank()
@@ -436,26 +453,100 @@ object Privilege {
         }.getOrDefault(false)
     }
 
-    /** 执行 chown（Root 模式下自愈），成功返回 true */
+    /**
+     * 扫一遍目录，找出「App 读不了」的条目。
+     *
+     * ⚠️ 必须**实际 open 一次**，不能只看 `canRead()`：权限位是 `000` 时属性检查
+     * 的行为在 Android 各版本不一致，实测（模拟器，`.runtime-version` chmod 000）
+     * `canRead()` 检出不稳定，而真实影响是 `RuntimeInstaller` 读版本戳直接 EACCES。
+     * 用「能否打开」作为判据与真实故障完全对齐。
+     *
+     * 限深 + 限量：这是启动热路径，不能为了体检把 20 万文件的 runtime 全读一遍。
+     * 只查**关键文件与目录本身**（够覆盖真实故障面：版本戳、插件、配置、guardian 元数据）。
+     */
+    private fun hasUnreadableEntries(ctx: Context, roots: List<java.io.File>): Boolean {
+        val probes = mutableListOf<java.io.File>()
+        for (root in roots) {
+            if (!root.exists()) continue
+            probes += root
+        }
+        // 关键文件（被启动链路直接读取的）
+        probes += java.io.File(roots[1], ".runtime-version")          // engine/.runtime-version
+        probes += java.io.File(roots[0], "AGENTS.md")                // dsh-home/AGENTS.md
+        probes += java.io.File(ctx.filesDir, "profile-guardian.meta") // guardian 元数据
+        for (p in probes) {
+            if (!p.exists()) continue
+            val ok = runCatching {
+                if (p.isDirectory) {
+                    p.listFiles() != null      // 目录：能否列出（无 x/r 位会返回 null）
+                } else {
+                    p.inputStream().use { it.read() }   // 文件：能否真正读
+                    true
+                }
+            }.getOrDefault(false)
+            if (!ok) return true
+        }
+        return false
+    }
+
+    /**
+     * 修复 dsh-home / engine 的属性（v1.3.1 扩展到「所有模式 + SELinux 上下文」）。
+     *
+     * 做的三件事（都幂等）：
+     *  ① `chown -R <appUid>` —— 归还原主（Root 引擎写出的文件属主是 root）；
+     *  ② `chmod -R u+rwX` —— 补回读写与目录/可执行位（Root 下 umask 可能剥掉）；
+     *  ③ `restorecon -R` —— **重置 SELinux 上下文**。这一条是「删掉重装就恢复」在
+     *     系统层面替用户做的事：重装会重新打标签。Root 引擎（非 app 域）创建的文件
+     *     可能带错标签，属主修对也依然 open 被拒。
+     *
+     * ⚠️ **分层修复**（v1.3.1，实测驱动）：
+     *   ① 先自己修 —— 对**属于本 app** 的条目（绝大多数故障）不需要任何特权：
+     *      实测「chmod 000 的文件，属主仍是 app，直接 chmod 600 即恢复」。
+     *      这一步让**无 su / 无 Shizuku 的普通设备也能自愈**（旧实现遇到这种情况
+     *      直接放弃，把用户推向「删掉重装」）。
+     *   ② 再走特权通道 —— 处理自己改不动的（属主已是 root、跨 uid 的目录）。
+     *      用 [runPrivileged]（Shizuku 优先）退回 su，附带 restorecon 修 SELinux 标签。
+     * 只要①成功就算修好；②失败不影响返回值（属主问题确实需要特权，但不该阻断）。
+     */
     fun fixHomeOwnership(ctx: Context): Boolean {
         val home = EngineConfig.dshHome(ctx)
         return runCatching {
-            if (findSu() == null) return false
             val uid = android.os.Process.myUid()
+            val engine = java.io.File(home.parentFile, "engine")
+
+            // ① 自己修：递归补回 u+rwX（对目录补 x 才能继续往下走）
+            val selfFixed = runCatching {
+                var touched = 0
+                listOf(home, engine).forEach { root -> touched += repairOwnedTree(root) }
+                Log.i(TAG, "fixHomeOwnership(self): restored permissions on $touched entr(ies)")
+                touched
+            }.getOrDefault(-1)
+
+            // ② 特权通道：修属主 + SELinux 标签（自己做不到的部分）
+            val homeQ = shellQuote(home.absolutePath)
+            val engineQ = shellQuote(engine.absolutePath)
             // ⚠️ v1.2.171 实测补充：必须**同时**修 engine/android-plugins。
             // 每次重装 APK，Android 会分配**新的 app uid**，而 `engine/` 下的插件文件
             // （priv-mode / bridge-token / fast-mode）属主还是旧 uid + 权限 600 →
             // app 自己的 node 进程（新 uid）**读不了插件** → 引擎日志
             // `android-fast-mode: failed to import` / EACCES → 插件功能全哑。
             // 实测症状：AI 找不到 fast_mode 工具、局域网代理进程起不来。
-            val engine = java.io.File(home.parentFile, "usr")
-            Log.i(TAG, "fixHomeOwnership: chown -R $uid:$uid (home + engine, uid changed after reinstall)")
-            val out = runSu(
-                "chown -R $uid:$uid " + shellQuote(home.absolutePath) + " " +
-                    shellQuote(engine.absolutePath) + " 2>/dev/null; " +
-                    "chmod -R u+rwX " + shellQuote(engine.absolutePath) + " 2>/dev/null; echo ok",
-            ) ?: return false
-            Log.i(TAG, "fixHomeOwnership: chown dsh-home to uid $uid (${out.trim().take(60)})")
+            val cmd = buildString {
+                append("chown -R ").append(uid).append(":").append(uid).append(' ')
+                append(homeQ).append(' ').append(engineQ).append(" 2>/dev/null; ")
+                append("chmod -R u+rwX ").append(engineQ).append(" 2>/dev/null; ")
+                // SELinux 标签重置：restorecon 不在所有设备上都可用（toybox 差异），失败无妨
+                append("restorecon -R ").append(homeQ).append(" 2>/dev/null; ")
+                append("restorecon -R ").append(engineQ).append(" 2>/dev/null; ")
+                append("echo ok")
+            }
+            val out = runPrivileged(ctx, cmd)
+            if (out == null) {
+                // 无特权通道：只要「自己修」动过手就仍有救（属主类问题才必须特权）
+                Log.w(TAG, "fixHomeOwnership: no privileged channel; self-repair only (touched=$selfFixed)")
+                return selfFixed > 0
+            }
+            Log.i(TAG, "fixHomeOwnership done via privileged channel (${out.trim().take(60)})")
             true
         }.getOrDefault(false)
     }
@@ -464,5 +555,43 @@ object Privilege {
     private fun shellQuote(s: String): String {
         if (!s.contains(Regex("[\\s\"'\\\\]"))) return "'$s'"
         return "'" + s.replace("'", "'\\''") + "'"
+    }
+
+    /**
+     * 递归修复「属于本 app」的目录树权限（v1.3.1）。
+     *
+     * ⚠️ 不能直接用 `walkTopDown()`：它在遇到**无权限的目录**时列不出子项
+     * （`listFiles()` 返回 null），于是"深层坏文件修不到"——而这正是
+     * `chmod 000 <dir>` 之后的现场。这里改成「先修自己、再列子项」的自顶向下递归：
+     * 目录补上 u+rx 之后就能继续往里走。
+     *
+     * @return 实际成功改了权限的条目数（无法修改的跳过，不抛）
+     */
+    private fun repairOwnedTree(root: java.io.File, depth: Int = 0): Int {
+        if (depth > 12) return 0            // 防符号链接成环 / 异常深树
+        if (!root.exists()) return 0
+        var touched = 0
+        val isDir = root.isDirectory
+        // ⚠️ 目录必须 **rwx 三者都补**，缺一不可：
+        //   · r 才列得出子项、x 才进得去（少了就「目录打不开」）
+        //   · **w 必须补**：漏掉这一步会留下 `dr-x------` 这种「能读不能写」的目录，
+        //     引擎往里写 session/profile 立刻 EACCES（实测：只补 r+x 后 profiles/
+        //     变成 dr-x------，看起来修好了、其实是把故障推迟到写入时）。
+        // 文件补 rw（执行位对数据文件无意义，不主动加，避免误放行脚本）。
+        val changed = if (isDir) {
+            val r = root.setReadable(true, true)
+            val w = root.setWritable(true, true)
+            val x = root.setExecutable(true, true)
+            r || w || x
+        } else {
+            val r = root.setReadable(true, true)
+            val w = root.setWritable(true, true)
+            r || w
+        }
+        if (changed) touched++
+        if (!isDir) return touched
+        val children = runCatching { root.listFiles() }.getOrNull() ?: return touched
+        for (c in children) touched += repairOwnedTree(c, depth + 1)
+        return touched
     }
 }

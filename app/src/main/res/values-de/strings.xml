@@ -513,4 +513,6 @@ Engine: %6$s</string>
     <string name="user_prompt_save">Speichern</string>
     <string name="user_prompt_saved">Gespeichert; gilt in neuen Sitzungen</string>
     <string name="user_prompt_path">Gespeichert im Nutzerabschnitt von AGENTS.md (app-verwaltet, dein Text wird nie überschrieben)</string>
+    <string name="error_runtime_arch_mismatch">Dieses Paket enthält eine Laufzeit für eine andere CPU-Architektur und kann auf diesem Gerät nicht laufen. Bitte installiere das richtige APK (arm64-v8a für Smartphones).</string>
+    <string name="status_plugin_recovered">Wiederhergestellt: defektes Plugin %1$s deaktiviert · Engine bereit</string>
 </resources>

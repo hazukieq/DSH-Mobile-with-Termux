@@ -195,6 +195,8 @@ class EngineProcess private constructor(
                 // 而引擎的 PATH 里带着 bin/ 下的全部工具）。
                 val homeVar = env.firstOrNull { it.startsWith("HOME=") }?.substringAfter('=')
                 val pathVar = env.firstOrNull { it.startsWith("PATH=") }?.substringAfter('=')
+                val dshHomeVar = env.firstOrNull { it.startsWith("DSH_HOME=") }?.substringAfter('=')
+                val bootIdVar = env.firstOrNull { it.startsWith("DSH_ANDROID_BOOT_ID=") }?.substringAfter('=')
                 if (homeVar.isNullOrEmpty() || pathVar.isNullOrEmpty()) {
                     // 取不到就等于静默退回「HOME=/ 、pnpm 开箱即坏」的老 bug，
                     // 所以必须留痕：当前唯一调用方（EngineConfig.buildEnv）保证有值，
@@ -210,10 +212,21 @@ class EngineProcess private constructor(
                         append("cd ").append(shellQuote(cwd.absolutePath))
                         if (!homeVar.isNullOrEmpty()) append(" && export HOME=").append(shellQuote(homeVar))
                         if (!pathVar.isNullOrEmpty()) append(" && export PATH=").append(shellQuote(pathVar))
+                        if (!dshHomeVar.isNullOrEmpty()) append(" && export DSH_HOME=").append(shellQuote(dshHomeVar))
+                        if (!bootIdVar.isNullOrEmpty()) append(" && export DSH_ANDROID_BOOT_ID=").append(shellQuote(bootIdVar))
                         append(" && ")
                     },
                 )
+                // ⚠️ v1.3.1：su 探测失败通常是**瞬时**的（App 被强杀后立刻重启，
+                // magiskd 尚未重建会话 / 设备刚开机 daemon 未就绪）。旧实现一次探测
+                // 失败就直接抛 EngineStartException，配合退避 fast-path 会让「二次启动」
+                // 在前几轮必然失败。这里给两次短重试，把窗口让给 daemon 恢复。
                 val prefix = Privilege.usableSuPrefix()
+                    ?: run {
+                        android.util.Log.w(TAG, "usableSuPrefix failed — retrying once after 1.2s (su may still be starting)")
+                        Thread.sleep(1_200)
+                        Privilege.usableSuPrefix()
+                    }
                     ?: throw EngineStartException("no usable su (tried -c / 0 / root -c)")
                 cmd = suPath                                  // 绝对路径，execve 需要
                 args = (prefix.drop(1) + inner.toString()).toTypedArray()

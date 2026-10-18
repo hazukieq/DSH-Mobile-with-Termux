@@ -420,3 +420,6 @@ class RuntimeInstaller(private val ctx: Context) {
         }
     }
 }
+
+/** 内置 runtime 与设备 ABI 不匹配：重试无意义，监督器据此直接进 Failed。 */
+class EngineArchMismatchException(message: String) : Exception(message)

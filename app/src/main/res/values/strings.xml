@@ -503,4 +503,6 @@ engine: %6$s</string>
     <string name="user_prompt_save">Save</string>
     <string name="user_prompt_saved">Saved; takes effect in new sessions</string>
     <string name="user_prompt_path">Stored in the user section of AGENTS.md (app-managed file, your text is never overwritten)</string>
+    <string name="error_runtime_arch_mismatch">This build contains a runtime for a different CPU architecture and cannot run on this device. Please install the correct APK (arm64-v8a for phones).</string>
+    <string name="status_plugin_recovered">Recovered: disabled broken plugin %1$s · engine ready</string>
 </resources>
