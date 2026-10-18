@@ -1,0 +1,97 @@
+
+/**
+ * [dsh-android] 窄屏欢迎页（onboarding「开始使用」）适配。
+ *
+ * 症状（真机截图 2026-10-19）：手机竖屏里那张「开始使用 / 登录 DeepSeek 账号，
+ * 或添加 API Key」卡片**左右超出屏幕被裁切**，说明文字一行到底被切掉。
+ *
+ * 根因（引擎源码 + 构建后 CSS 取证）：账号插件的欢迎页是**按桌面设计**的：
+ *   .xxx_welcome{width:100%;max-width:2200px;height:100%}
+ *   .xxx_welcome .xxx_copy{width:520px;position:absolute;left:clamp(64px,41.667vw - 300px,200px)}
+ *   .xxx_welcomeIllustration{width:1247px;...}
+ * 窄屏（约 393 CSS px）下 520px 的绝对定位文案块必然溢出，右侧被裁。
+ *
+ * 修法：窄屏断点内把欢迎页改成**正常文档流的居中列**——文案不再绝对定位、
+ * 宽度自适应、插画隐藏；宽屏（平板/桌面模式）完全不动。类名带构建哈希，
+ * 这里用「后缀属性选择器」（[class*="_welcome"] 等）跨版本匹配。
+ *
+ * 注册约定同 narrow-settings：经典 script 加载 + __ModuleLoader__.load，id 必须
+ * 等于 package.json 的 name。
+ *
+ * @module dsh-android-narrow-welcome/client
+ */
+
+window.__ModuleLoader__.load({
+  id: "dsh-android-narrow-welcome",
+  factory: (require) => {
+    var module = { exports: {} };
+    var exports = module.exports;
+
+    const STYLE_ID = "dsh-android-narrow-welcome-style";
+
+    const STYLE_TEXT = [
+      "@media (max-width: 720px) {",
+      "  /* 欢迎页容器：变成可滚动的居中列，禁止横向溢出 */",
+      "  [class*=\"_welcome\"]:not([class*=\"_welcomeIllustration\"]) {",
+      "    box-sizing: border-box !important;",
+      "    position: relative !important;",
+      "    width: 100% !important;",
+      "    max-width: 100vw !important;",
+      "    height: auto !important;",
+      "    min-height: 100% !important;",
+      "    padding: 24px 16px !important;",
+      "    display: flex !important;",
+      "    align-items: center !important;",
+      "    justify-content: center !important;",
+      "    overflow: hidden !important;",
+      "  }",
+      "  /* 文案块：从 absolute:520px 改回正常流 */",
+      "  [class*=\"_welcome\"] > [class*=\"_copy\"] {",
+      "    position: static !important;",
+      "    width: auto !important;",
+      "    max-width: 100% !important;",
+      "    transform: none !important;",
+      "    z-index: 1 !important;",
+      "  }",
+      "  [class*=\"_welcome\"] > [class*=\"_copy\"] h1 {",
+      "    font-size: 30px !important;",
+      "    line-height: 38px !important;",
+      "    white-space: normal !important;",
+      "  }",
+      "  /* 主按钮：占满文案宽度 */",
+      "  [class*=\"_welcome\"] > [class*=\"_start\"] {",
+      "    width: auto !important;",
+      "    margin-top: 28px !important;",
+      "  }",
+      "  [class*=\"_welcome\"] > [class*=\"_start\"] > * { width: 100% !important; }",
+      "  /* 桌面尺寸插画（1247px 绝对定位）：窄屏隐藏，避免撑出横向空白 */",
+      "  [class*=\"_welcome\"] [class*=\"_illustration\"],",
+      "  [class*=\"_welcome\"] [class*=\"_welcomeIllustration\"] { display: none !important; }",
+      "",
+      "  /* 通用兜底：任何非设置面板的 modal 都不许宽过可视区 */",
+      "  [role=\"dialog\"][aria-modal=\"true\"]:not([data-android-narrow-settings]) {",
+      "    max-width: calc(100vw - 16px) !important;",
+      "    box-sizing: border-box !important;",
+      "  }",
+      "}",
+    ].join("\n");
+
+    function apply() {
+      var existing = document.getElementById(STYLE_ID);
+      if (existing) {
+        existing.textContent = STYLE_TEXT;
+        return function () { /* 已存在：保留样式，由下一次 apply 更新 */ };
+      }
+      var style = document.createElement("style");
+      style.id = STYLE_ID;
+      style.textContent = STYLE_TEXT;
+      (document.head || document.documentElement).appendChild(style);
+      return function () {
+        try { style.remove(); } catch (e) { /* 卸载阶段忽略 */ }
+      };
+    }
+
+    exports.apply = apply;
+    return module.exports;
+  },
+});

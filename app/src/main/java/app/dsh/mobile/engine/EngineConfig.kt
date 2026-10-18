@@ -557,6 +557,14 @@ object EngineConfig {
             |    - id: android-narrow-rightbar
             |      name: ./android-plugins/narrow-rightbar/index.js
             |
+            |# Narrow-screen welcome page (v1.3.0): the desktop layout pins the copy block at
+            |# 520px absolute, which overflows a phone viewport; this client plugin turns it
+            |# into a normal flow column and hides the oversized illustration. (ASCII only:
+            |# the i18n gate rejects CJK inside Kotlin string literals.)
+            |- insert:
+            |    - id: android-narrow-welcome
+            |      name: ./android-plugins/narrow-welcome/index.js
+            |
             |""".trimMargin()
         runCatching {
             if (!f.isFile || f.readText() != body) f.writeText(body)
@@ -578,7 +586,7 @@ object EngineConfig {
             // 新增插件的步骤：① 在 assets 建目录（含这三个文件）
             //               ② 在此列表追加目录名
             //               ③ 在 overlay 的 insert 段追加一条 entry（指向 index.js）
-            listOf("narrow-sidebar", "narrow-settings", "narrow-rightbar").forEach { pkg ->
+            listOf("narrow-sidebar", "narrow-settings", "narrow-rightbar", "narrow-welcome").forEach { pkg ->
                 listOf("package.json", "index.js", "client.js").forEach { fileName ->
                     val src = ctx.assets.open("android-plugins/$pkg/$fileName")
                         .use { it.readBytes() }

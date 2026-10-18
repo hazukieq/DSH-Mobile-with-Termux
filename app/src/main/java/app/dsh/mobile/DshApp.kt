@@ -39,6 +39,18 @@ class DshApp : Application() {
             }
             prev?.uncaughtException(thread, throwable)
         }
+        // WebView 远程调试（窄屏 UI 排查用）：仅当**外部**文件目录存在开关文件
+        // `webview-debug` 时启用，发布默认不暴露 CDP：
+        //   adb shell touch /sdcard/Android/data/com.termux/files/webview-debug
+        // 然后 adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>，
+        // Chrome/Playwright 连 127.0.0.1:9222 就能量 DOM 与注入 CSS。
+        runCatching {
+            val flag = getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug") }
+            if (flag?.isFile == true) {
+                android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+                android.util.Log.i("DshApp", "WebView remote debugging enabled")
+            }
+        }
         supervisor = EngineSupervisor(this)
     }
 
