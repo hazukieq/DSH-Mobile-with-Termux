@@ -96,7 +96,7 @@ arXiv 综述《LLM-Powered GUI Agents in Phone Automation》(2504.19838) 把
 | `engine/LocalModel.kt` | 模型下载（多镜像 failover）+ llama-server 生命周期 |
 | `engine/AgentBridge.kt` | `POST /pick`、`GET /local/status`、`POST /local/ensure` |
 | `assets/gates/scr` | `scr pick <目标> [--tap] [--all]` |
-| `assets/extensions/catalog.json` | `llama-cpp` 扩展条目 |
+| `pkg install llama-cpp` | 提供 `llama-server`（本地语义层可选依赖） |
 | `scripts/probes/test_pick.py` | pick 三层命中测试（UTF-8 正确） |
 | `scripts/probes/test_embed.mjs` | 嵌入延迟与命中率测量 |
 

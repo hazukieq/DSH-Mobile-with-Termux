@@ -18,7 +18,7 @@ import java.util.zip.GZIPInputStream
  * 纯 Java 实现的流式 `.tar.gz` 解包器（不引入任何第三方依赖）。
  *
  * 为什么自己写：rootfs 是 **3~30MB 的 tar.gz**，而项目已有的 tar 解析在
- * `engine/ExtensionManager` 里是 private、且绑定「Termux deb + usr 拍平」语义。
+ * 之前的 deb 解包器里是 private、且绑定「Termux deb + usr 拍平」语义。
  * 这里按同一套经过实战验证的规则重写一份，供 Linux 发行版安装复用：
  *  - 支持 ustar / GNU tar（`L` 长文件名、`K` 长链接名）/ PAX（`x`/`g` 扩展头）；
  *  - regular('0'/'\0'/'7')、dir('5')、symlink('2')、hardlink('1')；

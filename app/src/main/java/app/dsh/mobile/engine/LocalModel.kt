@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
  * 本类负责把它跑起来：
  *  1. **模型下载**：bge-small-zh-v1.5（**q4_k_m 仅 15MB**）—— 中文语义匹配，
  *     24M 参数，手机上算一次嵌入是毫秒级；
- *  2. **服务启动**：用扩展提供的 `llama-server` 在 127.0.0.1:3085 起
+ *  2. **服务启动**：用 `llama-server`（Termux 包或引擎目录）在 127.0.0.1:3085 起
  *     OpenAI 兼容 HTTP 服务（`/v1/embeddings`），FastPicker 直接调它；
  *  3. **生命周期**：按需启动、失败静默（FastPicker 自动回退云端，不阻塞用户）。
  *
@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
  * 嵌入天然合适 —— 这是整个快速决策层能到毫秒级的关键。
  *
  * ## 依赖
- * - 扩展 `llama-cpp`（提供 llama-server 二进制）
+ * - `llama-server`：`pkg install -y llama-cpp`（或放入引擎 bin/）
  * - 模型文件（首次使用时下载，15MB）
  */
 object LocalModel {
@@ -50,11 +50,19 @@ object LocalModel {
 
     fun isServerRunning(): Boolean = LocalEmbedder.isReady()
 
-    /** llama-server 二进制（扩展激活后进 PATH） */
+    /**
+     * llama-server 二进制。
+     *
+     * 旧版靠「llama-cpp 扩展」提供；扩展中心已移除，现在从 Termux 前缀找
+     * （`pkg install -y llama-cpp` 后 `$PREFIX/bin/llama-server`），
+     * 也接受引擎目录里手工放的副本。
+     */
     private fun llamaServer(ctx: Context): File? {
-        val roots = ExtensionManager.activeRoots(ctx)
-        val candidates = roots.map { File(it, "bin/llama-server") } +
-            listOf(File(EngineConfig.engineRoot(ctx), "bin/llama-server"))
+        val prefixBin = File(EngineConfig.engineRoot(ctx), "bin/llama-server")
+        val candidates = listOf(
+            File("/data/user/0/com.termux/files/usr/bin/llama-server"),
+            prefixBin,
+        )
         return candidates.firstOrNull { it.canExecute() }
     }
 

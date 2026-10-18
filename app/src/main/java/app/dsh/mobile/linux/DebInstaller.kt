@@ -29,7 +29,7 @@ import java.util.zip.GZIPInputStream
  * 负载 = proot 5.1.107.96 + libtalloc 2.5.0 + libandroid-shmem 0.7
  * （proot 是动态链接的 bionic 二进制，后两个是它的运行期依赖；少一个都起不来）。
  *
- * 复用 `engine/ExtensionManager` 已验证的链路与坑：
+ * 复用运行时安装（RuntimeInstaller / 早期 deb 链路）已验证的坑：
  *  - 源：官方 `https://packages.termux.dev/apt/termux-main`（TUNA/USTC 对这类请求
  *    返回 403，国内无可用镜像，故只有官方源）；
  *  - UA 必须是包管理器身份 `APT/2.12.10 (...)`，否则被 WAF 拦；
@@ -53,7 +53,7 @@ object DebInstaller {
 
     /**
      * UA 必须是包管理器身份：Termux 仓库前置的 WAF 会 403 自创 UA
-     * （与 ExtensionManager.HTTP_UA 完全一致，改一处要两处同改）。
+     * （网络 UA 常量的唯一来源，改这里即可）。
      */
     private const val HTTP_UA = "APT/2.12.10 (aarch64; android; termux)"
 
@@ -350,7 +350,7 @@ object DebInstaller {
     /**
      * 恢复可执行位：deb 解包已按 tar mode 设置过，但 Android 上 `setExecutable`
      * 对部分路径可能受 ROM 限制而静默失败；bin/ 与 libexec/ 是「必须可执行」的地方，
-     * 解包后统一再强设一次（与 ExtensionManager.restoreExecBits 同一策略）。
+     * 解包后统一再强设一次（与 BootstrapInstaller.restoreExecBits 同一策略）。
      */
     private fun restoreExecBits(root: File) {
         listOf("bin", "libexec").forEach { sub ->
@@ -361,7 +361,7 @@ object DebInstaller {
         }
     }
 
-    // ================= 网络（与 ExtensionManager 同款坑位处理） =================
+    // ================= 网络（镜像 UA / 失败重试） =================
 
     private fun openConn(url: String, readTimeoutMs: Int): HttpURLConnection {
         val u = URL(url)

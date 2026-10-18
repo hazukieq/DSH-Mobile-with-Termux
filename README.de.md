@@ -22,7 +22,7 @@ DSH Mobile ist der **vollständige Android-Port von [DeepSeek Harness](https://g
 
 ## 🎯 Was es ist · Was es nicht ist
 
-**Es ist**: der **vollständige Android-Port von DeepSeek Harness** (`@deepseek-ai/dsh`). Die Engine ist der offizielle Upstream-Code (festgepinnt auf `0.2.0-rc.2`) — Plugin-System, WebUI und Werkzeugaufrufkette stammen sämtlich von Upstream. Dieses Projekt liefert die Laufzeitumgebung für Android: eine selbstgebaute bionic-Node.js-Laufzeit mit geprüftem Abhängigkeitsabschluss, Keep-Alive über einen Vordergrunddienst, Berechtigungsstufen und das Erweiterungszentrum. **Alles, was dsh am Desktop kann, kann dieses Projekt** — nur eben in der Sandbox des Smartphones.
+**Es ist**: der **vollständige Android-Port von DeepSeek Harness** (`@deepseek-ai/dsh`). Die Engine ist der offizielle Upstream-Code (festgepinnt auf `0.2.0-rc.2`) — Plugin-System, WebUI und Werkzeugaufrufkette stammen sämtlich von Upstream. Dieses Projekt liefert die Laufzeitumgebung für Android: eine selbstgebaute bionic-Node.js-Laufzeit mit geprüftem Abhängigkeitsabschluss, Keep-Alive über einen Vordergrunddienst, Berechtigungsstufen und eine vollständige Termux-Umgebung. **Alles, was dsh am Desktop kann, kann dieses Projekt** — nur eben in der Sandbox des Smartphones.
 
 **Es ist nicht**:
 
@@ -42,7 +42,7 @@ Alle Werte stammen aus Tests auf echten Geräten und im Emulator, nicht aus der 
 | **Kaltstart bis Engine bereit** | **< 10 s** | OnePlus 15T (Android 16), echtes Gerät; ~15 s auf Tablets |
 | **Speicher mit parallelen Diensten** | **< 400 MB** | Engine + mehrere Toolchains gleichzeitig |
 | **Android-Kompatibilität** | **8.0 → 16** | WebView ≥ Chrome 85 erforderlich (siehe unten) |
-| **APK-Größe** | **~130 MB** | Vollständige Node.js-Laufzeit + 19 Erweiterungs-Toolchains |
+| **APK-Größe** | **~217 MB** | Termux-Bootstrap + angepasste dsh-0.2.1-Engine (kompletter node_modules-Baum) |
 | **Toolchains** | **19 One-Tap-Installationen** | Python/Go/Rust/Clang/OpenJDK/FFmpeg… |
 
 Zum Vergleich: Termux-Snapshot-basierte Alternativen brauchen beim ersten Start üblicherweise **mehrere Minuten** (Entpacken + manuelle Initialisierung); DSH Mobile liefert seine Laufzeit im APK aus — installieren und loslegen.
@@ -70,8 +70,8 @@ Die Engine lauscht ausschließlich auf `127.0.0.1`; Sitzungen, Zugangsdaten und 
 **Selbstheilung, wenn etwas kaputtgeht**
 Fehlerhafte Plugin-Konfigurationen werden automatisch auf den letzten gesunden Snapshot zurückgesetzt; die Engine startet nach einem Absturz mit exponentiellem Backoff neu; ein Vordergrunddienst hält lange Aufgaben vor der Systembereinigung am Leben.
 
-**Erweiterungszentrum: Umgebungen per One Tap**
-Das integrierte Erweiterungszentrum bietet **19 Umgebungserweiterungen** — Python, Go, Rust, Clang, OpenJDK, Git, Ruby, PHP, Perl, Lua, SQLite, FFmpeg, ImageMagick, OpenSSH, ADB, Vim und mehr — per One Tap herunterladen (und auch wieder deinstallieren), mit rot/gelb/grün Zustandsverwaltung und live Fortschrittsbalken in der Zeile. Direktverbindung zu chinesischen Mirrors (TUNA → USTC → BFSU → Termux offiziell, mit automatischem Failover), automatische Auflösung des Abhängigkeitsabschlusses, SHA-256-Prüfung und atomares Veröffentlichen. Nach der Installation wird die Shebang-Interpreter-Kette automatisch repariert (`sh`/`env`, sowie absolute Auflösung von extension-übergreifendem `perl`/`python`), sodass Skripte wie `env python3` auch ohne PATH laufen. Jede Zeile bietet **⟳ Neu installieren** (überschreibender Neu-Download, der historische Teilinstallationen repariert); die Installationsprotokolle erfassen die Eintragsanzahl pro Paket und prüfen, ob alle deklarierten Executables vorhanden sind. Die `bin`-Abhängigkeiten aller 19 Erweiterungen werden von `scripts/audit-extension-closures.py` **auf ELF-Ebene auditiert** (jede `NEEDED`-Bibliothek muss vom Abhängigkeitsabschluss abgedeckt sein, sodass Lücken in den Upstream-Metadaten früh auffallen).
+**Echte Termux-Umgebung: pkg / apt direkt**
+Die App nutzt den Termux-Paketnamen (`com.termux`), also ist `<files>/usr` ein echtes `$PREFIX`: `apt`, `dpkg` und `pkg` funktionieren nativ, ohne Root. Python, Git, Clang, FFmpeg oder ImageMagick kommen mit einem `pkg install` — der Agent kann das auch selbst erledigen.
 
 **WebUI vom Computer öffnen (LAN)**
 Einstellungen → Erweiterungen → **LAN-WebUI-Zugriff**. Nach dem Aktivieren öffnet ein Browser im selben Netzwerk `http://<Handy-IP>:3090` und erhält die **native dsh-WebUI, die auf dem Handy läuft** — dieselbe Oberfläche, keine Nachbildung. Jedes Mal wird ein zufälliger **6-stelliger Code** erzeugt (in die Zwischenablage kopiert, einmal angezeigt), und eine dauerhafte Benachrichtigung mit **Stopp**-Schaltfläche bleibt in der Statusleiste; Stoppen beendet den Proxy-Prozess wirklich (auch im Normalmodus). Der Proxy patcht nur seine eigenen Antworten (Secure-Context-APIs, Loopback-Prüfungen, `/api`-Same-Origin, WebSocket-Upgrades) und ändert keine Engine-Dateien. Für Terminal oder Dateitransfer gibt es weiterhin SSH über die OpenSSH-Erweiterung. Siehe [docs/LAN_WEBUI.en.md](docs/LAN_WEBUI.en.md).
@@ -83,7 +83,7 @@ Einstellungen → Erweiterungen → **Community-Plugins**: dsh-Ökosystem-Plugin
 Die Toolchains Clang / Go / Rust / Java / Ruby sind auf echten Geräten verifiziert: Kernel-Header (ndk-sysroot) sowie CPATH / LIBRARY_PATH / RUSTFLAGS / GOTMPDIR werden automatisch injiziert, sodass `clang hello.c -o hello && ./hello` einfach funktioniert; zusammen mit der namensbasierten Prozessverwaltung `psx`/`killx` und einem binärsicheren `curl` erledigt der Agent echte Entwicklungsarbeit auf dem Smartphone. **Parallele Dienste bleiben unter 400 MB Speicherbedarf.**
 
 **Agent erweitert sich selbst**
-Der Agent nutzt nicht nur das Erweiterungszentrum, sondern handelt eigenständig: Er installiert in einer Sitzung Umgebungen über die lokale Bridge und aktiviert sie automatisch (und erinnert dich anschließend daran, die Engine neu zu starten). Im Root-Modus hat er sich sogar die Android-SDK-Kommandozeilenwerkzeuge selbst installiert.
+Der Agent nutzt nicht nur `pkg install`, sondern handelt eigenständig: Er installiert fehlende Werkzeuge in einer Sitzung selbst und verwendet sie sofort. Im Root-Modus hat er sich sogar die Android-SDK-Kommandozeilenwerkzeuge selbst installiert.
 
 ## 📚 Funktionsdetails
 
@@ -102,7 +102,7 @@ Zu jeder Fähigkeit gibt es ein eigenes Dokument (Design-Abwägungen, Messwerte,
 
 - **WebView muss Chrome 85+ sein (ab 2020-06)**: Die App selbst unterstützt Android 8.0 → 16, aber die Oberfläche wird im System-WebView gerendert, und das Engine-Frontend nutzt moderne Syntax (`??=`, Klassenfelder) — ein **Parse-Zeit**-Merkmal, das Polyfills nicht ersetzen können. Geräte mit einem System-WebView älter als Chrome 85 zeigen eine leere Seite (das Log lässt sich in den Einstellungen exportieren: es protokolliert den `SyntaxError` und die WebView-Version). **Unter Android 8.0+ ist der WebView eine unabhängig aktualisierbare Systemkomponente** (Google Play / Hersteller-Stores), ein Update auf 85+ genügt also; die wenigen chinesischen ROMs, deren WebView sich nie aktualisieren lässt, sind eine bekannte Einschränkung.
 - **Keine Desktop-Umgebung**: Linux-GUI-Desktop-Apps können nicht laufen; visuelle Ergebnisse werden über lokales HTTP + den integrierten WebView angezeigt
-- **Vorinstallierte Toolchain ist nur node/bash**: Clang, Python, Go und 16 weitere Umgebungen kommen über das integrierte **Erweiterungszentrum** per One Tap, oder der Agent installiert sie selbst (im Root-Modus mit dem Android SDK verifiziert)
+- **Vorinstalliert sind node/bash/rg; alles Weitere per pkg**: `pkg install python git clang go rust ffmpeg …` aus dem offiziellen Termux-Repository — ohne Root, der Agent kann das auch selbst
 - **Tippen ist „halbblind"**: Das Screen-Reading arbeitet auf dem Accessibility-Knotenbaum (Text + Koordinaten + Klickbarkeit) und ist auf rein grafischen oder Spiel-Bildschirmen wirkungslos; komplexe UI-Automatisierung bleibt begrenzt
 - **Android 13+ verlangt eine Bestätigung beim Aktivieren von Accessibility**: Bei per Sideload installierten Apps zeigt das System einen Dialog „Vollständige Kontrolle über dein Gerät erlauben", der von Hand bestätigt werden muss; das Schreiben der Einstellung über adb wird vom System zurückgesetzt. Folge der Anleitung in der App in die System-UI.
 - **Lange Aufgaben sind nicht unsterblich**: Der Vordergrunddienst vermeidet die Systembereinigung so weit wie möglich, aber ein erzwungenes Beenden oder ein extremer Energiesparmodus kann sie dennoch unterbrechen (die Engine startet automatisch neu; laufende Aufgaben müssen neu beauftragt werden)
@@ -116,7 +116,7 @@ Derselbe dsh, andere Auslieferungsform — und jeder der folgenden Punkte ist En
 Die App selbst unterstützt Android 8.0 → 16; das Rendering hängt vom System-WebView ab und **erfordert Chrome 85+ (2020-06)** — das Engine-Frontend nutzt `??=` und Ähnliches, ein Parse-Zeit-Merkmal, das Polyfills nicht ersetzen können (siehe Grenzen). Da viele chinesische ROMs ihren WebView nie aktualisieren können, injiziert der Build ein Polyfill ins Frontend (13 moderne APIs, darunter `AbortSignal.any` / `Promise.withResolvers` / `URL.parse`) und senkt die API-Untergrenze von Chrome 126 auf 85; jede `.so` ist **16-KB-seitenausgerichtet** und läuft damit auch auf Geräten mit neuerem Kernel. Auf der Termux-Route ist jedes davon ein Risiko pro Gerät.
 
 **Plugins sofort nutzbar — ohne vorher Compile-Ingenieur zu spielen**
-dshs „alles ist ein Plugin"-Architektur bleibt erhalten: Hot-Loading von Plugins und Sitzungspersistenz (JSONL) funktionieren normal. Die von Plugins benötigten Sprachumgebungen (Python / Go / Rust / Clang / OpenJDK…) ergänzt das Erweiterungszentrum mit **19 One-Tap-Installationen**, wobei Abhängigkeitsabschlüsse in der CI vorab aufgelöst und auf ELF-Ebene geprüft werden. Auf der Termux-Route ist das Scheitern nativer Module wie `sharp` / `koffi` / `node-pty` der Normalfall — die Community unterhält dafür eigens Projekte mit vorcompilierten Modulen.
+dshs „alles ist ein Plugin"-Architektur bleibt erhalten: Hot-Loading von Plugins und Sitzungspersistenz (JSONL) funktionieren normal. Fehlende Sprachumgebungen (Python / Go / Rust / Clang / OpenJDK…) kommen per `pkg install` in einer Zeile. Auf der Termux-Route ist das Scheitern nativer Module wie `sharp` / `koffi` / `node-pty` der Normalfall — die Community unterhält dafür eigens Projekte mit vorcompilierten Modulen; hier ist die Engine bereits angepasst enthalten.
 
 **Die Engine heilt sich selbst; du musst keine Linux-Logs lesen**
 Fehlerhafte Plugin-Konfiguration → automatisches Rollback auf den letzten gesunden Snapshot; hilft das Rollback nicht → der zweistufige Guardian versetzt das System in den sicheren Modus (defekte Konfiguration archivieren, mit leerer Konfiguration starten), alles ist wiederherstellbar; Engine-Absturz → automatischer Neustart mit exponentiellem Backoff. Auf der Termux-Route ist diese ganze Schicht gleichbedeutend mit „Logs selbst lesen und selbst reparieren".
@@ -186,7 +186,7 @@ Alternativ: Forke das Repository und lasse den Workflow **android-build** auf Gi
 
 **Wie verhält sich das zum Termux-Ansatz?** Parallele Routen, kein Ersatz. Die Termux-Route **baut eine Linux-Umgebung** unter Android (manuelle Einrichtung / Ein-Klick-Skript / proot + Ubuntu) und betreibt dsh darin; dieses Projekt **baut die von dsh benötigte Laufzeit direkt ins APK**, sodass du installierst und loslegst — zum Preis eines Pakets von ~130 MB. **Beide betreiben dasselbe dsh** — entscheide danach, welchen Einrichtungsaufwand du für eine Live-Umgebung zahlen willst.
 
-**Ist der Agent selbst nachimplementiert?** Nein. Agent-Logik, Plugin-System und WebUI stammen alle vom offiziellen [`@deepseek-ai/dsh`](https://github.com/deepseek-ai/deepseek-harness); dieses Projekt liefert nur die Laufzeitumgebung für Android (bionic-Node.js-Laufzeit, Vordergrunddienst, Berechtigungsstufen, Erweiterungszentrum). Deshalb wird es als **Port** und nicht als Framework bezeichnet.
+**Ist der Agent selbst nachimplementiert?** Nein. Agent-Logik, Plugin-System und WebUI stammen alle vom offiziellen [`@deepseek-ai/dsh`](https://github.com/deepseek-ai/deepseek-harness); dieses Projekt liefert nur die Laufzeitumgebung für Android (bionic-Node.js-Laufzeit, Vordergrunddienst, Berechtigungsstufen, vollständige Termux-Umgebung). Deshalb wird es als **Port** und nicht als Framework bezeichnet.
 
 **Werden meine Daten hochgeladen?** Engine, Sitzungen und Arbeitsbereich liegen vollständig lokal; ob Daten das Gerät verlassen, hängt vom von dir konfigurierten Modell-Dienstendpunkt ab.
 

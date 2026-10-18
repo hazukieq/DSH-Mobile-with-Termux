@@ -13,7 +13,7 @@ downloadable extensions. That covers node/python/git, but:
 - there is **no terminal UI** — the only shell is the agent's `bash -c` tool, invisible
   and non-interactive;
 - the Termux `.deb` extensions carry **hard-coded `/data/data/com.termux/files/usr`
-  paths** (`ExtensionManager.rewriteTermuxPaths` skips ELF binaries, so sshd/git-core
+  paths** (`DebInstaller.rewriteTermuxPaths` skips ELF binaries, so sshd/git-core
   style paths stay broken) — the code already notes "长期由 PRoot 活环境系统性解决";
 - anything needing a real distro (apt, glibc, systemd-less daemons, build toolchains
   outside the catalogue) is out of reach.

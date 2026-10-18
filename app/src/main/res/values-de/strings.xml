@@ -253,9 +253,6 @@ Sie können auch ohne Update fortfahren, die Oberfläche wird dann aber nicht an
     <string name="notif_agent_task">Agenten-Aufgabe</string>
     <string name="notif_task_complete">Aufgabe abgeschlossen</string>
     <string name="notif_channel_agent">Benachrichtigungen zu Agenten-Aufgaben</string>
-    <string name="notif_ext_installed_title">Erweiterung installiert</string>
-    <string name="notif_ext_installed_body">%1$s ist aktiviert — zur Nutzung Engine neu starten</string>
-    <string name="notif_ext_failed_title">Erweiterungsinstallation fehlgeschlagen</string>
     <string name="notif_agent_prefix">Agent · %1$s: %2$s</string>
     <string name="notif_turn_done_title">Unterhaltung beendet</string>
     <string name="notif_turn_done_body">Die KI hat ihre Antwort beendet (Sitzung %1$s …)</string>

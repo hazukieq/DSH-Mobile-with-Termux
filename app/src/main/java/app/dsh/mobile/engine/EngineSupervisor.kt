@@ -345,8 +345,6 @@ class EngineSupervisor(private val ctx: Context) {
                         guardian.snapshotLastGood()
                     }
                     backoffIndex = 0
-                    // 引擎 healthy = 待重启标记解除（激活/停用/卸载的扩展自此刻生效）
-                    app.dsh.mobile.engine.ExtensionManager.clearPendingRestart()
                     val safe = guardian.inSafeMode()
                     val tokenUrl = extractTokenUrl()
                     Log.i(TAG, "token url extracted: ${if (tokenUrl == null) "null" else "yes (len=" + tokenUrl.length + ")"}")

@@ -32,8 +32,6 @@ import java.nio.charset.StandardCharsets
  *   POST /input         body: {"text":"...", "target":「<输入框提示>」} → 向输入框写文字（v1.2.54）
  *   POST /scroll-find   body: {"text":"...", "tap":true}             → 滚动查找并可选点击（v1.2.54）
  *   POST /idle          body: {"timeoutMs":3000}                     → 等待界面稳定（v1.2.54）
- *   GET  /ext/list      → 扩展清单+三态 JSON（v1.2.1）
- *   POST /ext/install   body: {"id":"python"}                        → 自助安装环境扩展（v1.2.1）
  *
  * 运行时热更新（2026-10-18，配套 engine/bin/dsh-update 门脚本）：
  *   GET  /runtime/status   [?format=line] → 运行时版本/来源/暂存/回滚/引擎状态
@@ -443,14 +441,11 @@ object AgentBridge {
             method == "POST" && path == "/wait-text" -> waitText(body)
             method == "POST" && path == "/scroll-edge" -> scrollEdge(body)
             method == "GET" && path == "/notif" -> notif()
-            method == "GET" && path == "/ext/list" -> extList(ctx)
             method == "GET" && path == "/plugin/list" -> pluginList()
             method == "POST" && path == "/plugin/install" -> pluginInstall(body)
-            method == "GET" && path == "/ext/check" -> extCheck(ctx)
             method == "GET" && path == "/diag" -> diag(ctx)
             method == "POST" && path == "/say" -> say(ctx, body)
             method == "GET" && path == "/say" -> sayGet(ctx, query)
-            method == "POST" && path == "/ext/install" -> extInstall(ctx, body)
             // 运行时热更新（2026-10-18）：门脚本 dsh-update 驱动的五个端点
             method == "GET" && path == "/runtime/status" -> runtimeStatus(ctx, query)
             method == "GET" && path == "/runtime/feed" -> runtimeFeed(ctx, query)
@@ -681,68 +676,6 @@ object AgentBridge {
             409 to JSONObject().put("ok", false).put("action", action).put("error", err).toString()
         }
 
-    /** GET /ext/list → 扩展清单与三态（red/yellow/green），AI 判断环境是否可用的唯一入口 */
-    /**
-     * GET /ext/check —— 只读健康检查（用户「一键检测」与 AI 自查共用）：
-     * 对每个已装扩展核对 声明的主程序是否存在 / 悬空软链数 / root 权限残留目录。
-     * 返回 {"ok":N,"broken":[{id,name,reason,...}], "all":[...]}，不修改任何文件。
-     */
-    private fun extCheck(ctx: Context): Pair<Int, String> {
-        return try {
-            val mgr = ExtensionManager(ctx)
-            val list = mgr.checkHealth()
-            val arr = org.json.JSONArray()
-            list.forEach { h ->
-                arr.put(
-                    JSONObject()
-                        .put("id", h.id).put("name", h.name)
-                        .put("installed", h.installed).put("active", h.active)
-                        .put("version", h.version ?: "")
-                        .put("ok", h.ok)
-                        .put("reason", h.reason())
-                        .put("binsMissing", org.json.JSONArray(h.binsMissing))
-                        .put("danglingLinks", h.danglingLinks)
-                        .put("blockedDirs", org.json.JSONArray(h.blockedDirs))
-                )
-            }
-            val broken = list.filter { it.installed && !it.ok }
-            val body = JSONObject()
-                .put("installed", list.count { it.installed })
-                .put("healthy", list.count { it.ok })
-                .put("broken", org.json.JSONArray(broken.map { it.id }))
-                .put("all", arr).toString()
-            200 to body
-        } catch (e: Exception) {
-            500 to """{"ok":false,"error":"${e.message}"}"""
-        }
-    }
-
-    private fun extList(ctx: Context): Pair<Int, String> {
-        return try {
-            val mgr = ExtensionManager(ctx)
-            val arr = org.json.JSONArray()
-            mgr.loadCatalog().forEach { e ->
-                val st = when (mgr.state(e.id)) {
-                    ExtensionManager.ExtState.NOT_DOWNLOADED -> "red"
-                    ExtensionManager.ExtState.DOWNLOADED -> "yellow"
-                    ExtensionManager.ExtState.ACTIVATED -> "green"
-                }
-                arr.put(
-                    JSONObject()
-                        .put("id", e.id)
-                        .put("name", e.name)
-                        .put("category", e.category)
-                        .put("state", st)
-                        .put("version", mgr.installedVersion(e.id) ?: "")
-                        .put("installing", mgr.isInstalling(e.id))
-                )
-            }
-            200 to arr.toString()
-        } catch (e: Exception) {
-            500 to """{"ok":false,"error":"${e.message}"}"""
-        }
-    }
-
     /**
      * POST /say body {"text":"...", "flush":false} → 系统语音合成朗读。
      * Agent 语音输出的出口（issues #2 语音功能方向的第一块）。
@@ -859,39 +792,6 @@ document.getElementById('api').textContent = checks.map(function(c){
 ');
 </script></body></html>"""
         return 200 to html
-    }
-
-    /**
-     * POST /ext/install body {"id":"python","force":true?} → 202 后台安装（Termux 镜像 → 依赖闭包 →
-     * 解包 → 自动激活），完成后系统通知；AI 轮询 /ext/list 等 state=green。
-     * force=true 强制重装已激活扩展（目录整体重建，用户手装内容会清掉）——修复旧布局扩展用。
-     * 注意：激活后的 PATH 需引擎重启才生效（AI 应提醒用户点设置页「重启引擎」）。
-     */
-    private fun extInstall(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"body must be {\"id\":\"<extension id>\",\"force\":true?}"}"""
-        val id = obj.optString("id").ifEmpty { return 400 to """{"ok":false,"error":"missing id"}""" }
-        val force = obj.optBoolean("force", false)
-        val mgr = (ctx.applicationContext as app.dsh.mobile.DshApp).extensionManager
-        val ext = runCatching { mgr.loadCatalog().firstOrNull { it.id == id } }.getOrNull()
-            ?: return 404 to """{"ok":false,"error":"unknown extension: $id"}"""
-        if (!force && mgr.state(id) == ExtensionManager.ExtState.ACTIVATED) {
-            return 200 to """{"ok":true,"state":"green","message":"already installed and activated (pass force:true to reinstall)"}"""
-        }
-        if (mgr.isInstalling(id)) {
-            return 409 to """{"ok":false,"error":"already installing, poll /ext/list"}"""
-        }
-        Thread({
-            try {
-                kotlinx.coroutines.runBlocking { mgr.installTask(ext) }   // 与 UI 共享任务队列（并发下载/串行解包）
-                mgr.activate(ext.id)
-                notify(ctx, """{"title":"${ctx.getString(R.string.notif_ext_installed_title)}","body":"${ctx.getString(R.string.notif_ext_installed_body, ext.name)}"}""")
-            } catch (e: Exception) {
-                Log.w(TAG, "ext install $id: ${e.message}")
-                notify(ctx, """{"title":"${ctx.getString(R.string.notif_ext_failed_title)}","body":"${ext.name}: ${e.message}"}""")
-            }
-        }, "ext-install-$id").apply { isDaemon = true; start() }
-        return 202 to """{"ok":true,"state":"installing","message":"download started; poll GET /ext/list until state=green, then remind user to restart engine"}"""
     }
 
     // ---------- v1.2.182：长串无障碍操作的系统通知 ----------

@@ -21,14 +21,10 @@ Guard rails live in `scripts/check-i18n.py`, run on every PR by
 | 权限 | Permission | Berechtigung | "Permission mode" for 运行权限模式 |
 | 权限中心 | Permissions | Berechtigungen | settings section |
 | 沙箱 | sandbox | Sandbox | lowercase in prose |
-| 扩展中心 | Extension Center | Erweiterungs-Center | product term, always capitalised |
-| 扩展 | Extension / Extensions | Erweiterung / Erweiterungen | singular in the Extension Center list |
 | 无障碍 | Accessibility | Bedienungshilfen | never "barrier-free" |
 | 屏幕点击 | Screen tap | Bildschirmtippen | accessibility service |
 | 引擎 | Engine | Engine | |
 | 重启 | Restart | Neustart | toolbar button label; the agent taps it by text (DE/EN/ZH) |
-| 激活 / 停用 | Activate / Deactivate | Aktivieren / Deaktivieren | three-state extension lifecycle |
-| 已激活 | Activated | Aktiviert | green state |
 | 安全模式 | Safe mode | Sicherheitsmodus | ProfileGuardian fallback |
 | 依赖闭包 | dependency closure | Abhängigkeits-Closure | |
 | 镜像源 / 切换源 | mirror / switching mirror | Mirror / Mirror-Wechsel | |
@@ -39,22 +35,6 @@ Guard rails live in `scripts/check-i18n.py`, run on every PR by
 | 竖屏 / 横屏 / 自动 | Portrait / Landscape / Auto | Hochformat / Querformat / Automatisch | tri-state since v1.2.120, stored in `dsh_ui` key `orientation` (migrated from boolean `landscape`) |
 | 页面缩放 | Page zoom | Seitenzoom | |
 | 跟随系统 | Follow system | Systemsprache folgen | **removed in v1.2.120** (no longer a language option) |
-| 语言运行时 | Language runtimes | Sprach-Laufzeiten | extension category |
-| 编译构建 | Build & tooling | Build & Werkzeuge | extension category |
-| 系统与多媒体 | System & media | System & Multimedia | extension category |
-
-## Extension categories
-
-Categories live in `assets/extensions/catalog.json` (English) and
-`catalog.zh-rCN.json` (Chinese); `ExtensionManager.loadCatalog()` picks the file
-from the active locale. `ExtensionStoreActivity.categoryColor()` matches **both**
-spellings so the accent colour survives a locale switch.
-
-| zh | en |
-|---|---|
-| 语言运行时 | Language runtimes |
-| 编译构建 | Build & tooling |
-| 系统与多媒体 | System & media |
 
 ## Notable string decisions
 

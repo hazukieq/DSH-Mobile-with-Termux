@@ -24,7 +24,7 @@ DSH Mobile is the **complete Android port of [DeepSeek Harness](https://github.c
 
 ## 🎯 What This Is · What This Is Not
 
-**This is**: the **complete Android port of DeepSeek Harness** (`@deepseek-ai/dsh`). The engine is the official upstream code (pinned to `0.2.0-rc.2`) — plugin system, WebUI, and tool-calling chain all come from upstream. What this project supplies is the Android-side runtime: a self-built bionic Node.js runtime with a verified dependency closure, foreground-service keep-alive, privilege tiers, and the Extension Center. **Anything desktop dsh can do, this can do** — just inside the phone's sandbox.
+**This is**: the **complete Android port of DeepSeek Harness** (`@deepseek-ai/dsh`). The engine is the official upstream code (pinned to `0.2.0-rc.2`) — plugin system, WebUI, and tool-calling chain all come from upstream. What this project supplies is the Android-side runtime: a self-built bionic Node.js runtime with a verified dependency closure, foreground-service keep-alive, privilege tiers, and a complete Termux userland. **Anything desktop dsh can do, this can do** — just inside the phone's sandbox.
 
 **This is not**:
 
@@ -66,7 +66,7 @@ The official dsh engine (pinned to `0.2.0-rc.2`) runs in the Android app sandbox
 The Agent can start a local HTTP service and return a `http://127.0.0.1:port` link. Tap it to preview a page or service on the phone, without moving the project to a computer first.
 
 **Make the phone a real Agent workstation**
-The Extension Center offers **19 environment extensions** — including Python, Go, Rust, Clang, OpenJDK, Git, Ruby, PHP, Perl, Lua, SQLite, FFmpeg, ImageMagick, OpenSSH, ADB, and Vim. Install or remove them on demand, with three-state status and inline progress. Dependency closures are resolved automatically, packages are SHA-256 checked and atomically published, and install-time shebang repair helps scripts find their interpreters. Downloads can use direct China mirrors (TUNA → USTC → BFSU → Termux official). The Agent can also install and activate extensions itself; self-installing the Android SDK command-line tools was verified in Root mode.
+The app uses Termux's package name (`com.termux`), so `<files>/usr` is a genuine `$PREFIX`: `apt`, `dpkg` and `pkg` work natively. Install Python, Git, Clang, FFmpeg or ImageMagick with a single `pkg install` — no root, no extension store, and the agent can do it on its own too.
 
 **Bring the dsh plugin ecosystem along**
 Settings → Extensions → **Community plugins** lets you search npm for dsh ecosystem plugins and install or uninstall them in the app. Compatibility-filtered results, progress, and failure reasons make plugin setup visible; installed plugins appear in the WebUI panel. **Plugins extend Agent capabilities; environment extensions provide command-line tools.**
@@ -121,7 +121,7 @@ Every capability has its own document (design trade-offs, measured numbers, trou
 
 - **WebView must be Chrome 85+ (2020-06 or later)**: the app itself supports Android 8.0 → 16, but the UI renders in the system WebView, and the engine frontend uses modern syntax (`??=`, class fields) — a **parse-time** feature that polyfills cannot patch. Devices whose system WebView is older than Chrome 85 show a blank page (export the log from Settings to confirm: it records the `SyntaxError` and the WebView version). **On Android 8.0+ the WebView is an independently updatable system component** (Google Play / OEM stores), so updating it to 85+ is all it takes; the few Chinese ROMs that can never update their WebView are a known limitation.
 - **No desktop environment**: Linux GUI desktop apps can't run; visual outputs are previewed via local HTTP + the built-in WebView
-- **Bundled toolchain is node/bash only**: Clang/Python/Go and 16 more environments come through the built-in **Extension Center** (one tap), or the Agent can install them itself (verified in Root mode with the Android SDK)
+- **Bring your own toolchain with pkg**: `pkg install` Python, Clang, Go, Rust, FFmpeg and friends from the official Termux repository — no root, no extension store
 - **Screen reading is "half-blind"**: `scr dump` reads the accessibility node tree (text + coordinates + clickability), which is useless for pure-graphics or game canvases; complex UI automation stays limited
 - **Android 13+ asks for confirmation when enabling accessibility**: for sideloaded apps the system shows an "Allow full control of your device" dialog that must be accepted by hand; writing the setting over adb gets reverted by the system. Follow the in-app guide to the system UI.
 - **Long tasks are not immortal**: the foreground service maximally avoids system reclamation, but a force-stop or extreme battery saver can still interrupt (the engine auto-restarts; in-flight tasks must be re-dispatched)
@@ -207,7 +207,7 @@ Alternatively, fork the repo and run the **android-build** workflow on GitHub Ac
 
 **How does this relate to the Termux approach?** Parallel routes, not replacements. The Termux route **builds a Linux environment** on Android (manual setup / one-click script / proot + Ubuntu) and runs dsh inside it; this project **packs dsh's runtime into the APK** so you install and go, at the cost of a ~144 MB package. **Both run the same dsh** — choose by how much setup cost you're willing to pay for a live environment.
 
-**Does it reimplement the agent itself?** No. Agent logic, plugin system, and WebUI all come from the official [`@deepseek-ai/dsh`](https://github.com/deepseek-ai/deepseek-harness); this project only provides the Android-side runtime (bionic Node.js runtime, foreground service, privilege tiers, Extension Center). That is why it is described as a **port**, not a framework.
+**Does it reimplement the agent itself?** No. Agent logic, plugin system, and WebUI all come from the official [`@deepseek-ai/dsh`](https://github.com/deepseek-ai/deepseek-harness); this project only provides the Android-side runtime (bionic Node.js runtime, foreground service, privilege tiers, Termux userland). That is why it is described as a **port**, not a framework.
 
 **Is my data uploaded?** The engine, sessions, and workspace are all local; whether data leaves the device depends on the model service endpoint you configure.
 

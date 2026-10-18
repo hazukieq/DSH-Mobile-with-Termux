@@ -9,9 +9,9 @@
 原设计把 Node.js 运行时与工具链以 bionic 二进制直接打进 APK，装完即用，代价是：
 
 1. **没有终端 UI** —— 唯一的 shell 是 AI 的 `bash -c` 工具，不可见、不可交互；
-2. **Termux 扩展的硬编码前缀** —— `ExtensionManager.rewriteTermuxPaths` 明确跳过 ELF，
+2. **硬编码 Termux 前缀** —— deb 安装器的路径改写明确跳过 ELF，
    sshd / git-core 这类路径改不了（代码注释原话：「长期由 PRoot 活环境系统性解决」）；
-3. **glibc / apt 世界够不着** —— 只有 bionic 闭包 + 19 项扩展。
+3. **glibc 世界够不着** —— bionic 闭包 + Termux 仓库（apt/pkg 原生）覆盖日常工具。
 
 所以这一版**不推翻原路线**，而是在旁边加一条支线：需要 glibc / apt 时进 Linux，
 日常仍然零下载用 bionic 工具链。两条路线共享同一个 `$HOME`。
@@ -21,7 +21,7 @@
 ### 入口
 
 - **桌面图标**：`DSH Terminal`（第二个 LAUNCHER 入口，独立于主 App 图标）
-- **设置 → 扩展中心分组 → 终端**
+- **设置 → 终端**
 - **Linux 环境页 → 打开终端**（直接进某个发行版）
 
 ### 架构
@@ -94,7 +94,7 @@ Android 侧会话的命令是 `engine/bin/bash -i`，环境变量直接来自
 1. **proot 载荷**：从 Termux 官方仓库取 3 个 `.deb`
    （`proot 5.1.107.96` + `libtalloc 2.5.0` + `libandroid-shmem 0.7`），
    校验 SHA-256，解 `data.tar.xz`，把 `data/data/com.termux/files/usr/**`
-   拍平到 `<filesDir>/linux/proot/`。**不执行** postinst（与扩展中心同一策略）。
+   拍平到 `<filesDir>/linux/proot/`。**不执行** postinst。
 2. **rootfs**：从镜像下载 `.tar.gz`，解到临时目录，再**原子 rename** 成
    `distros/<id>/rootfs`（中途失败不会留下半个 rootfs）。
 3. **后配置**（纯文件写入，不 chroot）：
@@ -269,7 +269,7 @@ Termux 的二进制把 `/data/data/com.termux/files/usr` **编译期写死**：
 `bash` 的 `SYS_BASHRC`/`SYS_PROFILE`、`openssl` 的默认配置目录、`git` 的
 `git-core`/templates、`python` 的 stdlib 路径都在 ELF 里。
 
-- 文本文件可以运行时改写（`ExtensionManager.rewriteTermuxPaths`）；
+- 文本文件可以运行时改写（deb 安装器的路径改写）；
 - **ELF 里的字符串改不了**：我们的路径
   `/data/data/app.dsh.mobile/files/engine`（37 字符）比 Termux 的（31 字符）长，
   无法等长替换；
@@ -555,7 +555,7 @@ pkg list                 # 21 个扩展：python / openjdk-17 / golang / rust / 
                          #   cmake / sqlite / ffmpeg / imagemagick / openssh / android-tools /
                          #   vim / llama-cpp / asr-service
 pkg search <关键词>
-pkg install <id|name>    # 走 App 扩展中心：下载 Termux .deb → 改写前缀 → 展开到
+pkg install <id|name>    # 走 Termux 原生 apt/dpkg：下载 .deb → 按前缀展开
                          #   <engine>/extensions/<id>/ → 并入 PATH/LD_LIBRARY_PATH
 pkg state <id> / pkg where <id>
 ```

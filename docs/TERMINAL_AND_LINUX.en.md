@@ -11,7 +11,7 @@ The original design ships the Node.js runtime and toolchain as bionic binaries i
 APK (install and go), at three costs:
 
 1. **No terminal UI** — the only shell is the agent's `bash -c` tool: invisible, non-interactive;
-2. **Hard-coded Termux prefixes** — `ExtensionManager.rewriteTermuxPaths` deliberately skips
+2. **Hard-coded Termux prefixes** — the deb installer's path rewrite deliberately skips
    ELF binaries, so sshd / git-core style paths stay broken (the code comment literally says
    "long-term solved by a PRoot live environment");
 3. **No glibc / apt world** — only the bionic closure plus 19 extensions.
@@ -106,7 +106,7 @@ The ABI follows the built APK: `arm64-v8a → aarch64/arm64`, `x86_64 → x86_64
    (`proot 5.1.107.96` + `libtalloc 2.5.0` + `libandroid-shmem 0.7`), SHA-256 verified,
    `data.tar.xz` extracted, `data/data/com.termux/files/usr/**` flattened into
    `<filesDir>/linux/proot/`. postinst scripts are **not** executed (same policy as the
-   Extension Center).
+   Termux packages).
 2. **rootfs**: download `.tar.gz` from a mirror, extract into a temp dir, then **atomically
    rename** into `distros/<id>/rootfs` (a failure never leaves half a rootfs behind).
 3. **post-config** (plain file writes, no chroot):
@@ -283,7 +283,7 @@ Termux binaries hard-code `/data/data/com.termux/files/usr` at compile time:
 bash's `SYS_BASHRC`/`SYS_PROFILE`, openssl's default config dir, git's
 `git-core`/templates, python's stdlib path.
 
-- text files can be rewritten at install time (`ExtensionManager.rewriteTermuxPaths`);
+- text files can be rewritten at install time (deb installer path rewrite);
 - **strings inside ELF cannot**: our path
   `/data/data/app.dsh.mobile/files/engine` (37 chars) is longer than Termux's (31),
   so an equal-length in-place patch is impossible;

@@ -21,7 +21,7 @@
 
 DSH Mobile 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DeepSeek 开源的 Agent 框架）的 **Android 完整移植**。完整的 Node.js Agent 引擎运行在应用沙箱内，监听 `127.0.0.1` 回环——会话、凭证、工作区**全部留在手机上**，装完即用；是否有模型请求出设备，取决于你配置的模型服务地址。
 
-**这是**：官方 dsh 引擎（锁定 `0.2.0-rc.2`）+ 自建 Android 运行环境。插件体系、WebUI、工具调用链全部来自上游，本项目负责运行层：bionic 版 Node.js 运行时、前台服务保活、三级权限、扩展中心。**桌面上 dsh 能做的事，这里都能做。**
+**这是**：官方 dsh 引擎（锁定 `0.2.0-rc.2`）+ 自建 Android 运行环境。插件体系、WebUI、工具调用链全部来自上游，本项目负责运行层：bionic 版 Node.js 运行时、前台服务保活、三级权限、完整 Termux 用户态。**桌面上 dsh 能做的事，这里都能做。**
 
 **这不是**：不是自研 Agent 框架，不是端侧大模型 App（模型走你配置的 API），不是手机自动化 Agent（读屏点击是交给 AI 的工具之一），**默认不套 Linux 容器**——Node.js 运行时与整套工具链都以 Android 原生（bionic）二进制直接打进 APK，装完即用；**但另有可选的 Linux 用户空间**（Alpine / Ubuntu Base，经 proot 伪 root 运行）与**内置原生终端**，按需下载、互不干扰，用于 glibc / apt 这类 bionic 覆盖不到的场景。
 
@@ -32,7 +32,7 @@ DSH Mobile 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harnes
 | **冷启动到引擎就绪** | **< 10 秒** | 一加 15T（Android 16）真机 |
 | **多服务并行内存** | **< 400 MB** | 引擎 + 多服务并行 |
 | **兼容版本** | **Android 8.0 → 16** | 需 WebView ≥ Chrome 85 |
-| **APK 体积** | **约 144 MB** | 含完整 Node.js 运行时 + 19 项扩展的工具链闭包 |
+| **APK 体积** | **约 217 MB** | 含 Termux bootstrap + dsh 0.2.1 适配引擎（node_modules 全量） |
 | **安装后占用** | **约 500 MB** | 运行时解压后 |
 
 对比：Termux 快照类方案首次启动通常需**数分钟**（解压 + 手动初始化）；本项目的运行时预置在 APK 内，装完即用。proot 系方案（Ubuntu 容器）APK 看着小，但首次使用要另下 500MB～2GB 的 rootfs。
@@ -48,16 +48,21 @@ App 自带一个**完整终端**（原生 VT100/xterm 模拟 + 真实 PTY，不�
 dsh 侧同样打通：`linux run <发行版> <命令>` 门脚本让 AI 把命令直接送进发行版执行，拿回真实退出码与输出；`linux list / status / exec / shell` 覆盖管理、默认发行版与交互场景。分工明确——日常用 bionic 原生工具链（零下载），遇到 glibc / apt 依赖才进 Linux。
 
 
-### 🔌 扩展中心：把手机变成可扩展工作站
+### 🐧 真实 Termux 用户态：pkg / apt 直接装
 
-内置扩展中心提供 **Python、Go、Rust、Clang、OpenJDK、Git、Ruby、PHP、Perl、Lua、SQLite、FFmpeg、ImageMagick、OpenSSH、ADB、Vim** 等 **19 项环境扩展**：一键下载、支持卸载，三态管理与行内进度让安装状态始终可见。
+App 与 Termux 同包名（`com.termux`），`<files>/usr` 就是它的 **`$PREFIX`**：官方 Termux bootstrap 落位后，`apt` / `dpkg` / `pkg` 全部原生可用，不再是玩具 shell。
 
-- 国内镜像直连并自动切换（清华 TUNA → 中科大 → 北外 → Termux 官方）
-- 自动解析依赖闭包，逐包 SHA-256 校验并原子发布，避免半套环境进入运行态
-- 安装后自动修复 shebang，让 `env python3` 一类脚本能直接找到解释器
-- Agent 也能自装扩展并自动激活；Root 模式下已实测自装 Android SDK 命令行工具
+```sh
+pkg install python git clang make vim ffmpeg imagemagick
+apt install -y openssh        # 等价的 apt 入口
+dpkg -l                       # 原生 dpkg 数据库
+```
 
-这意味着手机不是一次性快照：需要什么环境就补什么环境，不再需要的扩展也可卸载。
+- 真 Termux bash（支持 `=~`、`[[ ]]`、数组），脚本 shebang 不用改
+- 不需要 root，装完即可用；镜像走 Termux 官方仓库
+- Agent 也能自己 `pkg install` 补齐环境，并把结果写进会话上下文
+
+语言环境不再需要逐项下载安装包：`pkg install` 一条命令即可。
 
 ### 🧩 社区插件：把 dsh 生态带到手机上
 
@@ -65,7 +70,7 @@ dsh 侧同样打通：`linux run <发行版> <命令>` 门脚本让 AI 把命令
 
 - 搜索结果按兼容性过滤，减少装上才发现不能用的试错
 - 安装过程显示进度与失败原因，完成后立即出现在 WebUI 插件面板
-- **插件扩展 Agent 的能力，扩展中心提供命令行环境**：两套机制各司其职，按需组合
+- **插件扩展 Agent 的能力，Termux 提供命令行环境**：两套机制各司其职，按需组合
 
 ### 🖥️ 完整 Agent 任务执行：不是只能聊天的壳
 
@@ -161,7 +166,7 @@ Agent 通过只监听 `127.0.0.1:3083` 的能力桥操作手机，所有调用�
 ## 🌟 这些是 Termux 路线给不了的
 
 **插件体系开箱可用，不用先当一次编译工程师**
-dsh 的「一切皆插件」架构原样保留：插件热载、会话持久化全部照常工作。插件缺的语言环境由扩展中心一键补齐。Termux 路线上，`sharp` / `koffi` / `node-pty` 这类原生模块编译失败是常态。
+dsh 的「一切皆插件」架构原样保留：插件热载、会话持久化全部照常工作。缺的语言环境 `pkg install` 一条命令补齐。Termux 路线上，`sharp` / `koffi` / `node-pty` 这类原生模块编译失败是常态；本项目内置已适配好的引擎，不要求用户自己编译。
 
 **跨版本兼容，逐台设备踩过的坑已经踩完**
 App 支持 Android 8.0 → 16；界面渲染依赖系统 WebView（**需 Chrome 85+**），构建时向前端注入 polyfill（覆盖 13 个现代 API），把 API 层门槛从原生 Chrome 126 拉回到 85；全部 so 按 **16KB 页对齐**，新内核设备直接可用。
@@ -232,7 +237,7 @@ gradle assembleDebug -Pabi=arm64-v8a
 
 **数据会上传吗？** 引擎/会话/工作区全在本机；数据是否出设备取决于你配置的模型服务地址。
 
-**APK 为什么约 144MB？** 内置了完整的 Node.js bionic 运行时、19 项扩展的工具链闭包以及 dsh 的依赖树。这是「不依赖 Termux、装完即用」的代价；Termux 系方案把这部分留给用户自行安装，所以包体更小，但首次使用需要先配置环境。
+**APK 为什么约 217MB？** 内置了完整 Termux bootstrap、dsh 0.2.1 适配引擎（含 node_modules 依赖树）与自包含的 node/rg 私有库。这是「不依赖 Termux、装完即用」的代价；Termux 系方案把这部分留给用户自行安装，所以包体更小，但首次使用需要先配置环境。
 
 **Agent 怎么展示网页？** 让它起本地 HTTP 服务并给你 `http://127.0.0.1:端口` 链接，点开即预览。
 

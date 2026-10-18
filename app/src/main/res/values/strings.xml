@@ -267,9 +267,6 @@ You can still continue without updating, but the interface will not display.</st
     <string name="notif_lan_text">%1$s · tap Stop to turn it off</string>
     <string name="notif_lan_action_off">Stop</string>
     <string name="notif_lan_channel">LAN WebUI</string>
-    <string name="notif_ext_installed_title">Extension installed</string>
-    <string name="notif_ext_installed_body">%1$s is activated — restart the engine to use it</string>
-    <string name="notif_ext_failed_title">Extension install failed</string>
     <string name="notif_agent_prefix">Agent · %1$s: %2$s</string>
     <string name="notif_turn_done_title">Conversation finished</string>
     <string name="notif_turn_done_body">The AI finished its reply (session %1$s…)</string>

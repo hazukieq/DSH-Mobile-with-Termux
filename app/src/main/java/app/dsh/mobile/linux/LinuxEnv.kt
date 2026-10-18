@@ -598,7 +598,7 @@ object LinuxEnv {
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
-    // ================= 网络（镜像 failover；与 ExtensionManager 同款 DNS 预检） =================
+    // ================= 网络（镜像 failover + DNS 预检） =================
 
     private fun openConn(url: String, readTimeoutMs: Int): HttpURLConnection {
         val u = URL(url)
@@ -657,7 +657,7 @@ object LinuxEnv {
     private const val EXTERNAL_STORAGE = "/storage/emulated/0"
 
     /**
-     * 下载 rootfs/索引时的 UA。与 ExtensionManager.HTTP_UA 保持一致：
+     * 下载 rootfs/索引时的 UA（常量唯一来源）：
      * 用浏览器 UA 会被部分镜像的 WAF 403。
      */
     private const val HTTP_UA = "APT/2.12.10 (aarch64; android; termux)"

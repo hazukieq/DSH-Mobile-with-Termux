@@ -267,9 +267,6 @@
     <string name="notif_lan_text">%1$s · 点「关闭」可停止</string>
     <string name="notif_lan_action_off">关闭</string>
     <string name="notif_lan_channel">局域网 WebUI</string>
-    <string name="notif_ext_installed_title">扩展安装完成</string>
-    <string name="notif_ext_installed_body">%1$s 已激活，重启引擎后可用</string>
-    <string name="notif_ext_failed_title">扩展安装失败</string>
     <string name="notif_agent_prefix">Agent · %1$s：%2$s</string>
     <string name="notif_turn_done_title">对话完成</string>
     <string name="notif_turn_done_body">AI 已完成本轮回复（会话 %1$s…）</string>

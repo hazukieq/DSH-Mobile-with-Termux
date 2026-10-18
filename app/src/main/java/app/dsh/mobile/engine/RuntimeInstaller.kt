@@ -187,10 +187,10 @@ class RuntimeInstaller(private val ctx: Context) {
             }
 
             // v1.2.21 事故修复：原 root.deleteRecursively() 会把 engine/ 整个删光，
-            // extensions/（用户下载的全家扩展）一起陪葬；且删除 70MB 目录耗时较长，
+            // prefix 里的用户数据一起陪葬；且删除 70MB 目录耗时较长，
             // 与用户点扩展下载并发 → 刚发布的扩展目录被删到只剩 lib → rename 报
             // 「扩展目录发布失败」。现在按 zip 实际顶层目录（bin/etc/lib/share/usr）
-            // 精确替换，extensions/ 等用户资产永不触碰。
+            // 精确替换，prefix 里的用户资产永不触碰。
             root.mkdirs()
             val topDirs = java.util.zip.ZipFile(assetZip).use { zf ->
                 zf.entries().asSequence()
@@ -246,7 +246,7 @@ class RuntimeInstaller(private val ctx: Context) {
         // ⚠️ 必须**两阶段**：zip 里别名条目可能排在本体之前（实测 libz.so.1 排在
         // libz.so 之前），若边解压边建链，链接时本体还不存在 → 变成 0 字节空文件
         // （正是「CANNOT LINK ... libz.so.1 not found」那类故障的成因）。
-        // 所以先落全部本体，再统一建链接 —— 与 ExtensionManager 的 deb 解包同一套路。
+        // 所以先落全部本体，再统一建链接 —— 与早期 deb 解包器同一套路。
         val linkTargets = readLinkTargets(zip)
         if (linkTargets.isNotEmpty()) {
             Log.i(TAG, "unzip: ${linkTargets.size} deduplicated alias entries (copied)")
@@ -381,7 +381,7 @@ class RuntimeInstaller(private val ctx: Context) {
     }.getOrDefault(false)
 
     companion object {
-        /** runtime 装配进行中：ExtensionManager 拒绝在此窗口安装扩展（防互删） */
+        /** runtime 装配进行中（保留给安装流程的互斥标记） */
         @Volatile
         var installing: Boolean = false
             private set

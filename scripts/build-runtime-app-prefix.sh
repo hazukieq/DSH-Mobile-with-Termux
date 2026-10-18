@@ -6,7 +6,7 @@
 # `/data/data/com.termux/files/usr` 编译期写死（bash 的 SYS_BASHRC/SYS_PROFILE、
 # openssl 的默认配置目录、git 的 git-core/templates、python 的 stdlib 路径……）。
 # 装进 `app.dsh.mobile` 之后：
-#   · 文本文件可以运行时改写（ExtensionManager.rewriteTermuxPaths），
+#   · 文本文件可以运行时改写（DebInstaller 的路径改写逻辑），
 #   · ELF 里的字符串改不了（我们的路径更长，无法等长替换），只能靠环境变量兜底，
 #   · 而 bash 的系统 bashrc 没有环境变量可覆盖 —— 设备上装过 Termux 时会
 #     每个交互 shell 打一行 `bash: /data/data/com.termux/files/usr/etc/bash.bashrc:
