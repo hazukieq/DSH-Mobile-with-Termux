@@ -501,6 +501,8 @@ class TerminalView @JvmOverloads constructor(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private var downY = 0f
     private var lastY = 0f
+    private var lastX = 0f
+    private var wheelAccum = 0f
     private var dragAccum = 0f
     private var dragging = false
 
@@ -509,7 +511,9 @@ class TerminalView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 downY = event.y
                 lastY = event.y
+                lastX = event.x
                 dragAccum = 0f
+                wheelAccum = 0f
                 dragging = false
                 return true
             }
@@ -522,13 +526,27 @@ class TerminalView @JvmOverloads constructor(
                 // 下滑回最新），与 Android 里所有滚动容器（以及用户习惯）都是反的。
                 val dy = lastY - event.y
                 lastY = event.y
+                lastX = event.x
                 if (!dragging && abs(event.y - downY) > touchSlop) dragging = true
                 if (dragging) {
-                    dragAccum += dy
-                    val rows = (dragAccum / cellHeight).toInt()
-                    if (rows != 0) {
-                        scrollBy(rows)
-                        dragAccum -= rows * cellHeight
+                    val emulator = session?.emulator
+                    if (emulator != null && emulator.alternateScreen && emulator.mouseReporting) {
+                        // TUI（dsh-tui / vim / less）没有 scrollback：把手势折算成
+                        // 滚轮事件交给应用自己滚动（SGR 1006 或 X10 兜底）。
+                        // 自然滚动：手指下滑 = 看更早的内容 = wheel up。
+                        wheelAccum += dy
+                        val steps = (wheelAccum / cellHeight).toInt()
+                        if (steps != 0) {
+                            repeat(abs(steps)) { sendMouseWheel(up = steps > 0) }
+                            wheelAccum -= steps * cellHeight
+                        }
+                    } else {
+                        dragAccum += dy
+                        val rows = (dragAccum / cellHeight).toInt()
+                        if (rows != 0) {
+                            scrollBy(rows)
+                            dragAccum -= rows * cellHeight
+                        }
                     }
                 }
                 return true
@@ -563,6 +581,31 @@ class TerminalView @JvmOverloads constructor(
         val emulator = session?.emulator ?: return
         emulator.scrollBy(deltaRows)
         invalidate()
+    }
+
+    /**
+     * 向应用发一次滚轮事件（v1.3.15）。
+     *
+     * @param up true = wheel up（内容往更早的方向滚，即手指下滑）
+     *
+     * 坐标用触摸点所在的单元格（1 起），钳在屏幕内，避免 TUI 收到越界坐标。
+     */
+    private fun sendMouseWheel(up: Boolean) {
+        val session = session ?: return
+        val e = session.emulator
+        if (!e.mouseReporting) return
+        val col = ((lastX / cellWidth).toInt() + 1).coerceIn(1, e.cols)
+        val row = ((lastY / cellHeight).toInt() + 1).coerceIn(1, e.rows)
+        val button = if (up) 64 else 65
+        val bytes = if (e.mouseSgrEncoding) {
+            "\u001b[<$button;$col;${row}M".toByteArray(Charsets.US_ASCII)
+        } else {
+            byteArrayOf(
+                0x1b, '['.code.toByte(), 'M'.code.toByte(),
+                (32 + button).toByte(), (32 + col).toByte(), (32 + row).toByte(),
+            )
+        }
+        session.write(bytes)
     }
 
     /** 回到最新输出 */

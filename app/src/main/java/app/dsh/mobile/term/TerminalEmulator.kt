@@ -153,6 +153,21 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
     private var scrollTop = 0
     private var scrollBottom = _rows - 1
 
+    /**
+     * 鼠标上报（v1.3.15）：TUI（dsh-tui / vim / less）靠它把滚轮事件转成
+     * 「滚动自己的内容」。模式值：0 关闭、1=1000 点击、2=1002 拖动、3=1003 移动。
+     * 编码：1006 SGR（`ESC [ < b ; x ; y M`），否则回退 X10（`ESC [ M` + 3 字节）。
+     */
+    var mouseTrackingMode = 0
+        private set
+    var mouseSgrEncoding = false
+        private set
+    var mouseUtf8Encoding = false
+        private set
+
+    /** 应用是否请求了鼠标上报（任一模式） */
+    val mouseReporting: Boolean get() = mouseTrackingMode != 0
+
     private var originModeOn = false
     private var autoWrapOn = true
     private var insertModeOn = false
@@ -857,10 +872,15 @@ class TerminalEmulator(initialRows: Int, initialCols: Int) {
                     restoreCursor()
                 }
             }
-            // 鼠标上报暂不支持：1000 点击 / 1002 拖动 / 1003 移动 /
-            // 1005 UTF-8 / 1006 SGR / 1015 urxvt —— 安全忽略，
-            // 应用按「终端不支持鼠标」降级（vim 仍可键盘操作）。
-            1000, 1002, 1003, 1005, 1006, 1015 -> Unit
+            // 鼠标上报（v1.3.15）：TUI 的滚轮滚动依赖它。
+            // 1000/1002/1003 只记录模式，真正的上报由 TerminalView 在触摸滚动时发出；
+            // 1005（UTF-8 坐标）/1015（urxvt）本实现不编码，仅记录以免误报支持。
+            1000 -> mouseTrackingMode = if (enabled) 1 else 0
+            1002 -> mouseTrackingMode = if (enabled) 2 else 0
+            1003 -> mouseTrackingMode = if (enabled) 3 else 0
+            1005 -> mouseUtf8Encoding = enabled
+            1006 -> mouseSgrEncoding = enabled
+            1015 -> Unit
             2004 -> bracketedPasteOn = enabled
             else -> Unit
         }
