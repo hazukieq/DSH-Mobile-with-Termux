@@ -755,18 +755,70 @@ function createMobileUi() {
       }
     }
     if (closed) {
-      /* Do nothing else: the shipped layout decides what happens to the pane
-       * when the last live tab goes away. Re-opening it here caused a visible
-       * close-then-open flicker, which is exactly what the user disliked.
-       * Only keep our own presentation flag in sync so the next toggle matches
-       * the DOM (no animation, no re-open). */
-      window.setTimeout(function () {
-        if (!rightPaneHasTabs()) setPaneOpen(false)
-      }, 250)
+      /* The pane must stay open: the shipped layout collapses the column when
+       * the active tab closes, so hold our presentation for a short window and
+       * flip it back inside the same frame (no close/open animation). */
+      holdPaneOpen(900)
       try {
-        console.warn('[dsh-mobile-ui] closed exited terminal tab ' + tabId)
+        console.warn('[dsh-mobile-ui] closed exited terminal tab ' + tabId + '; pane held open')
       } catch (ignored) {}
     }
+  }
+
+  /**
+   * Re-present the pane on the guide tab without a visible collapse.
+   *
+   * Closing the active tab makes the shipped layout collapse the right column
+   * (the remaining guide tab does not keep it shown). Waiting a few hundred ms
+   * before re-opening was clearly visible as "sidebar closes then opens again",
+   * so do it synchronously from a MutationObserver on the frame: the collapse
+   * attribute changes and we flip it back inside the same rendering opportunity.
+   */
+  function redoGuidePresentation() {
+    setPaneOpen(true)
+    var layout = layoutService()
+    if (layout && typeof layout.openRightbar === 'function') {
+      try {
+        layout.openRightbar('guide', true)
+      } catch (error) {
+        /* our own attribute already presents the pane */
+      }
+    }
+    var right = rightPaneService()
+    if (right && typeof right.openTab === 'function') {
+      try {
+        right.openTab('guide', {})
+      } catch (error) {
+        /* leaving the remaining tabs alone is fine */
+      }
+    }
+  }
+
+  /** Keep the pane presented for a short while (no animation, same-frame fix). */
+  function holdPaneOpen(ms) {
+    var frameEl = frame()
+    var deadline = Date.now() + ms
+    var fix = function () {
+      if (Date.now() > deadline) return
+      if (!rightPaneOpen()) redoGuidePresentation()
+    }
+    var observer = null
+    if (frameEl !== null && typeof MutationObserver === 'function') {
+      observer = new MutationObserver(fix)
+      try {
+        observer.observe(frameEl, {
+          attributes: true,
+          attributeFilter: ['data-rightbar-collapsed', 'data-rightbar-fullscreen', 'style']
+        })
+      } catch (error) {
+        observer = null
+      }
+    }
+    var timer = window.setInterval(fix, 30)
+    window.setTimeout(function () {
+      if (observer !== null) observer.disconnect()
+      window.clearInterval(timer)
+    }, ms)
   }
 
   /**
