@@ -1,4 +1,4 @@
-# ~/.zshrc - DSH Mobile default config (v2)
+# ~/.zshrc - DSH Mobile default config (v3)
 # Managed by the app: this file is rewritten only while the version marker above
 # is present. Delete/change that marker line to keep your own edits forever.
 # Deliberately Termux-only: no PC aliases (nvm/pyenv/proxy/gcloud/texlive/...).
@@ -39,3 +39,8 @@ PROMPT='%F{cyan}%n%f@%F{green}%m%f:%F{blue}%~%f$ '
 RPROMPT='%(?..%F{red}[%?]%f)'
 
 export EDITOR=vi
+
+# ---- 语法高亮（红=无效命令/拼写错误，绿=有效命令，青=路径；须放最后）----
+if [ -f ~/.dsh-mobile/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]; then
+  source ~/.dsh-mobile/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi

@@ -22,9 +22,11 @@ object TermuxDotfiles {
     private const val PLUGIN_ASSET = "termux/zsh-autosuggestions.zsh"
     private const val PLUGIN_DIR = ".dsh-mobile"
     private const val PLUGIN_FILE = "zsh-autosuggestions.zsh"
+    private const val HIGHLIGHT_ASSET_DIR = "termux/zsh-syntax-highlighting"
+    private const val HIGHLIGHT_DIR = "zsh-syntax-highlighting"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     fun ensure(ctx: Context) {
         val body = runCatching {
@@ -53,6 +55,22 @@ object TermuxDotfiles {
                         Log.i(TAG, "zsh-autosuggestions deployed at ${pf.absolutePath}")
                     }
                 }
+                // 语法高亮（v3）：整棵目录同步（脚本 + highlighters/*），内容比对后按需写
+                val hlDst = File(home, PLUGIN_DIR + "/" + HIGHLIGHT_DIR)
+                deployAssetTree(ctx, HIGHLIGHT_ASSET_DIR, hlDst)
+                // AssetManager.list() 不返回以 "." 开头的文件（实测漏了版本元数据），
+                // 这两个插件版本文件需要按名显式部署，否则 zsh 启动会报找不到文件。
+                listOf("version.txt" to ".version", "revision-hash.txt" to ".revision-hash").forEach { (assetName, name) ->
+                    runCatching {
+                        val bytes = ctx.assets.open("$HIGHLIGHT_ASSET_DIR/$assetName").use { it.readBytes() }
+                        val dst = File(hlDst, name)
+                        if (!dst.isFile || !dst.readBytes().contentEquals(bytes)) {
+                            hlDst.mkdirs()
+                            dst.writeBytes(bytes)
+                            Log.i(TAG, "zsh-syntax-highlighting metadata deployed: $name")
+                        }
+                    }.onFailure { Log.w(TAG, "deploy $name failed: ${it.message}") }
+                }
                 val dst = File(home, FILE_NAME)
                 val existing = if (dst.isFile) dst.readText() else null
                 when {
@@ -70,6 +88,26 @@ object TermuxDotfiles {
                     }
                 }
             }.onFailure { Log.w(TAG, "deploy zshrc failed: ${it.message}") }
+        }
+    }
+
+    /** 把 assets 里的一棵目录树同步到 dst（内容一致则跳过；目录较浅，成本可忽略）。 */
+    private fun deployAssetTree(ctx: Context, assetDir: String, dstDir: File) {
+        val children = runCatching { ctx.assets.list(assetDir) }.getOrNull() ?: return
+        dstDir.mkdirs()
+        children.forEach { child ->
+            val childAsset = "$assetDir/$child"
+            val childChildren = runCatching { ctx.assets.list(childAsset) }.getOrNull().orEmpty()
+            if (childChildren.isEmpty()) {
+                // 叶子文件
+                val bytes = runCatching { ctx.assets.open(childAsset).use { it.readBytes() } }.getOrNull()
+                if (bytes != null) {
+                    val dst = File(dstDir, child)
+                    if (!dst.isFile || !dst.readBytes().contentEquals(bytes)) dst.writeBytes(bytes)
+                }
+            } else {
+                deployAssetTree(ctx, childAsset, File(dstDir, child))
+            }
         }
     }
 }

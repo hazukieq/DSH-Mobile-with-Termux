@@ -57,6 +57,19 @@ object ShellProfiles {
         if (engineEnv.none { it.startsWith("LD_LIBRARY_PATH=") }) {
             extra += "LD_LIBRARY_PATH=" + File(root, "lib").absolutePath
         }
+        // 默认 shell（v1.3.10）：装了 zsh 就用 zsh（自带 zshrc：联想/纠错/语法高亮），
+        // 没装则照旧回落 bash —— 不强制用户安装。
+        val zsh = File(EngineConfig.engineRoot(ctx), "bin/zsh")
+        if (zsh.isFile && zsh.canExecute()) {
+            return ShellSpec(
+                cmd = zsh.absolutePath,
+                args = listOf("-i"),
+                cwd = cwd,
+                env = engineEnv + extra,
+                title = "Android (zsh)",
+                kind = ShellSpec.Kind.ANDROID,
+            )
+        }
         val spec = if (bash.isFile && bash.canExecute()) {
             ShellSpec(
                 cmd = bash.absolutePath,
