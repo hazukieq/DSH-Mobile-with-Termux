@@ -755,12 +755,33 @@ function createMobileUi() {
       }
     }
     if (closed) {
+      /* Keep the pane on screen and land on the guide ("开始") page: closing the
+       * last live tab makes the shipped layout collapse the column, which felt
+       * like the panel vanished. Re-open it and focus guide instead. */
       window.setTimeout(function () {
-        if (!rightPaneHasTabs()) setPaneOpen(false)
+        if (!rightPaneOpen()) {
+          setPaneOpen(true)
+          var layout = layoutService()
+          if (layout && typeof layout.openRightbar === 'function') {
+            try {
+              layout.openRightbar('guide', true)
+            } catch (error) {
+              /* presentation still works through our own attribute */
+            }
+          }
+        }
+        var right = rightPaneService()
+        if (right && typeof right.openTab === 'function') {
+          try {
+            right.openTab('guide', {})
+          } catch (error) {
+            /* the remaining tab is still usable */
+          }
+        }
+        try {
+          console.warn('[dsh-mobile-ui] closed exited terminal tab ' + tabId + ', staying on guide')
+        } catch (ignored) {}
       }, 350)
-      try {
-        console.warn('[dsh-mobile-ui] closed exited terminal tab ' + tabId)
-      } catch (ignored) {}
     }
   }
 
