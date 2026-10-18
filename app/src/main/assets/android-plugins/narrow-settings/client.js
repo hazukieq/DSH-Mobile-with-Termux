@@ -219,22 +219,16 @@ window.__ModuleLoader__.load({
      * @returns {{panel: Element, nav: Element, content: Element} | null}
      */
     function findPanel() {
-      // ① 首选：引擎自标的对话框语义
-      var dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
-      for (var i = 0; i < dialogs.length; i++) {
-        var hit = structureOf(dialogs[i]);
-        if (hit) return hit;
-      }
-      // ② 退路：浮层内、含关闭按钮、有 nav 语义标签
-      var candidates = document.querySelectorAll("div, section, aside");
-      for (var j = 0; j < candidates.length; j++) {
-        var el = candidates[j];
-        if (!isInOverlay(el)) continue;
-        if (!hasCloseButton(el)) continue;
-        var fallback = structureOf(el);
-        if (fallback) return fallback;
-      }
-      return null;
+      // 只认引擎自己打的标记：设置面板根元素带 data-shortcut-modal="settings"。
+      //
+      // ⚠️ 2026-10-19 真机事故：以前用「[role=dialog][aria-modal] + 内含 nav/按钮」
+      // 结构启发式，结果把账号插件的「Get started」欢迎弹窗（header 关闭按钮 +
+      // 两个操作按钮 = 3 个 button）误判成设置面板：把弹窗根标成 panel、遮罩标成
+      // content、**卡片**标成 nav → 卡片被套上 nav 的 flex-row/padding/overflow 样式，
+      // 文字被裁、按钮跑到卡片外。属性标记是引擎唯一稳定判据，别再用启发式兜底。
+      var panel = document.querySelector('[data-shortcut-modal="settings"]');
+      if (!panel) return null;
+      return structureOf(panel);
     }
 
     /**
