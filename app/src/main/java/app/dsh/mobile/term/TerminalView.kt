@@ -1,6 +1,7 @@
 package app.dsh.mobile.term
 
 import android.content.Context
+import android.os.SystemClock
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -503,6 +504,10 @@ class TerminalView @JvmOverloads constructor(
     private var lastY = 0f
     private var lastX = 0f
     private var wheelAccum = 0f
+    private var lastWheelAt = 0L
+    /** 手指位移多少「行」才发一个滚轮事件（越大越慢） */
+    private val WHEEL_ROWS_PER_EVENT = 4f
+    private val WHEEL_MIN_INTERVAL_MS = 70L
     private var dragAccum = 0f
     private var dragging = false
 
@@ -534,11 +539,23 @@ class TerminalView @JvmOverloads constructor(
                         // TUI（dsh-tui / vim / less）没有 scrollback：把手势折算成
                         // 滚轮事件交给应用自己滚动（SGR 1006 或 X10 兜底）。
                         // 自然滚动：手指下滑 = 看更早的内容 = wheel up。
+                        // 滚动速度（v1.3.16）：TUI 一般「1 个滚轮事件 = 3 行」，
+                        // 若按每行手指位移发一次，一次快滑就会飞出几十行（用户实测
+                        // 「完全看不到了」）。改为每 3 行手指位移发 1 个事件，并做
+                        // 50ms 节流，保证拖动跟手但不至于瞬移。
                         wheelAccum += dy
-                        val steps = (wheelAccum / cellHeight).toInt()
-                        if (steps != 0) {
-                            repeat(abs(steps)) { sendMouseWheel(up = steps > 0) }
-                            wheelAccum -= steps * cellHeight
+                        val threshold = cellHeight * WHEEL_ROWS_PER_EVENT
+                        if (abs(wheelAccum) >= threshold) {
+                            val now = SystemClock.uptimeMillis()
+                            if (now - lastWheelAt >= WHEEL_MIN_INTERVAL_MS) {
+                                sendMouseWheel(up = wheelAccum < 0f)
+                                wheelAccum = 0f
+                                lastWheelAt = now
+                            }
+                        } else if (wheelAccum > threshold * 3) {
+                            wheelAccum = threshold * 3
+                        } else if (wheelAccum < -threshold * 3) {
+                            wheelAccum = -threshold * 3
                         }
                     } else {
                         dragAccum += dy
