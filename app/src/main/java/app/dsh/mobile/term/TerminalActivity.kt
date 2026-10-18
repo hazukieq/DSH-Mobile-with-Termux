@@ -111,10 +111,9 @@ class TerminalActivity : Activity() {
         }
         session.onUpdate = { s -> runOnUiThread { if (active === s) syncTitle() } }
         session.onExited = { s ->
-            runOnUiThread {
-                updateTabs()
-                if (active === s) syncTitle()
-            }
+            // 终端进程结束（exit / Ctrl-D / 崩溃）：自动关掉对应 tab；
+            // 关掉最后一个 tab 时询问是否退出 App（v1.3.12）。
+            runOnUiThread { closeSession(s, byExit = true) }
         }
         session.emulator.onTitle = { t -> runOnUiThread { if (active === session) tvTitle.text = t } }
         sessions += session
@@ -173,16 +172,36 @@ class TerminalActivity : Activity() {
         tabStrip.post { tabScroll.smoothScrollTo(maxOf(0, tabStrip.width - tabScroll.width), 0) }
     }
 
-    private fun closeSession(s: TerminalSession) {
+    private fun closeSession(s: TerminalSession, byExit: Boolean = false) {
+        // 先出列表再 close：避免 close() 触发的 onExited 再次进来重复处理
+        if (!sessions.remove(s)) return
         runCatching { s.close() }
-        sessions.remove(s)
         if (active === s) {
             active = null
             val next = sessions.lastOrNull()
-            if (next != null) attach(next) else finish()
+            if (next != null) attach(next) else if (byExit) promptExitAfterLastSession() else finish()
         } else {
             updateTabs()
         }
+    }
+
+    /**
+     * 最后一个终端因 exit 结束后：问用户是否退出 App。
+     *  - 退出 App：结束终端页并清空任务栈（引擎前台服务按既有设计继续在后台跑）
+     *  - 新建终端：立刻开一个同样 profile 的新会话，避免停在空白页
+     */
+    private fun promptExitAfterLastSession() {
+        val lastProfile = prefs.getString(KEY_LAST_PROFILE, ShellProfiles.ID_ANDROID) ?: ShellProfiles.ID_ANDROID
+        AlertDialog.Builder(this)
+            .setTitle(R.string.terminal_exit_confirm_title)
+            .setMessage(R.string.terminal_exit_confirm_message)
+            .setCancelable(false)
+            .setPositiveButton(R.string.terminal_exit_confirm_exit) { _, _ ->
+                closeAllAndFinish()
+                finishAffinity()
+            }
+            .setNegativeButton(R.string.terminal_exit_confirm_new) { _, _ -> openSession(lastProfile) }
+            .show()
     }
 
     private fun confirmClose(s: TerminalSession) {

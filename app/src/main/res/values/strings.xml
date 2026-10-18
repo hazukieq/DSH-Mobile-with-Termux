@@ -505,4 +505,8 @@ engine: %6$s</string>
     <string name="user_prompt_path">Stored in the user section of AGENTS.md (app-managed file, your text is never overwritten)</string>
     <string name="error_runtime_arch_mismatch">This build contains a runtime for a different CPU architecture and cannot run on this device. Please install the correct APK (arm64-v8a for phones).</string>
     <string name="status_plugin_recovered">Recovered: disabled broken plugin %1$s · engine ready</string>
+    <string name="terminal_exit_confirm_title">Terminal closed</string>
+    <string name="terminal_exit_confirm_message">No terminal tabs left. Exit the app?</string>
+    <string name="terminal_exit_confirm_exit">Exit app</string>
+    <string name="terminal_exit_confirm_new">New terminal</string>
 </resources>

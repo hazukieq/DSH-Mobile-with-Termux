@@ -505,4 +505,8 @@ dsh：%2$s
     <string name="user_prompt_path">保存在 AGENTS.md 的用户段（由应用管理，你的内容永不被覆盖）</string>
     <string name="error_runtime_arch_mismatch">这个安装包内置的运行环境与设备 CPU 架构不匹配，无法在本机运行。请安装对应架构的安装包（手机请选 arm64-v8a）。</string>
     <string name="status_plugin_recovered">已恢复：已停用故障插件 %1$s · 引擎已就绪</string>
+    <string name="terminal_exit_confirm_title">终端已结束</string>
+    <string name="terminal_exit_confirm_message">没有其他终端标签了，要退出 App 吗？</string>
+    <string name="terminal_exit_confirm_exit">退出 App</string>
+    <string name="terminal_exit_confirm_new">新建终端</string>
 </resources>
