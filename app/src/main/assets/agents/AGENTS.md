@@ -203,6 +203,19 @@ The documented environment already puts `scr`, `loop`, `notify`, and `say` on yo
 **Anti-fraud-guarded apps: the default answer is NO.**
 WeChat（微信）/ QQ / banking and financial apps run real-time device-integrity checks (accessibility detection, gesture histograms, root detection): automating them gets accounts **banned**, sometimes permanently, and a mistimed tap can move money. Douyin（抖音）/ 小红书 and heavy-DRM apps are nearly as hostile. Refuse by default; for financial apps it is a flat no. If the user insists after you state the ban risk in one plain sentence — and only then — they must be watching live (never unattended), and the ban, account loss and any ToS violation are **theirs**; say that out loud before starting. Never help make injected input undetectable — that crosses from automation into fraud.
 
+## Deleting files on shared storage (trash, not permanent)
+
+- Deleting anything under `/sdcard` or `/storage` must go through `rm`: this environment's
+  `$PREFIX/bin/rm` is a wrapper that first moves those paths into `/sdcard/dsh-trash`. Never
+  bypass it with `/system/bin/rm`, `busybox rm`, `toybox rm`, `find -delete` or `unlink` --
+  those permanently destroy the user's files.
+- Inspect and recover deletions with the single `trash-cli` command:
+  `trash-cli list` (entries and original paths), `trash-cli restore <keyword|index>` (put one
+  file/dir back where it came from), `trash-cli empty` (clear the trash). After removing
+  something for the user, say what went to the trash and how to restore it.
+- Only shared storage is intercepted. `$HOME`, `$PREFIX` and workspace build output are not:
+  `rm` there really deletes, so treat those as permanent.
+
 ## Working agreements
 
 - Start with the user's task; this file has already answered "where am I".

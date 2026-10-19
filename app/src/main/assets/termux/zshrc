@@ -1,4 +1,4 @@
-# ~/.zshrc - DSH Mobile default config (v6)
+# ~/.zshrc - DSH Mobile default config (v7)
 # Managed by the app: this file is rewritten only while the version marker above
 # is present. Delete/change that marker line to keep your own edits forever.
 # Deliberately Termux-only: no PC aliases (nvm/pyenv/proxy/gcloud/texlive/...).
@@ -30,92 +30,6 @@ alias vi='vim'
 alias ..='cd ..'
 alias ...='cd ../..'
 
-
-# ---- /sdcard 回收站（v5）-------------------------------------------------
-# 只拦共享存储上的 rm：/sdcard、/storage 里的文件不直接删，而是移到
-# /sdcard/dsh-trash/<时间戳>/ 并登记原路径，可 restore 回去（文件管理器可见）。
-# App 内部目录（$HOME、$PREFIX 等）保持原来的「真删」，脚本行为不受影响。
-DSH_TRASH="${DSH_TRASH:-/sdcard/dsh-trash}"
-
-_trash_targets_are_shared() {
-  local a abs
-  local shared=0
-  for a in "$@"; do
-    case "$a" in
-      -*) continue ;;
-    esac
-    abs="$(readlink -f -- "$a" 2>/dev/null)"
-    [ -n "$abs" ] || abs="$PWD/$a"
-    case "$abs" in
-      /sdcard/*|/storage/*) shared=1 ;;
-      *) return 1 ;;
-    esac
-  done
-  return $(( shared == 1 ? 0 : 1 ))
-}
-
-_trash_put() {
-  local stamp dir manifest
-  stamp="$(date +%Y%m%d-%H%M%S)"
-  dir="$DSH_TRASH/$stamp-$$"
-  manifest="$DSH_TRASH/index.tsv"
-  mkdir -p "$dir/files" "$DSH_TRASH" 2>/dev/null || return 1
-  local a abs name target moved=0 failed=0
-  for a in "$@"; do
-    case "$a" in -*) continue ;; esac
-    [ -e "$a" ] || { echo "rm: cannot remove '$a': No such file or directory" >&2; failed=1; continue; }
-    abs="$(readlink -f -- "$a" 2>/dev/null || echo "$a")"
-    name="$(basename -- "$abs")"
-    target="$dir/files/$name"
-    if mv -f -- "$abs" "$target" 2>/dev/null; then
-      printf '%s\t%s\t%s\n' "$stamp" "$abs" "$target" >> "$manifest"
-      moved=1
-    else
-      echo "rm: cannot move '$abs' to trash; left untouched" >&2
-      failed=1
-    fi
-  done
-  [ "$moved" = 1 ] && echo "  -> moved to $dir (trash-list / trash-restore / trash-empty)"
-  return $failed
-}
-
-trash-list() {
-  [ -f "$DSH_TRASH/index.tsv" ] || { echo "trash is empty"; return 0; }
-  awk -F'\t' '{ printf "%3d  %s  (from %s)\n", NR, $3, $2 }' "$DSH_TRASH/index.tsv"
-}
-
-trash-restore() {
-  local manifest="$DSH_TRASH/index.tsv" match="${1:-}"
-  [ -f "$manifest" ] || { echo "trash is empty"; return 1; }
-  if [ -z "$match" ]; then
-    echo "usage: trash-restore <path keyword or index>"; trash-list; return 1
-  fi
-  local line orig stored
-  if [[ "$match" == <-> ]]; then
-    line="$(sed -n "${match}p" "$manifest")"
-  else
-    line="$(grep -F -- "$match" "$manifest" | tail -1)"
-  fi
-  [ -n "$line" ] || { echo "no matching trash entry"; return 1; }
-  stored="$(printf '%s' "$line" | cut -f3)"
-  orig="$(printf '%s' "$line" | cut -f2)"
-  [ -e "$stored" ] || { echo "trash entry missing: $stored"; return 1; }
-  mkdir -p "$(dirname -- "$orig")" 2>/dev/null
-  if mv -f -- "$stored" "$orig"; then
-    grep -vF -- "$stored" "$manifest" > "$manifest.tmp" 2>/dev/null && mv "$manifest.tmp" "$manifest"
-    echo "restored: $orig"
-  else
-    echo "restore failed: $orig" >&2
-  fi
-}
-
-trash-empty() {
-  local manifest="$DSH_TRASH/index.tsv"
-  [ -d "$DSH_TRASH" ] || { echo "trash is empty"; return 0; }
-  find "$DSH_TRASH" -mindepth 1 -maxdepth 1 ! -name 'index.tsv' -exec /system/bin/rm -rf -- {} +
-  : > "$manifest" 2>/dev/null
-  echo "trash emptied"
-}
 
 # prompt: user@host:cwd
 PROMPT='%F{cyan}%n%f@%F{green}%m%f:%F{blue}%~%f$ '

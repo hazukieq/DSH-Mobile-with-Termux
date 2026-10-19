@@ -54,5 +54,5 @@ for a in "$@"; do
   fi
 done
 
-[ "$moved" -gt 0 ] && echo "  -> moved $moved item(s) to $dir (trash-list / trash-restore / trash-empty)" >&2
+[ "$moved" -gt 0 ] && echo "  -> moved $moved item(s) to $dir (run: trash-cli list / restore <keyword|index> / empty)" >&2
 exit $failed

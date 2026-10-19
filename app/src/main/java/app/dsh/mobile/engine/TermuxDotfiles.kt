@@ -26,9 +26,11 @@ object TermuxDotfiles {
     private const val HIGHLIGHT_DIR = "zsh-syntax-highlighting"
     private const val RM_ASSET = "termux/rm-trash.sh"
     private const val RM_MARKER = "DSH Mobile rm wrapper"
+    private const val TRASH_CLI_ASSET = "termux/trash-cli.sh"
+    private const val TRASH_CLI_MARKER = "DSH Mobile trash-cli"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 6
+    private const val VERSION = 7
 
     fun ensure(ctx: Context) {
         val body = runCatching {
@@ -92,6 +94,34 @@ object TermuxDotfiles {
             }.onFailure { Log.w(TAG, "deploy zshrc failed: ${it.message}") }
         }
         deployRmWrapper(ctx)
+        deployTrashCli(ctx)
+    }
+
+    /**
+     * 部署 `$PREFIX/bin/trash-cli`（v1.3.19）：回收站的统一恢复入口。
+     * 有子命令 list / restore <关键字|序号> / empty；Agent 与人都用这一条命令，
+     * 不再散落 trash-list / trash-restore / trash-empty 三个函数。
+     */
+    private fun deployTrashCli(ctx: Context) {
+        runCatching {
+            val root = EngineConfig.engineRoot(ctx)
+            val script = ctx.assets.open(TRASH_CLI_ASSET).use { it.readBytes() }
+            val dst = File(root, "bin/trash-cli")
+            val isLink = runCatching { java.nio.file.Files.isSymbolicLink(dst.toPath()) }.getOrDefault(false)
+            if (!isLink && dst.isFile) {
+                val text = runCatching { dst.readText() }.getOrNull()
+                if (text != null && text.contains(TRASH_CLI_MARKER) && dst.readBytes().contentEquals(script)) return
+                if (text != null && !text.contains(TRASH_CLI_MARKER)) {
+                    Log.w(TAG, "bin/trash-cli exists and is not ours; leaving it alone")
+                    return
+                }
+            }
+            if (dst.exists() || isLink) dst.delete()
+            dst.parentFile?.mkdirs()
+            dst.writeBytes(script)
+            dst.setExecutable(true, false)
+            Log.i(TAG, "trash-cli deployed at ${dst.absolutePath}")
+        }.onFailure { Log.w(TAG, "deploy trash-cli failed: ${it.message}") }
     }
 
     /**
