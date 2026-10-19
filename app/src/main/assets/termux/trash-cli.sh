@@ -23,8 +23,19 @@ case "$1" in
     match="$2"
     if [ -z "$match" ]; then usage; exit 1; fi
     case "$match" in
-      *[!0-9]*) line=$(grep -F -- "$match" "$INDEX" | tail -1) ;;
-      *)        line=$(awk -F'\t' -v n="$match" 'NR==n' "$INDEX") ;;
+      *[!0-9]*)
+        line=$(grep -F -- "$match" "$INDEX" | tail -1)
+        # /sdcard 与 /storage/emulated/0 是同一位置的两种写法：互相兜底匹配
+        if [ -z "$line" ]; then
+          alt=""
+          case "$match" in
+            /sdcard/*) alt="/storage/emulated/0/${match#/sdcard/}" ;;
+            /storage/emulated/0/*) alt="/sdcard/${match#/storage/emulated/0/}" ;;
+          esac
+          [ -n "$alt" ] && line=$(grep -F -- "$alt" "$INDEX" | tail -1)
+        fi
+        ;;
+      *) line=$(awk -F'\t' -v n="$match" 'NR==n' "$INDEX") ;;
     esac
     if [ -z "$line" ]; then echo "no matching trash entry"; exit 1; fi
     stored=$(printf '%s\n' "$line" | cut -f3)
@@ -32,7 +43,10 @@ case "$1" in
     if [ ! -e "$stored" ]; then echo "trash entry missing: $stored"; exit 1; fi
     /system/bin/mkdir -p "$(dirname -- "$orig")" 2>/dev/null
     if /system/bin/mv -f -- "$stored" "$orig"; then
-      grep -vF -- "$stored" "$INDEX" > "$INDEX.tmp" 2>/dev/null && /system/bin/mv -f "$INDEX.tmp" "$INDEX"
+      # 用 awk 精确删掉该行的 stored 字段：grep -vF 在「只剩最后一条」时返回 1，
+      # 旧的 && 链会跳过 mv，索引里留下幽灵行（v1.3.20 修复）。
+      /system/bin/awk -F'\t' -v s="$stored" '$3 != s' "$INDEX" > "$INDEX.tmp" 2>/dev/null
+      /system/bin/mv -f "$INDEX.tmp" "$INDEX" 2>/dev/null
       echo "restored: $orig"
     else
       echo "restore failed: $orig" >&2

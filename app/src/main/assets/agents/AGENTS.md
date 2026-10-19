@@ -215,6 +215,8 @@ WeChat（微信）/ QQ / banking and financial apps run real-time device-integri
   something for the user, say what went to the trash and how to restore it.
 - Only shared storage is intercepted. `$HOME`, `$PREFIX` and workspace build output are not:
   `rm` there really deletes, so treat those as permanent.
+- One `rm` may mix both kinds of path: the shared-storage targets go to the trash and the
+  rest are deleted for real, so do not assume a mixed command behaved uniformly.
 
 ## Working agreements
 
