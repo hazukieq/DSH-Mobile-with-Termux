@@ -1,4 +1,4 @@
-# ~/.zshrc - DSH Mobile default config (v5)
+# ~/.zshrc - DSH Mobile default config (v6)
 # Managed by the app: this file is rewritten only while the version marker above
 # is present. Delete/change that marker line to keep your own edits forever.
 # Deliberately Termux-only: no PC aliases (nvm/pyenv/proxy/gcloud/texlive/...).
@@ -77,15 +77,6 @@ _trash_put() {
   done
   [ "$moved" = 1 ] && echo "  -> moved to $dir (trash-list / trash-restore / trash-empty)"
   return $failed
-}
-
-rm() {
-  # 只有「全部目标都在共享存储」时才进回收站；混合/内部路径一律交还给真 rm
-  if _trash_targets_are_shared "$@"; then
-    _trash_put "$@"
-  else
-    /system/bin/rm -rf -- "$@"
-  fi
 }
 
 trash-list() {

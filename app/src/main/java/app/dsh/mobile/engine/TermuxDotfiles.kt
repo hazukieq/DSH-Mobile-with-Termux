@@ -24,9 +24,11 @@ object TermuxDotfiles {
     private const val PLUGIN_FILE = "zsh-autosuggestions.zsh"
     private const val HIGHLIGHT_ASSET_DIR = "termux/zsh-syntax-highlighting"
     private const val HIGHLIGHT_DIR = "zsh-syntax-highlighting"
+    private const val RM_ASSET = "termux/rm-trash.sh"
+    private const val RM_MARKER = "DSH Mobile rm wrapper"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 5
+    private const val VERSION = 6
 
     fun ensure(ctx: Context) {
         val body = runCatching {
@@ -89,6 +91,43 @@ object TermuxDotfiles {
                 }
             }.onFailure { Log.w(TAG, "deploy zshrc failed: ${it.message}") }
         }
+        deployRmWrapper(ctx)
+    }
+
+    /**
+     * 底层 rm 拦截（v1.3.18）：把 `$PREFIX/bin/rm` 换成脚本 wrapper。
+     *
+     * 为什么不用 zsh 函数：那只覆盖交互式 zsh，Agent 的 bash 工具、脚本、其它 shell
+     * 都绕过去了。放进 PATH 最前面的 bin 目录，凡是 `rm` 都会经过 wrapper：
+     *  - 目标全部在 /sdcard、/storage → 移入 /sdcard/dsh-trash，可恢复；
+     *  - 其它路径 → exec /system/bin/rm，保持原有语义。
+     *
+     * 注意 bin/rm 原本是 bootstrap 里指向 toybox 的符号链接：必须先删除再写文件，
+     * 否则写操作会穿透到 toybox 二进制本体。
+     */
+    private fun deployRmWrapper(ctx: Context) {
+        runCatching {
+            val root = EngineConfig.engineRoot(ctx)
+            val script = ctx.assets.open(RM_ASSET).use { it.readBytes() }
+            val dst = File(root, "bin/rm")
+            val isLink = runCatching { java.nio.file.Files.isSymbolicLink(dst.toPath()) }.getOrDefault(false)
+            if (!isLink && dst.isFile) {
+                val text = runCatching { dst.readText() }.getOrNull()
+                if (text != null && text.contains(RM_MARKER) && text.toByteArray().contentEquals(script)) {
+                    return
+                }
+                if (text != null && !text.contains(RM_MARKER)) {
+                    // 已有用户/上游的 rm（真二进制/其它 wrapper）：不覆盖，记日志
+                    Log.w(TAG, "bin/rm exists and is not ours; leaving it alone")
+                    return
+                }
+            }
+            if (dst.exists() || isLink) dst.delete()
+            dst.parentFile?.mkdirs()
+            dst.writeBytes(script)
+            dst.setExecutable(true, false)
+            Log.i(TAG, "rm wrapper deployed at ${dst.absolutePath}")
+        }.onFailure { Log.w(TAG, "deploy rm wrapper failed: ${it.message}") }
     }
 
     /** 把 assets 里的一棵目录树同步到 dst（内容一致则跳过；目录较浅，成本可忽略）。 */
