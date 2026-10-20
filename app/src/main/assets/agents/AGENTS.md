@@ -218,6 +218,40 @@ WeChat（微信）/ QQ / banking and financial apps run real-time device-integri
 - One `rm` may mix both kinds of path: the shared-storage targets go to the trash and the
   rest are deleted for real, so do not assume a mixed command behaved uniformly.
 
+## This app: internals and native capabilities
+
+You are inside **DSH Mobile** (`com.termux`): the dsh engine plus a Termux userland in one
+APK. The full reference ships at `$DSH_HOME/DSH-MOBILE.md` — read it (`dsh-mobile doc`)
+before deep app work. Quick map:
+
+- `$PREFIX` = `<files>/usr` (Termux bootstrap; adapted engine at
+  `$PREFIX/lib/node_modules/@deepseek-ai/dsh`). `$DSH_HOME` = `<files>/dsh-home`
+  (profiles, sessions, workspaces, AGENTS.md).
+- Native gates already on PATH: `notify`, `scr` (dump/tap/tap-text), `say`, `psx`, `killx`,
+  `loop`, `fast`, `linux`, `dsh-update`, `trash-cli`.
+- The rest of the native API (61 endpoints: screen, screenshot, gesture, key, input, launch,
+  launch-intent, ocr, vision, memory, notif, plugin list/install, diag, pty, runtime) lives on
+  `127.0.0.1:3083` and is reachable as
+  `dsh-mobile bridge <GET|POST> <path> [json]` (it handles the bridge token). Never hand-roll
+  an Android intent or a shell workaround when the bridge already exposes the capability.
+
+## Debugging the Web UI over CDP - mandatory
+
+Never guess WebUI DOM/CSS from screenshots. The WebView is debuggable only while the flag
+file exists; drive the real page:
+
+1. `dsh-mobile cdp on` - then ask the user to reopen the app (the flag is read at process
+   start; force-stopping also kills the engine you are running in).
+2. `nohup dsh-mobile cdp serve 9222 >/tmp/cdp.log 2>&1 &` - bridges the WebView's abstract
+   devtools socket to `127.0.0.1:9222`; `dsh-mobile cdp status` shows the socket and targets.
+3. Inspect and drive it: `curl -s 127.0.0.1:9222/json/list`,
+   `dsh-mobile cdp eval 'document.title'`, `dsh-mobile cdp reload`. From the host you can
+   instead `adb forward tcp:9222 localabstract:webview_devtools_remote_<app pid>` and use
+   Playwright `connect_over_cdp("http://127.0.0.1:9222")` for real clicks and screenshots.
+4. `dsh-mobile cdp off` when finished (restart to close the socket).
+
+Renderer console errors also appear in logcat under the `chromium` tag.
+
 ## Working agreements
 
 - Start with the user's task; this file has already answered "where am I".

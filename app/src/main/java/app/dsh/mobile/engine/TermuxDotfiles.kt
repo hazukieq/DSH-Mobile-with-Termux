@@ -28,9 +28,15 @@ object TermuxDotfiles {
     private const val RM_MARKER = "DSH Mobile rm wrapper"
     private const val TRASH_CLI_ASSET = "termux/trash-cli.sh"
     private const val TRASH_CLI_MARKER = "DSH Mobile trash-cli"
+    private const val APP_DOC_ASSET = "agents/DSH-MOBILE.md"
+    private const val APP_DOC_MARKER = "dsh-mobile app doc v"
+    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v1 "
+    private const val CDP_HELPER_ASSET = "termux/webview-cdp.mjs"
+    private const val CDP_WRAPPER_ASSET = "termux/dsh-mobile.sh"
+    private const val CDP_HELPER_MARKER = "DSH Mobile helper"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 7
+    private const val VERSION = 8
 
     fun ensure(ctx: Context) {
         val body = runCatching {
@@ -95,6 +101,59 @@ object TermuxDotfiles {
         }
         deployRmWrapper(ctx)
         deployTrashCli(ctx)
+        deployAppDoc(ctx)
+        deployCdpHelper(ctx)
+    }
+
+    /**
+     * App 自述文档（v1.3.22）：落到 `$DSH_HOME/DSH-MOBILE.md`，供 Agent 了解
+     * 本 App 的目录结构、原生能力（门脚本/AgentBridge）以及 WebView CDP 调试方法。
+     * 带 `dsh-mobile app doc vN` 标记；版本升级才覆盖（人工改动无标记则不碰）。
+     */
+    private fun deployAppDoc(ctx: Context) {
+        runCatching {
+            val home = EngineConfig.dshHome(ctx).apply { mkdirs() }
+            val dst = File(home, "DSH-MOBILE.md")
+            val body = ctx.assets.open(APP_DOC_ASSET).use { it.readBytes().toString(Charsets.UTF_8) }
+            val existing = runCatching { if (dst.isFile) dst.readText() else null }.getOrNull()
+            if (existing != null) {
+                // 不是我们生成的（用户自己写的说明）→ 不动
+                if (!existing.startsWith("<!-- " + APP_DOC_MARKER)) return
+                // 同一版本已部署 → 不动（避免每次启动重写）
+                if (existing.contains("<!-- " + APP_DOC_MARKER_VERSION)) return
+            }
+            dst.writeText(body)
+            Log.i(TAG, "app doc deployed at ${dst.absolutePath}")
+        }.onFailure { Log.w(TAG, "deploy app doc failed: ${it.message}") }
+    }
+
+    /**
+     * WebView CDP 桥 + AgentBridge 客户端（v1.3.22）：
+     *  - `$PREFIX/lib/dsh-mobile/webview-cdp.mjs`（纯 Node，无依赖）
+     *  - `$PREFIX/bin/dsh-mobile` 包装器
+     * 让 Agent 能在设备内直接开 WebView 调试、把 abstract devtools socket 桥到
+     * 127.0.0.1:9222、执行 Runtime.evaluate / Page.reload，并调用全部原生桥接口。
+     */
+    private fun deployCdpHelper(ctx: Context) {
+        runCatching {
+            val root = EngineConfig.engineRoot(ctx)
+            val node = File(root, "bin/node")
+            if (!node.isFile) { Log.w(TAG, "engine node missing; skip cdp helper"); return }
+            val libDir = File(root, "lib/dsh-mobile").apply { mkdirs() }
+            val scriptBytes = ctx.assets.open(CDP_HELPER_ASSET).use { it.readBytes() }
+            val script = File(libDir, "webview-cdp.mjs")
+            if (!script.isFile || !script.readBytes().contentEquals(scriptBytes)) {
+                script.writeBytes(scriptBytes)
+                script.setReadable(true, false)
+            }
+            val wrapperBytes = ctx.assets.open(CDP_WRAPPER_ASSET).use { it.readBytes() }
+            val wrapper = File(root, "bin/dsh-mobile")
+            if (!wrapper.isFile || !wrapper.readBytes().contentEquals(wrapperBytes)) {
+                wrapper.writeBytes(wrapperBytes)
+                wrapper.setExecutable(true, false)
+            }
+            Log.i(TAG, "cdp helper deployed (dsh-mobile + webview-cdp.mjs)")
+        }.onFailure { Log.w(TAG, "deploy cdp helper failed: ${it.message}") }
     }
 
     /**
