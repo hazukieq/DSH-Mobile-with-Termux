@@ -37,53 +37,11 @@ object OpenWith {
     }
 
     /**
-     * 分享文本/链接（v1.3.44）：ACTION_SEND + text/plain + chooser。
-     * 用途：agent 把链接、摘要、生成内容“转发”给微信/QQ/邮件等其它 App。
-     */
-    fun shareText(ctx: Context, text: String, subject: String? = null): JSONObject {
-        android.util.Log.i("OpenWith", "shareText chars=${text.length}")
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
-            subject?.takeIf { it.isNotBlank() }?.let { putExtra(Intent.EXTRA_SUBJECT, it) }
-        }
-        return launchChooser(ctx, intent, "text")
-    }
-
-    /** 分享文件/文件夹（ACTION_SEND + EXTRA_STREAM），与 open 的 share 分支共用实现。 */
-    private fun launchChooser(ctx: Context, intent: Intent, kind: String): JSONObject {
-        val before = AppState.resumedActivityName()
-        return runCatching {
-            val chooser = Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            ctx.startActivity(chooser)
-            val deadline = System.currentTimeMillis() + 900
-            var left = false
-            while (System.currentTimeMillis() < deadline) {
-                if (AppState.resumedActivityName() == null) { left = true; break }
-                Thread.sleep(50)
-            }
-            android.util.Log.i("OpenWith", "share $kind launched leftApp=$left")
-            JSONObject()
-                .put("ok", true)
-                .put("opened", left)
-                .put("kind", kind)
-                .put("handoff", true)
-                .put("verify", "none")
-                .put("hint", if (left) "Share sheet opened. Hand-off complete." else "Share sheet did not come up (BAL or no handler); foreground the app and retry.")
-        }.getOrElse {
-            android.util.Log.w("OpenWith", "share failed: ${it.message}")
-            JSONObject().put("ok", false).put("error", "share failed: ${it.message}")
-        }
-    }
-
-    /**
      * 系统「文件」App（DocumentsUI）能不能显式打开某个目录。
      *
      * 用户要求「打开文件/显示位置 = 打开文件管理器去定位即可」，所以优先显式指定
      * DocumentsUI 的 FilesActivity（避免弹「用哪个应用打开」选择器）；机型没有
      * DocumentsUI 时再退回不带 component 的 VIEW。
-     * 参考 AOSP：com.android.documentsui.files.FilesActivity + ACTION_VIEW +
-     * document URI + vnd.android.document/directory 即定位到该目录。
      */
     private fun documentsUiComponent(ctx: Context): android.content.ComponentName? {
         val candidates = listOf(
@@ -98,13 +56,163 @@ object OpenWith {
         return null
     }
 
-    fun open(ctx: Context, path: String, kind: String = "file", mimeOverride: String? = null): JSONObject {
-        android.util.Log.i("OpenWith", "request kind=$kind path=$path")
+    /**
+     * 分享文本/链接（v1.3.44）：ACTION_SEND + text/plain + chooser。
+     * 用途：agent 把链接、摘要、生成内容“转发”给微信/QQ/邮件等其它 App。
+     */
+    fun shareText(ctx: Context, text: String, subject: String? = null, appQuery: String? = null): JSONObject {
+        android.util.Log.i("OpenWith", "shareText chars=${text.length} app=$appQuery")
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            subject?.takeIf { it.isNotBlank() }?.let { putExtra(Intent.EXTRA_SUBJECT, it) }
+        }
+        if (!appQuery.isNullOrBlank()) {
+            when (val pick = pickHandler(ctx, intent, appQuery)) {
+                is Pick.One -> {
+                    intent.setPackage(pick.handler.packageName)
+                    return launchAndReport(ctx, intent, "text", direct = true, target = pick.handler, action = Intent.ACTION_SEND, uri = null, mime = "text/plain")
+                }
+                is Pick.Many -> return JSONObject().put("ok", false).put("error", "multiple apps match '$appQuery'").put("candidates", org.json.JSONArray().apply {
+                    pick.list.forEach { put(JSONObject().put("package", it.packageName).put("label", it.label)) }
+                })
+                is Pick.None -> return JSONObject().put("ok", false).put("error", "no app handles text sharing (query='$appQuery')").put("available", org.json.JSONArray().apply {
+                    pick.available.forEach { put(JSONObject().put("package", it.packageName).put("label", it.label)) }
+                })
+            }
+        }
+        return launchAndReport(ctx, intent, "text", direct = false, target = null, action = Intent.ACTION_SEND, uri = null, mime = "text/plain")
+    }
+
+    /** 目标 App 解析结果（label / package）。 */
+    data class Handler(val packageName: String, val label: String)
+
+    private sealed class Pick {
+        data class One(val handler: Handler) : Pick()
+        data class Many(val list: List<Handler>) : Pick()
+        data class None(val available: List<Handler>) : Pick()
+    }
+
+    /** 查询能处理该 intent 的 App（按包去重，带 label）。 */
+    private fun queryHandlers(ctx: Context, intent: Intent): List<Handler> = runCatching {
+        ctx.packageManager.queryIntentActivities(intent, 0)
+            .mapNotNull { ri ->
+                val pkg = ri.activityInfo?.packageName ?: return@mapNotNull null
+                Handler(pkg, ri.loadLabel(ctx.packageManager).toString())
+            }
+            .distinctBy { it.packageName }
+            .sortedBy { it.label.lowercase() }
+    }.getOrDefault(emptyList())
+
+    /**
+     * 按用户说法（中文名/英文名/包名片段）挑一个处理 App。
+     * 多个匹配返回 Many（候选交用户选），0 个返回 None（附可用列表）。
+     */
+    private fun pickHandler(ctx: Context, intent: Intent, query: String): Pick {
+        val all = queryHandlers(ctx, intent)
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return Pick.None(all)
+        val exactPkg = all.filter { it.packageName.equals(q, true) }
+        if (exactPkg.size == 1) return Pick.One(exactPkg.first())
+        val matches = all.filter {
+            it.packageName.lowercase().contains(q) || it.label.lowercase().contains(q)
+        }
+        return when {
+            matches.size == 1 -> Pick.One(matches.first())
+            matches.isEmpty() -> Pick.None(all)
+            else -> Pick.Many(matches)
+        }
+    }
+
+    /**
+     * GET /apps?action=send|view&mime=audio/mpeg —— 列出能接这个意图的 App。
+     * Agent 说「分享给微信 / 用某播放器打开」前可以先查确切名称，避免猜。
+     */
+    fun listHandlers(ctx: Context, action: String, mime: String?): JSONObject {
+        val act = if (action.lowercase() == "send") Intent.ACTION_SEND else Intent.ACTION_VIEW
+        val type = mime?.takeIf { it.isNotBlank() } ?: "*/*"
+        val intent = Intent(act).setType(type)
+        val all = queryHandlers(ctx, intent)
+        val def = ctx.packageManager.resolveActivity(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo?.packageName
+        val arr = org.json.JSONArray()
+        all.forEach { h ->
+            arr.put(
+                JSONObject()
+                    .put("package", h.packageName)
+                    .put("label", h.label)
+                    .put("default", h.packageName == def),
+            )
+        }
+        return JSONObject().put("ok", true).put("action", act).put("mime", type).put("apps", arr)
+    }
+
+    private fun launchAndReport(
+        ctx: Context,
+        intent: Intent,
+        kind: String,
+        direct: Boolean,
+        target: Handler?,
+        action: String,
+        uri: android.net.Uri?,
+        mime: String,
+    ): JSONObject {
+        val started = System.currentTimeMillis()
+        return runCatching {
+            if (direct) {
+                ctx.startActivity(intent)
+            } else {
+                val chooser = Intent.createChooser(intent, null).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+                ctx.startActivity(chooser)
+            }
+            val deadline = System.currentTimeMillis() + 900
+            var left = false
+            while (System.currentTimeMillis() < deadline) {
+                if (AppState.resumedActivityName() == null) { left = true; break }
+                Thread.sleep(50)
+            }
+            android.util.Log.i("OpenWith", "launched kind=$kind direct=$direct target=${target?.packageName} leftApp=$left")
+            JSONObject()
+                .put("ok", true)
+                .put("opened", left)
+                .put("kind", kind)
+                .put("action", action)
+                .put("uri", uri?.toString() ?: JSONObject.NULL)
+                .put("mime", mime)
+                .put("direct", direct)
+                .put("target_package", target?.packageName ?: JSONObject.NULL)
+                .put("target_label", target?.label ?: JSONObject.NULL)
+                .put("handoff", true)
+                .put("verify", "none")
+                .put("elapsed_ms", System.currentTimeMillis() - started)
+                .put(
+                    "hint",
+                    when {
+                        !direct -> "Chooser opened. Hand-off complete: no verification needed."
+                        left -> "Opened directly in the requested app. Hand-off complete."
+                        else -> "startActivity returned but the app stayed in front; the start may have been blocked (BAL) - foreground the app and retry, or ask the user."
+                    },
+                )
+        }.getOrElse {
+            android.util.Log.w("OpenWith", "launch failed: ${it.message}")
+            JSONObject().put("ok", false).put("error", "no app can open this: ${it.message}")
+        }
+    }
+
+    fun open(
+        ctx: Context,
+        path: String,
+        kind: String = "file",
+        mimeOverride: String? = null,
+        appQuery: String? = null,
+    ): JSONObject {
+        android.util.Log.i("OpenWith", "request kind=$kind path=$path app=$appQuery")
         val file = File(path)
         if (!file.exists()) {
             return JSONObject().put("ok", false).put("error", "not found: $path")
         }
-        // 调用方传 file 但实际是目录（引擎预览/文件夹按钮）时，按文件夹处理
         val effectiveKind = if (kind == "file" && file.isDirectory) "folder" else kind
         val mime = mimeOverride?.takeIf { it.isNotBlank() } ?: mimeOf(file)
         // /sdcard 下的目录优先交给系统的 ExternalStorageProvider（DocumentsUI 能直接显示）。
@@ -127,9 +235,6 @@ object OpenWith {
         val intent = Intent(action).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (externalDoc == null) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            // 「显示文件位置」：共享存储上的目录优先直接交给系统文件 App 并定位，
-            // 不弹选择器；App 私有目录（dsh-home 等）系统文件 App 无权限浏览，
-            // 不指定 component，让系统决定并如实返回结果。
             if (effectiveKind == "folder" && externalDoc != null) {
                 documentsUiComponent(ctx)?.let { component = it }
             }
@@ -143,50 +248,31 @@ object OpenWith {
             } else {
                 setDataAndType(uri, type)
             }
-            if (externalDoc == null) {
+            if (externalDoc == null && effectiveKind != "share") {
                 clipData = android.content.ClipData.newRawUri(file.name, uri)
             }
         }
-        val target = ctx.packageManager.resolveActivity(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
-        android.util.Log.i("OpenWith", "intent action=$action uri=$uri type=$type resolved=${target?.activityInfo?.packageName}")
-        val before = AppState.resumedActivityName()
-        val started = System.currentTimeMillis()
-        return runCatching {
-            if (effectiveKind == "folder" && intent.component != null) {
-                ctx.startActivity(intent)
-            } else {
-                val chooser = Intent.createChooser(intent, null).addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                ctx.startActivity(chooser)
+
+        // 指定了「分享给某 App / 用某播放器打开」→ 直接派给那个 App，不弹选择器
+        if (appQuery != null && appQuery.isNotBlank()) {
+            when (val pick = pickHandler(ctx, intent, appQuery)) {
+                is Pick.One -> {
+                    intent.setPackage(pick.handler.packageName)
+                    return launchAndReport(ctx, intent, effectiveKind, direct = true, target = pick.handler, action = action, uri = uri, mime = type)
+                }
+                is Pick.Many -> return JSONObject().put("ok", false).put("error", "multiple apps match '$appQuery'").put("candidates", org.json.JSONArray().apply {
+                    pick.list.forEach { put(JSONObject().put("package", it.packageName).put("label", it.label)) }
+                })
+                is Pick.None -> return JSONObject().put("ok", false).put("error", "no app handles this (query='$appQuery')").put("available", org.json.JSONArray().apply {
+                    pick.available.forEach { put(JSONObject().put("package", it.packageName).put("label", it.label)) }
+                })
             }
-            // 是否真的离开本 App：离开/切走说明系统界面已接管；本 App 仍在 → 可能被 BAL 拦下
-            val deadline = System.currentTimeMillis() + 900
-            var left = false
-            while (System.currentTimeMillis() < deadline) {
-                if (AppState.resumedActivityName() == null) { left = true; break }
-                Thread.sleep(50)
-            }
-            android.util.Log.i("OpenWith", "started kind=$effectiveKind uri=$uri leftApp=$left")
-            JSONObject()
-                .put("ok", true)
-                .put("opened", left)
-                .put("kind", effectiveKind)
-                .put("action", action)
-                .put("uri", uri.toString())
-                .put("mime", type)
-                .put("resolved_package", target?.activityInfo?.packageName ?: JSONObject.NULL)
-                .put("handoff", true)
-                .put("verify", "none")
-                .put("elapsed_ms", System.currentTimeMillis() - started)
-                .put(
-                    "hint",
-                    if (left) "Opened in another app. Hand-off complete: no verification needed."
-                    else "startActivity returned but the app stayed in front; the system chooser may have been blocked (BAL) - foreground the app and retry, or ask the user.",
-                )
-        }.getOrElse {
-            android.util.Log.w("OpenWith", "failed: ${it.message}")
-            JSONObject().put("ok", false).put("error", "no app can open this: ${it.message}")
         }
+
+        val target = ctx.packageManager.resolveActivity(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        android.util.Log.i("OpenWith", "intent action=$action uri=$uri type=$type")
+        // 文件夹（显示位置）已经有显式 DocumentsUI component，直接打开，不再套 chooser
+        val direct = effectiveKind == "folder" && intent.component != null
+        return launchAndReport(ctx, intent, effectiveKind, direct = direct, target = target?.activityInfo?.packageName?.let { Handler(it, "") }, action = action, uri = uri, mime = type)
     }
 }

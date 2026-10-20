@@ -155,6 +155,25 @@ foreground) and `handoff:true`; if no installed app can handle the type you get 
 with a readable error. When the start is blocked while the app is in the background, use the
 same BAL workarounds as `native open` (foreground the app / notification fallback).
 
+### Opening with a specific app / sharing to a specific app
+
+When the user says "用 XX 打开 / 分享给 XX / 播放 / 阅读", the app can target that app directly
+(no chooser):
+
+```bash
+native apps view audio/mpeg        # list apps that handle VIEW audio/mpeg (label + package)
+native apps send audio/mpeg        # list share targets
+native play /sdcard/x.mp3 --app 网易云音乐      # open with a named app (playback/video/reader)
+native share /sdcard/x.mp3 --to 微信            # ACTION_SEND directly to WeChat
+native share-text "https://..." --to QQ        # share a link/text directly to QQ
+```
+
+Bridge: `GET /apps?action=view|send&mime=...` returns `{apps:[{package,label,default}]}`;
+`POST /open/file|share` and `POST /share/text` accept `{"app":"<label or package fragment>"}`.
+Matching is by app label or package substring; zero matches returns the available list, multiple
+matches returns the candidates - so the agent asks the user instead of guessing. Without
+`app`, the normal chooser opens. Receipts stay hand-offs (`opened` = left the foreground).
+
 ### Sharing (outgoing and incoming)
 
 **Outgoing** (agent → other apps): the share sheet is opened through the app, no permissions needed:

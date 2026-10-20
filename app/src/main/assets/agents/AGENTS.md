@@ -239,7 +239,11 @@ before deep app work. Quick map:
   and include that output in your report - do not work around it with `/system/bin/*`.
 - Sharing / forwarding is a first-class action: `native share <path>` (files) and
   `native share-text "<text|link>"` open the system share sheet so the user can forward to
-  WeChat/QQ/mail; `POST /open/share` and `POST /share/text` are the bridge equivalents. Incoming
+  WeChat/QQ/mail; `POST /open/share` and `POST /share/text` are the bridge equivalents.
+  When the user names the target ("分享给微信", "用网易云打开", "播放", "阅读"), list handlers with
+  `native apps send|view <mime>` and pass `--to`/`--app <label|package>` to deliver directly,
+  without the chooser; ambiguous or missing targets come back as candidates, so ask the user.
+  Incoming
   shares from other apps (ACTION_SEND) are copied to `$DSH_HOME/inbox/` and prefilled into the
   open conversation's composer; no automatic send.
 - Opening files with other apps: `native open-file <path>` / `native open-folder <path>` /

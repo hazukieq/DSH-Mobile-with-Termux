@@ -497,6 +497,7 @@ object AgentBridge {
             method == "POST" && path == "/open/folder" -> openPath(ctx, body, "folder")
             method == "POST" && path == "/open/share" -> openPath(ctx, body, "share")
             method == "POST" && path == "/share/text" -> shareText(ctx, body)
+            method == "GET" && path == "/apps" -> appsFor(query)
             method == "POST" && path == "/gesture" -> gesture(body)
             method == "POST" && path == "/key" -> key(body)
             method == "POST" && path == "/wait" -> wait(body)
@@ -2209,8 +2210,17 @@ document.getElementById('api').textContent = checks.map(function(c){
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val text = obj.optString("text")
         if (text.isBlank()) return 400 to """{"ok":false,"error":"text required"}"""
-        val r = OpenWith.shareText(ctx, text, obj.optString("subject"))
+        val r = OpenWith.shareText(ctx, text, obj.optString("subject"), obj.optString("app").ifBlank { obj.optString("to") })
         return (if (r.optBoolean("ok")) 200 else 500) to r.toString()
+    }
+
+    /** GET /apps?action=send|view&mime=audio/mpeg —— 列出能处理该意图的 App（v1.3.48）。 */
+    private fun appsFor(query: String): Pair<Int, String> {
+        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
+        val params = parseQuery(query)
+        val action = params["action"] ?: "view"
+        if (action != "send" && action != "view") return 400 to """{"ok":false,"error":"action must be send|view"}"""
+        return 200 to OpenWith.listHandlers(ctx, action, params["mime"]).toString()
     }
 
     /** POST /open/file|folder|share {"path":"/sdcard/x.pdf","mime":"application/pdf"} */
@@ -2219,7 +2229,8 @@ document.getElementById('api').textContent = checks.map(function(c){
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val path = obj.optString("path").ifBlank { obj.optString("file") }
         if (path.isBlank()) return 400 to """{"ok":false,"error":"path required"}"""
-        val result = OpenWith.open(ctx, path, kind, obj.optString("mime"))
+        val app = obj.optString("app").ifBlank { obj.optString("to") }
+        val result = OpenWith.open(ctx, path, kind, obj.optString("mime"), app)
         val code = if (result.optBoolean("ok")) 200 else 404
         return code to result.toString()
     }

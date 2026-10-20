@@ -1,6 +1,13 @@
 # AI_CONTEXT
 
 ## Current progress
+- **指定 App 打开/分享（听歌/看视频/阅读/分享给某 App）（2026-10-20 第七十六轮，v80）**：用户要求「用户说调用系统阅读/听歌/播放视频时弹出对应 App；分享给 xxx 时直接跳转 xxx 去分享」。实现：
+  ① `OpenWith` 增加目标 App 解析：`Handler(label,package)`、`queryIntentActivities` 去重列表、`pickHandler` 按 **label 或包名片段** 匹配（精确包名优先；多匹配返回 candidates、零匹配返回 available），`listHandlers` 输出 `{package,label,default}`；
+  ② `/open/file`、`/open/share`、`/share/text` 支持 `app`（或 `to`）参数 → 命中即 `intent.setPackage(pkg)` 直接 `startActivity`（不弹选择器）；未指定仍走 chooser；
+  ③ 新端点 `GET /apps?action=view|send&mime=...`；
+  ④ 门脚本 `native`：`play <path> [--app 名称]`（听歌/看视频/阅读都可用它派）、`apps [send|view] [mime]`、`share <path> [--to]`、`share-text "<text>" [--to]`；
+  ⑤ 文档 DSH v17 + AGENTS seed 71（先 `native apps ...` 查候选，再 `--app/--to` 直达；多候选要让用户选）。
+  版本 1.3.48 / 288；vivo 已装。注意：出站分享/指定 App 打开的真机效果需在会话里跑 `native apps send audio/mpeg` 与 `native play <mp3> --app <名称>` 验证（adbd 无法替 App 授予 content:// 读权限）。
 - **「显示文件位置」= 打开文件管理器定位（2026-10-20 第七十五轮，v79）**：用户澄清「打开文件就是打开文件管理器去定位即可，不需要其他」，并提醒权限问题要查官方文档。查证：[Android 共享存储文档](https://developer.android.google.cn/training/data-storage/shared/documents-files) 的 SAF/EXTRA_INITIAL_URI 用法，以及社区实践（ACTION_VIEW + ExternalStorageProvider document URI + `vnd.android.document/directory` 可让 DocumentsUI 定位目录）。实测（adb shell 直接验证）：
   `am start -n com.android.documentsui/com.android.documentsui.files.FilesActivity -a VIEW -d content://com.android.externalstorage.documents/document/primary%3ADocuments%2Fdshdata%2Fworkspaces%2Fmobile%2Fmedia -t vnd.android.document/directory` → DocumentsUI 精确打开 `dshdata > workspaces > mobile > media`，文件 `逐家无输赢.mp3` 可见（截图确认）。
   实现：`OpenWith` 对「folder/reveal」优先显式指定 DocumentsUI 的 FilesActivity（com.android.documentsui / com.google.android.documentsui），不弹「用哪个应用打开」选择器；document URI 用 `DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:<相对路径>")`；**不带 GRANT/ClipData**（外部 provider 的 document URI 不归我们所有，带授权尝试会 SecurityException）。App 私有目录（dsh-home/inbox 等）系统文件管理器无权浏览 → 直接返回 `ok:false` + 说明「先复制到 /sdcard」，不再给无效的 provider 目录 URI。版本 1.3.47 / 287。

@@ -17,8 +17,10 @@ fi
 #   native net                       只取联网状态（status 的子集，原始 JSON）
 #   native open-file <path>          用系统其它 App 打开文件（ACTION_VIEW + content:// 授权）
 #   native open-folder <path>        用系统文件 App 打开文件夹
-#   native share <path>              分享文件/文件夹
-#   native share-text "<text>"       分享文本/链接（转发给微信/QQ/邮件等）
+#   native play <path> [--app 名称]   用系统 App 打开（听歌/看视频/阅读都可以它来派）
+#   native apps [send|view] [mime]   列出能接这个意图的 App（label + package）
+#   native share <path> [--to 名称]   分享文件/文件夹；--to 直接派给指定 App，不弹选择器
+#   native share-text "<text>" [--to 名称]  分享文本/链接（转发给微信/QQ 等）
 #   native files                     检查 $PREFIX/bin 里 App 管理的脚本：真实文件/可执行/符号链接
 #   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带；path 必须是真实端点，
 #                                     如 GET /notif、GET /process、POST /tap）
@@ -74,21 +76,52 @@ case "${1:-}" in
     done
     json_or_die POST /settings "{\"set\":{$pairs}}"
     ;;
-  share-text)
+  apps)
+    # 列出能处理 share/view 的 App（label+package），供「分享给微信 / 用某播放器打开」选目标
     shift
-    [ -n "${1:-}" ] || { echo "native share-text: need text" >&2; exit 2; }
-    json_or_die POST /share/text "{\"text\":\"$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')\"}"
+    action="view"; mime=""
+    for a in "$@"; do
+      case "$a" in
+        send|view) action="$a" ;;
+        -*) echo "native apps: unknown flag '$a'" >&2; exit 2 ;;
+        *) mime="$a" ;;
+      esac
+    done
+    q="/apps?action=$action"
+    [ -n "$mime" ] && q="$q&mime=$mime"
+    json_or_die GET "$q"
     ;;
-  open-file|open-folder|share)
-    # 用系统其它 App 打开文件/文件夹/分享（v1.3.41）
+  play|open-file|open-folder|share|share-text)
+    # play/open-file = 用系统 App 打开（播放器/阅读器/播放视频）；
+    # share = 分享文件；share-text = 分享文本/链接。
+    # 加 --app <名称|包名片段> / --to <...> 时直接派给该 App，不弹选择器。
     sub="$1"; shift
-    [ -n "${1:-}" ] || { echo "native $sub: need a path" >&2; exit 2; }
+    path=""; text=""; app=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --app|--to) app="${2:-}"; shift 2 ;;
+        -*) echo "native $sub: unknown flag '$1'" >&2; exit 2 ;;
+        *)
+          if [ "$sub" = "share-text" ]; then text="$1"; else path="$1"; fi
+          shift ;;
+      esac
+    done
     case "$sub" in
-      open-file) route="/open/file" ;;
-      open-folder) route="/open/folder" ;;
-      share) route="/open/share" ;;
+      play|open-file) route="/open/file"; field="path"; value="$path" ;;
+      open-folder) route="/open/folder"; field="path"; value="$path" ;;
+      share) route="/open/share"; field="path"; value="$path" ;;
+      share-text) route="/share/text"; field="text"; value="$text" ;;
+      *) usage ;;
     esac
-    json_or_die POST "$route" "{\"path\":\"$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')\"}"
+    [ -n "$value" ] || { echo "native $sub: need a $field" >&2; exit 2; }
+    jv=$(printf '%s' "$value" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    body="{\"$field\":\"$jv\""
+    if [ -n "$app" ]; then
+      ja=$(printf '%s' "$app" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      body="$body,\"app\":\"$ja\""
+    fi
+    body="$body}"
+    json_or_die POST "$route" "$body"
     ;;
   files|perms|doctor)
     # 检查 App 管理的脚本是否真实文件且可执行（v1.3.34，排查「command not found / Permission denied」）
