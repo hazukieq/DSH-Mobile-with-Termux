@@ -127,6 +127,15 @@ Other useful native endpoints: `GET /process` (pid/uid/version/debug flag/devtoo
 `POST /launch-intent` (`component` + `extras`), `GET /notify`, `POST /notify`, `GET /say`/`POST /say`,
 `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`.
 
+### Instant actions (tap / scroll / type / key)
+
+All simulated-input endpoints (`/tap`, `/tap-id`, `/gesture`, `/key`, `/input`, `/scroll-*`,
+`/vision/tap|drag`, `/pick`, `/overlay`, `/loop/run`, and the helper's `cdp click|click-text|tap|
+type|key|scroll`) return `instant:true`, `verify:"none"` and
+`do_not:["screenshot_immediately","retry_immediately"]`. The event has been dispatched; the UI
+may be mid-animation or the user may have moved on. To verify a result: settle (`scr idle` or
+`cdp wait`) then read once. Screenshots are for evidence/diagnosis, not tap confirmation.
+
 ### Hand-off semantics (opening pages for the user)
 
 `POST /activity` is a **hand-off**: it opens the page and returns immediately with

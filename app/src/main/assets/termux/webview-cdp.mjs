@@ -489,7 +489,7 @@ async function cmdClick(selector, touch) {
   if (!info) die('click: no element matches ' + selector);
   if (!info.visible) die('click: element is not visible: ' + selector);
   await mouseClick(pick, target, info.x, info.y, { touch });
-  console.log(JSON.stringify({ ok: true, clicked: selector, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag, label: info.label, text: info.text }));
+  console.log(JSON.stringify({ ok: true, clicked: selector, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag, label: info.label, text: info.text, instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
 }
 
 async function cmdClickText(text, exact) {
@@ -515,7 +515,7 @@ async function cmdClickText(text, exact) {
   const info = hit.result && hit.result.value;
   if (!info) die('click-text: nothing visible contains ' + JSON.stringify(text));
   await mouseClick(pick, target, info.x, info.y);
-  console.log(JSON.stringify({ ok: true, clickedText: info.text, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag }));
+  console.log(JSON.stringify({ ok: true, clickedText: info.text, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag, instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
 }
 
 async function cmdTap(x, y) {
@@ -523,7 +523,7 @@ async function cmdTap(x, y) {
   if (!Number.isFinite(px) || !Number.isFinite(py)) die('usage: dsh-mobile cdp tap <x> <y>');
   const { pick, target } = await cdpTarget();
   await mouseClick(pick, target, px, py, { touch: true });
-  console.log(JSON.stringify({ ok: true, tapped: [px, py] }));
+  console.log(JSON.stringify({ ok: true, tapped: [px, py], instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
 }
 
 async function cmdType(text, selector) {
@@ -536,7 +536,7 @@ async function cmdType(text, selector) {
     await mouseClick(pick, target, info.x, info.y);
   }
   await cdpCall(pick.name, target, 'Input.insertText', { text });
-  console.log(JSON.stringify({ ok: true, typed: text.length, selector: selector || null }));
+  console.log(JSON.stringify({ ok: true, typed: text.length, selector: selector || null, instant: true, verify: 'none', do_not: ['screenshot_immediately'] }));
 }
 
 const KEYMAP = {
@@ -555,14 +555,14 @@ async function cmdKey(name) {
   const { pick, target } = await cdpTarget();
   await cdpCall(pick.name, target, 'Input.dispatchKeyEvent', { type: 'keyDown', key: k.key, code: k.code, windowsVirtualKeyCode: k.windowsVirtualKeyCode, nativeVirtualKeyCode: k.windowsVirtualKeyCode });
   await cdpCall(pick.name, target, 'Input.dispatchKeyEvent', { type: 'keyUp', key: k.key, code: k.code, windowsVirtualKeyCode: k.windowsVirtualKeyCode, nativeVirtualKeyCode: k.windowsVirtualKeyCode });
-  console.log(JSON.stringify({ ok: true, key: k.key }));
+  console.log(JSON.stringify({ ok: true, key: k.key, instant: true, verify: 'none', do_not: ['screenshot_immediately'] }));
 }
 
 async function cmdScroll(dy) {
   const delta = Number(dy || 600);
   const { pick, target } = await cdpTarget();
   await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: 200, y: 400, deltaX: 0, deltaY: delta });
-  console.log(JSON.stringify({ ok: true, scrolled: delta }));
+  console.log(JSON.stringify({ ok: true, scrolled: delta, instant: true, verify: 'none', do_not: ['screenshot_immediately'] }));
 }
 
 async function cmdWait(what, timeoutArg) {

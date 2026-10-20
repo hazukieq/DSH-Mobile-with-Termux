@@ -382,7 +382,7 @@ object AgentBridge {
                 }
 
                 val (status, json) = route(ctx, method, path, query, body)
-                respond(client, status, json)
+                respond(client, status, decorateActionMeta(method, path, status, json))
             } catch (e: Exception) {
                 Log.w(TAG, "handle: ${e.message}")
                 runCatching { respond(client, 500, """{"ok":false,"error":"${e.message}"}""") }
@@ -391,6 +391,61 @@ object AgentBridge {
             }
         }, "AgentBridge-req").apply { isDaemon = true; start() }
     }
+
+    /**
+     * 即时动作 / 打开页面的回执语义（v1.3.36，用户反馈「即时性太强」）。
+     *
+     * 模拟动作（tap/swipe/scroll/key/input/vision tap…）是**已派发即完成**的：界面可能
+     * 立刻开始变化，甚至用户自己已经操作/返回。Agent 常见的浪费是「动作后马上截图确认」，
+     * 得到的往往是动画中间帧或已变化的界面，然后反复重试。
+     *
+     * 这里统一给动作类响应补充字段，让调用方知道：
+     *  - instant=true：动作已派发，不需要即时截图确认；
+     *  - verify="none"：默认不需要校验；要校验时先等界面稳定（scr idle / cdp wait）再读一次；
+     *  - do_not：不要做的事（立刻截图 / 立刻重试）。
+     * 打开页面类（launch/launch-intent/activity）补 handoff=true 同语义。
+     */
+    private fun decorateActionMeta(method: String, path: String, status: Int, json: String): String {
+        if (status != 200 || method != "POST" || !json.trimStart().startsWith("{")) return json
+        val kind = when {
+            path in INSTANT_ACTION_PATHS -> "instant"
+            path in OPEN_ACTION_PATHS -> "handoff"
+            path == "/settings" -> "write"
+            else -> return json
+        }
+        return runCatching {
+            val obj = JSONObject(json)
+            when (kind) {
+                "instant" -> {
+                    obj.put("instant", true)
+                        .put("verify", "none")
+                        .put("do_not", org.json.JSONArray().put("screenshot_immediately").put("retry_immediately"))
+                        .put("hint", "Action dispatched; the UI may already be changing or the user may have moved on. Do not screenshot right away. If the task needs confirmation, wait for the UI to settle (scr idle / dsh-mobile cdp wait) and read once; if nothing changes after two tries, ask the user.")
+                }
+                "handoff" -> {
+                    obj.put("handoff", true)
+                        .put("verify", "none")
+                        .put("do_not", org.json.JSONArray().put("screenshot").put("poll").put("retry"))
+                        .put("hint", "Opened (hand-off). The user may interact and come back before you check - that is expected. Do not screenshot/poll/re-run to confirm; continue or wait for the user.")
+                }
+                else -> {
+                    obj.put("verify", "none")
+                        .put("hint", "Setting applied in the app process; no UI verification needed.")
+                }
+            }
+            obj.toString()
+        }.getOrDefault(json)
+    }
+
+    /** 即时动作端点（派发即完成，界面状态随时可被用户改变）。 */
+    private val INSTANT_ACTION_PATHS = setOf(
+        "/tap", "/tap-id", "/gesture", "/key", "/input",
+        "/scroll-find", "/scroll-center", "/scroll-edge",
+        "/vision/tap", "/vision/drag", "/pick", "/overlay", "/loop/run",
+    )
+
+    /** 打开页面端点（hand-off；/activity 自己带更详细的 hand-off 字段，不在此集合）。 */
+    private val OPEN_ACTION_PATHS = setOf("/launch", "/launch-intent")
 
     private fun route(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
         // v1.2.182（用户需求）：AI 进行「一大串」无障碍操作时发一条系统通知，

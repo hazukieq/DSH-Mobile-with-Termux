@@ -1,6 +1,11 @@
 # AI_CONTEXT
 
 ## Current progress
+- **即时动作回执统一（2026-10-20 第六十五轮，v68）**：用户要求「全面检查所有工具及指令，尤其模拟动作（点击/滚动等）即时性太强，也要改」。实现：
+  ① `AgentBridge.decorateActionMeta(method,path,status,json)` 在响应出口统一注入语义（仅 POST + 200 + JSON 对象）：即时动作端点（/tap、/tap-id、/gesture、/key、/input、/scroll-find、/scroll-center、/scroll-edge、/vision/tap、/vision/drag、/pick、/overlay、/loop/run）加 `instant:true`、`verify:"none"`、`do_not:["screenshot_immediately","retry_immediately"]` + 提示「动作已派发，界面可能正在变化；要确认先等稳定（scr idle/cdp wait）再读一次，别立刻截图/重试」；打开页面（/launch、/launch-intent）加 `handoff:true` 同语义（/activity 自带更详细字段，不重复注入）；`POST /settings` 加 `verify:"none"`（设置已在进程内生效）。
+  ② CDP helper 的 click/click-text/tap/type/key/scroll 输出统一带 `instant:true, verify:"none", do_not:[…]`。
+  ③ 文档：AGENTS seed 65 新增「Instant actions (tap / scroll / type / key) - dispatched, not confirmed」：ok 即完成、不截图、要校验先 settle 再读一次、不要因界面没变化立刻重试（两次后问用户）、用户说改好了就信任；`DSH-MOBILE.md` v10 增对应小节；dotfiles VERSION 17 / doc marker v10。
+  实测 vivo：seed v65、doc v10 部署、15 gate 可执行、engine healthy。versionName 1.3.36 / versionCode 276。
 - **「打开页面后反复截图确认」治理：hand-off 语义（2026-10-20 第六十四轮，v67）**：用户反馈 agent 每次跳转（如打开原生设置）都要截图确认，而用户通常很快改完返回、甚至指令返回前就回来了，agent 于是反复困惑。根因：旧 `openActivity` 以「350ms 后 resumed 是否等于目标 Activity」判定 `ok`，用户快速返回时被判成 `ok:false`，看起来像失败 → agent 去截图/重试。修复：
   ① `POST /activity` 改为 hand-off 语义：`ok:true` 只表示启动请求被接受；新增 `handoff:true`、`verify:"none"`、`do_not:["screenshot","poll","retry"]`、`returned_to_previous`、`elapsed_ms`，并带 `note` 明确「用户可能在你读取结果前就改完返回，这是预期，不是失败；不要截图/轮询/重试」；观察窗口 350ms→120ms（不再等待用户操作）。
   ② 文档：AGENTS seed 64 新增「Hand-off actions: opening a page FOR THE USER needs no verification」——ok:true 即完成，不截图不轮询不重跑；只有任务本身是核对状态（「X 开了吗」「改了缩放值是多少」）才读一次状态；截图只用于用户要求看证据或诊断渲染 bug；用户说「我改完回来了」就信任并继续。`DSH-MOBILE.md` v9 增「Hand-off semantics」；dotfiles VERSION 16、doc marker v9。

@@ -314,6 +314,32 @@ Rules:
 - Verify after each step (dialog present, text changed, or `appshot`); an element with x<0 means
   its panel is not open yet - open it first. Two failures -> ask the user which entry they mean.
 
+## Instant actions (tap / scroll / type / key) - dispatched, not confirmed
+
+Simulated input is fire-and-forget by nature: the event is dispatched, the UI may start changing
+immediately (animations mid-flight), and the user may have moved on. Action receipts therefore
+carry:
+
+```json
+{"ok":true,"instant":true,"verify":"none",
+ "do_not":["screenshot_immediately","retry_immediately"],
+ "hint":"Action dispatched; the UI may already be changing ..."}
+```
+
+Rules:
+
+- `ok:true` means the event was dispatched - the step is done. Do **not** screenshot right after
+  to check whether the tap "worked".
+- Verify only when the task is about the resulting state. Then wait for the UI to settle
+  (`scr idle`, or `dsh-mobile cdp wait <selector|text>`), and read **once** (`scr dump`,
+  `dsh-mobile cdp eval`, `native settings`). One read, not a polling loop.
+- Do not retry just because the screen looks unchanged immediately: the app may still be
+  animating, the tap may have hit a non-interactive area, or the user already navigated.
+  Look at the tree once; if it really did not happen, ask the user after two attempts.
+- If the user says "I already did it / it's fine", trust that and continue.
+- Screenshots are for evidence the user asked for, or for diagnosing rendering bugs - never for
+  confirming a tap/scroll.
+
 ## Hand-off actions: opening a page FOR THE USER needs no verification
 
 Some actions are hand-offs, not automation: opening the app Settings page, opening the native
