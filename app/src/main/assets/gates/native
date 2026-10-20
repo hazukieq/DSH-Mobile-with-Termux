@@ -16,7 +16,8 @@ fi
 #                                    （后台启动被 BAL 拦截时会明确报 opened:false，--notify 可发通知兜底）
 #   native net                       只取联网状态（status 的子集，原始 JSON）
 #   native files                     检查 $PREFIX/bin 里 App 管理的脚本：真实文件/可执行/符号链接
-#   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带）
+#   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带；path 必须是真实端点，
+#                                     如 GET /notif、GET /process、POST /tap）
 #
 # 例：native open settings && native set page_scale=100 orientation=auto
 DIR=$(cd "$(dirname "$0")" && pwd)

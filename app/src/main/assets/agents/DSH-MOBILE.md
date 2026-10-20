@@ -124,7 +124,7 @@ bridge HTTP on `127.0.0.1:3083`, reachable as `dsh-mobile bridge ...` or the `na
 
 Other useful native endpoints: `GET /process` (pid/uid/version/debug flag/devtools socket),
 `GET /app-screenshot?max=N` (PixelCopy of the app window), `GET /screen` + `/tap*` (accessibility),
-`POST /launch-intent` (`component` + `extras`), `GET /notify`, `POST /notify`, `GET /say`/`POST /say`,
+`POST /launch-intent` (`component` + `extras`), `GET /notif` (list notifications), `POST /notify`, `GET /say`/`POST /say`,
 `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`.
 
 ### Instant actions (tap / scroll / type / key)
