@@ -18,31 +18,142 @@ const DOC = path.join(DSH_HOME, 'DSH-MOBILE.md');
 function die(msg, code = 1) { console.error(msg); process.exit(code); }
 
 // ---------- device introspection ----------
-function devtoolsSockets() {
-  const out = new Map(); // name -> pid
-  let text = '';
-  try { text = fs.readFileSync('/proc/net/unix', 'utf8'); } catch { return out; }
-  for (const line of text.split('\n')) {
-    const m = line.match(/@?(webview_devtools_remote_(\d+))/);
-    if (m) out.set(m[1], Number(m[2]));
+// /proc/net/unix is NOT readable from Android's untrusted_app SELinux domain
+// (live device: EACCES), so socket discovery must degrade gracefully:
+//   1) DSH_WEBVIEW_SOCKET env
+//   2) GET /process on the app's own AgentBridge (authoritative: app pid + socket name)
+//   3) /proc/net/unix scan (works where SELinux allows it, e.g. desktop)
+//   4) abstract-socket probe scan over the pid range (slow but always works)
+const PROC_UNIX = '/proc/net/unix';
+let procState = { ok: false, error: 'not read yet', sockets: new Map() };
+
+function readProcSockets() {
+  if (process.env.DSH_WEBVIEW_NO_PROC === '1') {
+    procState = { ok: false, error: 'disabled by DSH_WEBVIEW_NO_PROC', sockets: new Map() };
+    return procState;
   }
-  return out;
+  try {
+    const text = fs.readFileSync(PROC_UNIX, 'utf8');
+    const sockets = new Map();
+    for (const line of text.split('\n')) {
+      const m = line.match(/@?(webview_devtools_remote_(\d+))/);
+      if (m) sockets.set(m[1], Number(m[2]));
+    }
+    procState = { ok: true, error: null, sockets };
+  } catch (e) {
+    procState = { ok: false, error: (e.code || e.message || 'unreadable'), sockets: new Map() };
+  }
+  return procState;
 }
 
 function cmdline(pid) {
   try { return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').trim(); } catch { return ''; }
 }
 
-/** Preferred socket: the devtools socket whose pid belongs to the main app process. */
-function pickSocket() {
-  const socks = devtoolsSockets();
-  if (process.env.DSH_WEBVIEW_SOCKET) return { name: process.env.DSH_WEBVIEW_SOCKET, pid: null };
-  for (const [name, pid] of socks) {
-    const cl = cmdline(pid);
-    if (cl === 'com.termux' || cl.startsWith('com.termux ')) return { name, pid };
+function probeAbstract(name, timeoutMs = 150) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ path: '\0' + name });
+    let settled = false;
+    const done = (ok) => {
+      if (settled) return;
+      settled = true;
+      try { sock.destroy(); } catch {}
+      resolve(ok ? name : null);
+    };
+    sock.setTimeout(timeoutMs);
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+    sock.once('timeout', () => done(false));
+  });
+}
+
+async function scanAbstractSockets(maxPid = 40000, conc = 400) {
+  const t0 = Date.now();
+  const hits = [];
+  for (let base = 1; base <= maxPid; base += conc) {
+    const batch = [];
+    for (let pid = base; pid < base + conc && pid <= maxPid; pid++) {
+      batch.push(probeAbstract('webview_devtools_remote_' + pid));
+    }
+    for (const hit of await Promise.all(batch)) if (hit) hits.push(hit);
+    if (hits.length) break;
   }
-  const first = socks.entries().next();
-  if (!first.done) return { name: first.value[0], pid: first.value[1] };
+  return { hits, ms: Date.now() - t0 };
+}
+
+/** Ask the app itself: GET /process returns app_pid + devtools_socket. */
+async function bridgeProcess() {
+  try {
+    const res = await bridge('GET', '/process');
+    if (res.status >= 400) return { ok: false, error: 'bridge /process HTTP ' + res.status };
+    const info = JSON.parse(res.body);
+    return { ok: true, info };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'bridge unreachable' };
+  }
+}
+
+/**
+ * Resolve the devtools socket. Async because tiers 2 and 4 are async.
+ * Returns { name, pid, via } or null; fills discovery info for status/doctor.
+ */
+let lastDiscovery = { via: null, proc: null, bridge: null, scan: null };
+async function findSocket({ verbose = false } = {}) {
+  const log = verbose ? (m) => console.error('[discover] ' + m) : () => {};
+  lastDiscovery = { via: null, proc: null, bridge: null, scan: null };
+
+  // 1) explicit environment override
+  if (process.env.DSH_WEBVIEW_SOCKET) {
+    lastDiscovery.via = 'env';
+    log('env override: ' + process.env.DSH_WEBVIEW_SOCKET);
+    return { name: process.env.DSH_WEBVIEW_SOCKET, pid: null, via: 'env' };
+  }
+
+  // 2) authoritative answer from the app process
+  const br = await bridgeProcess();
+  lastDiscovery.bridge = br;
+  if (br.ok && br.info && br.info.devtools_socket) {
+    const name = br.info.devtools_socket;
+    lastDiscovery.via = 'bridge';
+    log('bridge says ' + name + ' (pid ' + br.info.app_pid + ')');
+    return { name, pid: br.info.app_pid, via: 'bridge' };
+  }
+  log('bridge tier: ' + (br.ok ? 'no devtools_socket (flag absent?)' : br.error));
+
+  // 3) /proc enumeration (fast where permitted)
+  const proc = readProcSockets();
+  lastDiscovery.proc = proc;
+  if (proc.ok) {
+    let pick = null;
+    const ownPid = br.ok && br.info ? br.info.app_pid : null;
+    for (const [name, pid] of proc.sockets) {
+      if (ownPid && pid === ownPid) { pick = { name, pid }; break; }
+    }
+    if (!pick) {
+      for (const [name, pid] of proc.sockets) {
+        const cl = cmdline(pid);
+        if (cl === 'com.termux' || cl.startsWith('com.termux ')) { pick = { name, pid }; break; }
+      }
+    }
+    if (!pick) {
+      const first = proc.sockets.entries().next();
+      if (!first.done) pick = { name: first.value[0], pid: first.value[1] };
+    }
+    if (pick) { lastDiscovery.via = 'proc'; return { ...pick, via: 'proc' }; }
+    log('/proc readable but no devtools socket found');
+  } else {
+    log('/proc/net/unix unreadable: ' + proc.error);
+  }
+
+  // 4) brute-force abstract socket probe (works without /proc)
+  const scan = await scanAbstractSockets();
+  lastDiscovery.scan = scan;
+  if (scan.hits.length) {
+    lastDiscovery.via = 'scan';
+    log('scan hit ' + scan.hits[0] + ' in ' + scan.ms + 'ms');
+    return { name: scan.hits[0], pid: null, via: 'scan' };
+  }
+  log('scan found nothing in ' + scan.ms + 'ms');
   return null;
 }
 
@@ -233,20 +344,80 @@ function bridge(method, apiPath, body) {
 }
 
 // ---------- commands ----------
+function flagState() {
+  try { return fs.existsSync(FLAG) ? 'present' : 'absent'; } catch { return 'unknown'; }
+}
+
 async function cmdStatus() {
-  const socks = devtoolsSockets();
-  console.log('flag       : ' + FLAG + '  [' + (fs.existsSync(FLAG) ? 'present' : 'absent') + ']');
-  console.log('app pid    : ' + (spawnSync('/system/bin/pidof', ['com.termux'], { encoding: 'utf8' }).stdout || '?').trim());
-  console.log('sockets    : ' + (socks.size ? [...socks.entries()].map(([n, p]) => `${n}(pid ${p}, ${cmdline(p) || '?'})`).join(', ') : 'none (WebView debugging is off, or the app was not restarted after enabling)'));
-  const pick = pickSocket();
-  if (!pick) { console.log('pick       : none'); return; }
-  console.log('picked     : ' + pick.name);
+  const br = await bridgeProcess();
+  const proc = readProcSockets();
+  console.log('flag       : ' + FLAG + '  [' + flagState() + ']');
+  console.log('bridge     : 127.0.0.1:' + BRIDGE_PORT + ' token=' + (bridgeToken() ? 'yes' : 'NO'));
+  if (br.ok) {
+    const i = br.info || {};
+    console.log('app        : pid ' + i.app_pid + ' uid ' + i.app_uid + ' v' + (i.version_name || '?') + ' sdk ' + i.sdk + ' (' + (i.model || '?') + ')');
+    console.log('webview_dbg: ' + (i.webview_debug ? 'enabled (flag read at process start)' : 'disabled'));
+  } else {
+    console.log('app        : bridge unavailable (' + br.error + ') — cannot ask the app for its pid');
+  }
+  console.log('proc/unix  : ' + (proc.ok ? 'readable (' + proc.sockets.size + ' devtools socket(s))' : 'unreadable (' + proc.error + ') — falling back to bridge/scan'));
+  const pick = await findSocket();
+  if (!pick) {
+    console.log('picked     : none');
+    console.log('hint       : dsh-mobile cdp on → reopen the app → dsh-mobile cdp doctor');
+    return;
+  }
+  console.log('picked     : ' + pick.name + '  (via ' + pick.via + ')');
   try {
     const targets = await listTargets(pick.name);
-    console.log('targets    : ' + targets.map(t => `${t.type}:${t.url}`).join(' | ').slice(0, 400));
+    console.log('targets    : ' + targets.map(t => t.type + ':' + t.url).join(' | ').slice(0, 400));
   } catch (e) { console.log('targets    : ' + e.message); }
-  console.log('bridge     : 127.0.0.1:' + BRIDGE_PORT + ' token=' + (bridgeToken() ? 'yes' : 'NO'));
-  console.log('doc        : ' + DOC);
+}
+
+/** Layered diagnostics: flag → process/bridge → socket discovery → devtools HTTP → WS/CDP. */
+async function cmdDoctor() {
+  const ok = (v) => (v ? 'OK  ' : 'FAIL');
+  console.log('== dsh-mobile cdp doctor ==');
+  console.log(ok(fs.existsSync(FLAG)) + ' 1. debug flag ' + FLAG + ' [' + flagState() + ']');
+
+  const br = await bridgeProcess();
+  console.log(ok(br.ok) + ' 2. bridge /process ' + (br.ok ? JSON.stringify(br.info) : '(' + br.error + ')'));
+  if (br.ok && br.info) {
+    console.log(ok(!!br.info.webview_debug) + '    app sees webview_debug=' + br.info.webview_debug +
+      (br.info.webview_debug ? '' : ' → flag was created after the process started; restart the app'));
+  }
+
+  const proc = readProcSockets();
+  console.log('     /proc/net/unix: ' + (proc.ok ? 'readable' : 'unreadable (' + proc.error + ')'));
+
+  const pick = await findSocket({ verbose: true });
+  console.log(ok(!!pick) + ' 3. socket discovery' + (pick ? ' → ' + pick.name + ' via ' + pick.via : ' → none'));
+
+  if (!pick) {
+    console.log('');
+    console.log('Next steps: dsh-mobile cdp on → ask the user to reopen the app → dsh-mobile cdp doctor');
+    return;
+  }
+
+  let targets = null;
+  try {
+    targets = await listTargets(pick.name);
+    console.log(ok(true) + ' 4. devtools HTTP /json/list (' + targets.length + ' target(s))');
+    for (const t of targets) console.log('       ' + t.type + ' ' + t.url + '  ws=' + t.webSocketDebuggerUrl);
+  } catch (e) {
+    console.log(ok(false) + ' 4. devtools HTTP: ' + e.message);
+    return;
+  }
+
+  const target = firstPage(targets);
+  try {
+    const r = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: 'document.title', returnByValue: true }, 5000);
+    console.log(ok(true) + ' 5. Runtime.evaluate → document.title = ' + JSON.stringify(r.result && r.result.value));
+  } catch (e) {
+    console.log(ok(false) + ' 5. Runtime.evaluate: ' + e.message);
+  }
+  console.log('');
+  console.log('serve: dsh-mobile cdp serve 9222   (curl 127.0.0.1:9222/json/version)');
 }
 
 function cmdOn() {
@@ -264,14 +435,14 @@ function cmdOff() {
 }
 
 async function cmdList() {
-  const pick = pickSocket() || die('no devtools socket; run `dsh-mobile cdp on`, restart the app, then retry');
+  const pick = await findSocket() || die('no devtools socket; run `dsh-mobile cdp on`, restart the app, then retry');
   const targets = await listTargets(pick.name);
   console.log(JSON.stringify(targets, null, 2));
 }
 
 async function cmdEval(expr) {
   if (!expr) die('usage: dsh-mobile cdp eval <javascript expression>');
-  const pick = pickSocket() || die('no devtools socket; enable debugging and restart the app first');
+  const pick = await findSocket() || die('no devtools socket; enable debugging and restart the app first');
   const target = firstPage(await listTargets(pick.name));
   const res = await cdpCall(pick.name, target, 'Runtime.evaluate', {
     expression: expr, returnByValue: true, awaitPromise: true, userGesture: true,
@@ -285,14 +456,14 @@ async function cmdEval(expr) {
 }
 
 async function cmdReload() {
-  const pick = pickSocket() || die('no devtools socket; enable debugging and restart the app first');
+  const pick = await findSocket() || die('no devtools socket; enable debugging and restart the app first');
   const target = firstPage(await listTargets(pick.name));
   await cdpCall(pick.name, target, 'Page.reload', { ignoreCache: false });
   console.log('reloaded: ' + target.url);
 }
 
-function cmdServe(portArg) {
-  const pick = pickSocket() || die('no devtools socket; run `dsh-mobile cdp on`, restart the app, then retry');
+async function cmdServe(portArg) {
+  const pick = await findSocket() || die('no devtools socket; run `dsh-mobile cdp on`, restart the app, then retry');
   const port = Number(portArg || 9222);
   const server = net.createServer((client) => {
     const up = net.connect({ path: '\0' + pick.name });
@@ -338,8 +509,8 @@ function cmdInfo() {
   console.log('  dsh home   : ' + DSH_HOME);
   console.log('  doc        : ' + DOC + (fs.existsSync(DOC) ? '' : ' (missing)'));
   console.log('  bridge     : 127.0.0.1:' + BRIDGE_PORT + ' token=' + (bridgeToken() ? 'yes' : 'NO'));
-  const socks = devtoolsSockets();
-  console.log('  devtools   : ' + (socks.size ? [...socks.keys()].join(', ') : 'none'));
+  const proc = readProcSockets();
+  console.log('  devtools   : ' + (proc.ok ? (proc.sockets.size ? [...proc.sockets.keys()].join(', ') : 'none (proc readable)') : 'proc unreadable — discovery uses bridge/scan'));
   console.log('  debug flag : ' + FLAG + ' [' + (fs.existsSync(FLAG) ? 'present' : 'absent') + ']');
 }
 
@@ -359,9 +530,10 @@ try {
     case 'list': await cmdList(); break;
     case 'eval': await cmdEval(rest.join(' ')); break;
     case 'reload': await cmdReload(); break;
-    case 'serve': cmdServe(rest[0]); break;
+    case 'serve': await cmdServe(rest[0]); break;
     case 'appshot': await cmdAppShot(rest[0], rest[1]); break;
     case 'bridge': await cmdBridge(rest); break;
+    case 'doctor': await cmdDoctor(); break;
     case 'info': cmdInfo(); break;
     case 'doc': console.log(fs.readFileSync(DOC, 'utf8')); break;
     default:
@@ -373,6 +545,7 @@ usage (CDP subcommands also accept the shorter "dsh-mobile <sub>" form):
   dsh-mobile appshot [out.png] [max]    native screenshot of the app window (PixelCopy)
   dsh-mobile cdp on|off                 toggle the webview-debug flag (restart app afterwards)
   dsh-mobile cdp status                 flag/socket/target diagnostics
+  dsh-mobile cdp doctor                 layered end-to-end diagnostics (flag→bridge→socket→CDP)
   dsh-mobile cdp list                   /json/list targets
   dsh-mobile cdp serve [port]           bridge abstract devtools socket -> 127.0.0.1:port (default 9222)
   dsh-mobile cdp eval <js>              Runtime.evaluate in the WebView page, prints the value

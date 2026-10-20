@@ -248,10 +248,14 @@ before deep app work. Quick map:
 Never guess WebUI DOM/CSS from screenshots. The WebView is debuggable only while the flag
 file exists; drive the real page:
 
+0. `dsh-mobile cdp doctor` first when anything looks off: it prints OK/FAIL for the flag,
+   the bridge `/process` answer, socket discovery, devtools HTTP and a test `Runtime.evaluate`.
 1. `dsh-mobile cdp on` - then ask the user to reopen the app (the flag is read at process
    start; force-stopping also kills the engine you are running in).
 2. `nohup dsh-mobile cdp serve 9222 >/tmp/cdp.log 2>&1 &` - bridges the WebView's abstract
    devtools socket to `127.0.0.1:9222`; `dsh-mobile cdp status` shows the socket and targets.
+   Socket discovery is automatic: bridge `/process` → `/proc/net/unix` → abstract-socket scan,
+   with `DSH_WEBVIEW_SOCKET` as an override; `cdp status` shows which tier was used.
 3. Inspect and drive it: `curl -s 127.0.0.1:9222/json/list`,
    `dsh-mobile cdp eval 'document.title'`, `dsh-mobile cdp reload`. From the host you can
    instead `adb forward tcp:9222 localabstract:webview_devtools_remote_<app pid>` and use

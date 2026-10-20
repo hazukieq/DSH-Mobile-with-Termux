@@ -56,6 +56,8 @@ Groups (see the actual handlers for params):
   `/memory/confirm`, `/memory/clear`.
 - App/plugins: `GET /plugin/list`, `POST /plugin/install`, `GET /notif`, `GET /diag`,
   `POST /notify`, `GET|POST /say`, `POST /engine/restart`.
+- App self-info/screenshots: `GET /process` (app pid, uid, version, `webview_debug`,
+  `devtools_socket`), `GET /app-screenshot?max=N` (native PixelCopy capture of the app window).
 - Runtime: `GET /runtime/status`, `/runtime/feed`, `POST /runtime/stage`, `/runtime/pull`,
   `/runtime/apply`, `/runtime/rollback`, `GET /local/status`, `POST /local/ensure`.
 - PTY: `POST /pty/open`, `/pty/write`, `/pty/resize`, `/pty/close`, `/pty/kill`, `GET /pty/read`.
@@ -65,6 +67,9 @@ Groups (see the actual handlers for params):
 The WebView can be debugged over the Chrome DevTools Protocol. Never guess the DOM from
 screenshots; drive the real page.
 
+0. Diagnose first (recommended): `dsh-mobile cdp doctor` runs the whole chain — flag file,
+   bridge `/process`, socket discovery, devtools HTTP, a test `Runtime.evaluate` — and prints
+   OK/FAIL per layer.
 1. Enable (flag file + app restart):
    `dsh-mobile cdp on` → asks you to reopen the app (the flag is read at process start).
 2. On-device bridge (no adb needed): `dsh-mobile cdp serve 9222` — connects the WebView's
@@ -76,7 +81,11 @@ screenshots; drive the real page.
    and point Playwright/Chrome at `http://127.0.0.1:9222` (`connect_over_cdp`).
 5. Turn it off when finished: `dsh-mobile cdp off` (flag removed; restart the app to apply).
 
-`dsh-mobile cdp status` prints the flag state, the app pid and every devtools socket.
+Socket discovery is automatic and does not need `/proc`: the helper asks the app over the
+bridge (`GET /process` → `app_pid` + `devtools_socket`), then falls back to `/proc/net/unix`
+(where SELinux permits) and finally to an abstract-socket probe scan. `DSH_WEBVIEW_SOCKET`
+overrides everything. `dsh-mobile cdp status` prints the flag state, the app process info, the
+discovery source (`via bridge|proc|scan|env`) and the devtools targets.
 Renderer console errors also land in logcat under the `chromium` tag (`[INFO:CONSOLE]`).
 
 ### Screenshots, recording and alarms

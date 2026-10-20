@@ -425,6 +425,7 @@ object AgentBridge {
             method == "POST" && path == "/tap" -> tap(body)
             method == "GET" && path == "/screenshot" -> screenshot(query)
             method == "GET" && path == "/app-screenshot" -> appScreenshot(query)
+            method == "GET" && path == "/process" -> processInfo()
             method == "POST" && path == "/gesture" -> gesture(body)
             method == "POST" && path == "/key" -> key(body)
             method == "POST" && path == "/wait" -> wait(body)
@@ -1784,6 +1785,34 @@ document.getElementById('api').textContent = checks.map(function(c){
      *    不需要任何权限，但要求 App 在前台（MainActivity 已注册窗口）。
      * 返回 {"ok":true,"path":...,"width":...,"height":...}；读图用 read_image。
      */
+    /**
+     * GET /process —— 宿主进程信息（v1.3.26）。
+     *
+     * 为什么加这个：Android 的 untrusted_app 域读不了 `/proc/net/unix`（SELinux EACCES），
+     * 设备内 helper 之前靠枚举 `/proc` 找 WebView 的 devtools 抽象 socket，必然失败。
+     * 主进程自己知道 pid，而 socket 名是确定规则 `webview_devtools_remote_<app pid>`，
+     * 由宿主直接告诉 helper，比扫描/读 /proc 都可靠。
+     */
+    private fun processInfo(): Pair<Int, String> {
+        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
+        val pid = android.os.Process.myPid()
+        val flag = ctx.getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug") }?.isFile == true
+        val ver = runCatching {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+        val json = JSONObject()
+            .put("ok", true)
+            .put("app_pid", pid)
+            .put("app_uid", android.os.Process.myUid())
+            .put("package", ctx.packageName)
+            .put("version_name", ver)
+            .put("webview_debug", flag)
+            .put("devtools_socket", if (flag) "webview_devtools_remote_$pid" else JSONObject.NULL)
+            .put("sdk", android.os.Build.VERSION.SDK_INT)
+            .put("model", android.os.Build.MODEL)
+        return 200 to json.toString()
+    }
+
     private fun appScreenshot(query: String): Pair<Int, String> {
         val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
         if (!AppShot.hasWindow()) {
