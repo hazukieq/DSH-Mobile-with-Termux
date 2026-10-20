@@ -332,9 +332,12 @@ and the window never appears. `POST /activity` (and `native open`) therefore rep
   2. use `native open <page> --notify` (or `{"notifyIfBlocked":true}`): when the start is
      blocked, the app posts a tappable notification and returns `notification_posted:true` - ask
      the user to tap it;
-  3. if this keeps happening, suggest granting "display over other apps" (`overlay`) or enabling
-     the accessibility service - either one is a BAL exemption and makes `opened:true` work from
-     the background. `native status` shows both permissions.
+  3. granting "display over other apps" (`overlay`) or enabling the accessibility service is a
+     **convenience suggestion only** - either one is a BAL exemption, but neither is required.
+     Suggest it at most once, then continue with the fallback. `native open overlay-settings` /
+     `native open accessibility-settings` opens the system page for the user; `native status`
+     shows both permission states. If the user does not grant them, that is fine: use
+     `--notify` / ask them to foreground the app. Never nag or block on it.
 - `opened:true` still means hand-off: no screenshots, no polling; the user may already be there.
 - Other apps opened via `/launch` / `/launch-intent` cannot be confirmed this way; treat them as
   hand-offs and do not check.

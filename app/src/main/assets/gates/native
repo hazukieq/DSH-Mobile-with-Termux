@@ -11,7 +11,7 @@ fi
 #   native status                    App/引擎/联网/电量/内存/存储/屏幕/权限 总览
 #   native settings                  读取原生设置当前值
 #   native set key=value [key=value…] 写入原生设置（数字/布尔自动识别）
-#   native open settings|terminal|main [--notify]
+#   native open settings|terminal|main|overlay-settings|accessibility-settings [--notify]
 #                                    打开 App 自己的页面；回执含 opened / background_blocked
 #                                    （后台启动被 BAL 拦截时会明确报 opened:false，--notify 可发通知兜底）
 #   native net                       只取联网状态（status 的子集，原始 JSON）

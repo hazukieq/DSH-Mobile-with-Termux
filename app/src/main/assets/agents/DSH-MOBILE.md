@@ -143,8 +143,10 @@ may be mid-animation or the user may have moved on. To verify a result: settle (
 (`bal_exempt.foreground|overlay|accessibility`) and `notification_posted`. If the OS refused a
 background start, `opened:false` (not a fake success). Pass `{"notifyIfBlocked":true}` (or
 `native open <page> --notify`) to post a tappable notification fallback. Do not retry blindly
-and do not screenshot to confirm; ask the user to foreground the app or grant overlay /
-accessibility, both of which are BAL exemptions.
+and do not screenshot to confirm. Overlay / accessibility are **optional suggestions** (both are
+BAL exemptions, neither is required): `native open overlay-settings` or
+`native open accessibility-settings` opens the system page for the user; if they decline, just
+fall back to `--notify` or asking them to foreground the app, and do not ask again.
 
 ### Hand-off semantics (opening pages for the user)
 

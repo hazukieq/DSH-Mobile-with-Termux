@@ -1,6 +1,12 @@
 # AI_CONTEXT
 
 ## Current progress
+- **悬浮窗仅作可选建议 + 系统设置页入口（2026-10-20 第六十七轮，v70）**：用户指示「让用户开悬浮窗可以建议，没授予就是 fallback」。调整：
+  ① `/activity` 支持打开系统设置页：`overlay-settings`（ACTION_MANAGE_OVERLAY_PERMISSION + package uri）、`accessibility-settings`（ACTION_ACCESSIBILITY_SETTINGS）；这类请求用「本 App 是否离开前台」判定 `opened`（`requested_kind:"system-settings"`），回执仍带 handoff/verify:none；
+  ② 文案改为「悬浮窗/无障碍只是**可选建议**，不是必需」：`opened:false` 时提示顺序改为「请用户切前台 → `--notify` 发通知 → 可建议授予悬浮窗/无障碍（只建议一次，不给就继续用 fallback，不纠缠）」；
+  ③ `notifyIfBlocked` 的通知目标支持系统设置页（PendingIntent 指向 overlay 设置）；
+  ④ 文档：AGENTS seed 67 明确「never nag or block on it」并给出 `native open overlay-settings|accessibility-settings`；`DSH-MOBILE.md` v12 同步；dotfiles VERSION 19 / doc marker v12。
+  实测 vivo：seed v67、doc v12 部署、engine healthy。versionName 1.3.38 / versionCode 278。
 - **BAL 后台启动检测 + 通知兜底（2026-10-20 第六十六轮，v69）**：用户报「从后台 shell 发出的启动请求可能被系统拒绝，返回成功但什么都没打开」。修复：
   ① `AppState` 记录 `lastResumeClass/lastResumeAt`（elapsedRealtime），提供 `resumedSince(t)`；
   ② `POST /activity` 不再只看 startActivity 是否抛异常：启动后最多轮询 1.2s 等「目标 Activity 真的 resume」→ 返回 `opened:true|false`；同时给出 `bal_exempt{foreground,overlay,accessibility}`、`background_blocked`（未打开且无豁免）、`notification_posted`；已在前台打开同一页时直接 `already_open:true`;

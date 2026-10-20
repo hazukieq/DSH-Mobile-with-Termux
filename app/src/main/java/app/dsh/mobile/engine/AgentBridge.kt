@@ -2078,19 +2078,27 @@ document.getElementById('api').textContent = checks.map(function(c){
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val wanted = obj.optString("name").ifBlank { obj.optString("activity") }
-        if (wanted.isBlank()) return 400 to """{"ok":false,"error":"name required (main|settings|terminal|<Class>)"}"""
-        val cls = when (wanted.lowercase()) {
+        if (wanted.isBlank()) return 400 to """{"ok":false,"error":"name required (main|settings|terminal|overlay-settings|accessibility-settings|<Class>)"}"""
+
+        // 系统设置页（可选建议的落地入口）：打开系统界面，帮助用户授予悬浮窗/无障碍。
+        // 这些**只是建议**：没授予也完整可用，走 notify / 用户切前台 的兜底。
+        val systemAction: String? = when (wanted.lowercase()) {
+            "overlay-settings", "overlay" -> android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION
+            "accessibility-settings", "a11y-settings" -> android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS
+            else -> null
+        }
+        val cls: Class<out android.app.Activity>? = if (systemAction != null) null else when (wanted.lowercase()) {
             "main", "home" -> app.dsh.mobile.MainActivity::class.java
             "settings" -> app.dsh.mobile.SettingsActivity::class.java
             "terminal", "term" -> app.dsh.mobile.term.TerminalActivity::class.java
             else -> runCatching {
                 val full = if (wanted.contains('.')) wanted else "app.dsh.mobile.$wanted"
                 Class.forName(full).asSubclass(android.app.Activity::class.java)
-            }.getOrNull() ?: return 404 to """{"ok":false,"error":"activity not found: $wanted (allowed: main|settings|terminal|<Class>)"}"""
+            }.getOrNull() ?: return 404 to """{"ok":false,"error":"activity not found: $wanted (allowed: main|settings|terminal|overlay-settings|accessibility-settings|<Class>)"}"""
         }
+        val requestedName = systemAction ?: cls!!.name
         val before = AppState.resumedActivityName()
-        val alreadyOpen = before == cls.name
-        // BAL 豁免现状：前台 / 悬浮窗权限 / 无障碍服务，三者有其一才「可能」允许后台启动 Activity
+        val alreadyOpen = cls != null && before == cls.name
         val overlay = runCatching { android.provider.Settings.canDrawOverlays(ctx) }.getOrDefault(false)
         val a11y = DshAccessibilityService.instance != null
         val foreground = AppState.isForeground(ctx)
@@ -2099,33 +2107,44 @@ document.getElementById('api').textContent = checks.map(function(c){
         val startedAt = System.currentTimeMillis()
         val sinceElapsed = android.os.SystemClock.elapsedRealtime()
         return runCatching {
-            val intent = android.content.Intent(ctx, cls).addFlags(
-                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                    android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            )
-            obj.optString("action").takeIf { it.isNotBlank() }?.let { intent.action = it }
-            ctx.startActivity(intent)
-            // 等待「真的 resume」的回调：BAL 拦截时 startActivity 不抛异常、但不会有 resume。
-            // 最多等 1200ms；已经在前台打开同一页时直接判已打开。
-            var resumedAfter: String? = if (alreadyOpen) cls.name else null
-            if (!alreadyOpen) {
-                val deadline = System.currentTimeMillis() + 1200
-                while (System.currentTimeMillis() < deadline && resumedAfter == null) {
-                    Thread.sleep(60)
-                    resumedAfter = AppState.resumedSince(sinceElapsed)
-                    if (resumedAfter == null) {
-                        val cur = AppState.resumedActivityName()
-                        if (cur != null && cur != before) resumedAfter = cur
+            val intent = if (cls != null) {
+                android.content.Intent(ctx, cls).addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
+            } else {
+                android.content.Intent(systemAction).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK).apply {
+                    if (systemAction == android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION) {
+                        data = android.net.Uri.parse("package:" + ctx.packageName)
                     }
                 }
             }
-            val opened = resumedAfter == cls.name
-            val notificationPosted = if (!opened && notifyIfBlocked) postOpenNotification(ctx, cls.name) else false
+            obj.optString("action").takeIf { it.isNotBlank() && cls != null }?.let { intent.action = it }
+            ctx.startActivity(intent)
+            // 等待「真的发生」：本 App 的页面看 resume 回调；系统页面看本 App 是否离开了前台。
+            var resumedAfter: String? = if (alreadyOpen) cls!!.name else null
+            var leftApp = false
+            val deadline = System.currentTimeMillis() + 1200
+            while (System.currentTimeMillis() < deadline) {
+                val cur = AppState.resumedActivityName()
+                if (cur == null) leftApp = true
+                if (cls != null) {
+                    if (alreadyOpen) break
+                    resumedAfter = AppState.resumedSince(sinceElapsed)
+                    if (resumedAfter == cls.name) break
+                } else if (leftApp) {
+                    break
+                }
+                Thread.sleep(60)
+            }
+            val opened = if (cls != null) resumedAfter == cls.name else leftApp
+            val notificationPosted = if (!opened && notifyIfBlocked) postOpenNotification(ctx, requestedName, cls) else false
             val result = JSONObject()
                 .put("ok", true)
                 .put("opened", opened)
-                .put("requested", cls.name)
+                .put("requested", requestedName)
+                .put("requested_kind", if (cls != null) "app-activity" else "system-settings")
                 .put("already_open", alreadyOpen)
                 .put("handoff", true)
                 .put("verify", "none")
@@ -2140,18 +2159,20 @@ document.getElementById('api').textContent = checks.map(function(c){
                 .put(
                     "hint",
                     when {
+                        opened && cls == null -> "System settings page opened for the user to grant the optional permission. No verification needed."
                         opened -> "Opened. Hand-off complete: do not screenshot or poll; the user may already be interacting with it."
-                        notificationPosted -> "Android blocked the background activity start; a notification was posted instead - ask the user to tap it (or bring the app to the foreground and call again)."
-                        !likelyAllowed -> "Android blocked the background activity start (no BAL exemption). Ask the user to open the app first, or grant 'display over other apps' / enable the accessibility service. Do not retry blindly."
-                        else -> "startActivity returned but the page did not resume; the user may still be switching or the window was suppressed. Ask the user before retrying."
+                        notificationPosted -> "Android blocked the background start; a notification was posted - ask the user to tap it (or bring the app to the foreground and call again)."
+                        !likelyAllowed -> "Android blocked the background start. This is only a fallback situation: ask the user to foreground the app, or use --notify; granting display-over-other-apps / accessibility is a convenience suggestion, never a requirement."
+                        else -> "startActivity returned but nothing came up; the user may still be switching. Ask the user before retrying."
                     },
                 )
             200 to result.toString()
         }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
     }
 
+
     /** BAL 拦截时的兜底：发一条可点击的通知，用户点一下就能打开目标页。 */
-    private fun postOpenNotification(ctx: Context, className: String): Boolean = runCatching {
+    private fun postOpenNotification(ctx: Context, target: String, cls: Class<out android.app.Activity>?): Boolean = runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) return false
@@ -2162,17 +2183,23 @@ document.getElementById('api').textContent = checks.map(function(c){
                 android.app.NotificationChannel(channelId, "Open page", android.app.NotificationManager.IMPORTANCE_DEFAULT)
             )
         }
-        val target = Class.forName(className)
-        val intent = android.content.Intent(ctx, target).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = if (cls != null) {
+            android.content.Intent(ctx, cls).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        } else {
+            android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                data = android.net.Uri.parse("package:" + ctx.packageName)
+            }
+        }
         val pi = android.app.PendingIntent.getActivity(
-            ctx, className.hashCode(), intent,
+            ctx, target.hashCode(), intent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or
                 if (android.os.Build.VERSION.SDK_INT >= 23) android.app.PendingIntent.FLAG_IMMUTABLE else 0,
         )
         val n = android.app.Notification.Builder(ctx, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("DSH Mobile")
-            .setContentText("Tap to open " + className.substringAfterLast('.'))
+            .setContentText("Tap to open " + target.substringAfterLast('.'))
             .setContentIntent(pi)
             .setAutoCancel(true)
             .build()
