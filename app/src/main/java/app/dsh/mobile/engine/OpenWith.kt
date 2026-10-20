@@ -36,6 +36,46 @@ object OpenWith {
         return DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:$rel")
     }
 
+    /**
+     * 分享文本/链接（v1.3.44）：ACTION_SEND + text/plain + chooser。
+     * 用途：agent 把链接、摘要、生成内容“转发”给微信/QQ/邮件等其它 App。
+     */
+    fun shareText(ctx: Context, text: String, subject: String? = null): JSONObject {
+        android.util.Log.i("OpenWith", "shareText chars=${text.length}")
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            subject?.takeIf { it.isNotBlank() }?.let { putExtra(Intent.EXTRA_SUBJECT, it) }
+        }
+        return launchChooser(ctx, intent, "text")
+    }
+
+    /** 分享文件/文件夹（ACTION_SEND + EXTRA_STREAM），与 open 的 share 分支共用实现。 */
+    private fun launchChooser(ctx: Context, intent: Intent, kind: String): JSONObject {
+        val before = AppState.resumedActivityName()
+        return runCatching {
+            val chooser = Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(chooser)
+            val deadline = System.currentTimeMillis() + 900
+            var left = false
+            while (System.currentTimeMillis() < deadline) {
+                if (AppState.resumedActivityName() == null) { left = true; break }
+                Thread.sleep(50)
+            }
+            android.util.Log.i("OpenWith", "share $kind launched leftApp=$left")
+            JSONObject()
+                .put("ok", true)
+                .put("opened", left)
+                .put("kind", kind)
+                .put("handoff", true)
+                .put("verify", "none")
+                .put("hint", if (left) "Share sheet opened. Hand-off complete." else "Share sheet did not come up (BAL or no handler); foreground the app and retry.")
+        }.getOrElse {
+            android.util.Log.w("OpenWith", "share failed: ${it.message}")
+            JSONObject().put("ok", false).put("error", "share failed: ${it.message}")
+        }
+    }
+
     fun open(ctx: Context, path: String, kind: String = "file", mimeOverride: String? = null): JSONObject {
         android.util.Log.i("OpenWith", "request kind=$kind path=$path")
         val file = File(path)

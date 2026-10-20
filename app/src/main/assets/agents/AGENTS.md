@@ -237,6 +237,11 @@ before deep app work. Quick map:
   start; the app also replaces bootstrap toybox/busybox symlinks that would shadow them. If a
   gate reports "command not found" or "Permission denied", run `ls -l "$PREFIX/bin/<name>"`
   and include that output in your report - do not work around it with `/system/bin/*`.
+- Sharing / forwarding is a first-class action: `native share <path>` (files) and
+  `native share-text "<text|link>"` open the system share sheet so the user can forward to
+  WeChat/QQ/mail; `POST /open/share` and `POST /share/text` are the bridge equivalents. Incoming
+  shares from other apps (ACTION_SEND) are copied to `$DSH_HOME/inbox/` and prefilled into the
+  open conversation's composer; no automatic send.
 - Opening files with other apps: `native open-file <path>` / `native open-folder <path>` /
   `native share <path>` (or `POST /open/file|folder|share`). The WebUI's own "open in app" and
   "reveal in folder" buttons use the same path now, so Android no longer reports "no desktop".

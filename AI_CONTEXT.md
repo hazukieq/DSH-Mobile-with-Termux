@@ -1,6 +1,11 @@
 # AI_CONTEXT
 
 ## Current progress
+- **分享/转发能力（2026-10-20 第七十三轮，v76）**：用户要求「给 agent 增加弹出分享文件给其它 App 的功能（转发/分享很重要）；其它 App 分享时也有我们的 App（直接落入打开会话中，没有则要有状态说明）」。
+  ① 出站分享：`OpenWith.shareText` + `POST /share/text`（ACTION_SEND text/plain + chooser），文件分享沿用 `/open/share`（ACTION_SEND + EXTRA_STREAM + 我方 provider 授权）；门脚本新增 `native share-text "<文本>"`、`native share <path>`；
+  ② 入站分享：Manifest 给 MainActivity 加 `ACTION_SEND`（text/plain 与 */*）和 `ACTION_SEND_MULTIPLE` intent-filter；`handleIncomingShare` 把分享文件复制到 `$DSH_HOME/inbox/`，组装「文件路径 + 分享文本」后经 `buildVoiceInputJs` 写入当前会话输入框（复用语音输入踩过坑后的 **写入→readSendText 校验→execCommand 补写** 三步流程，不自动发送）；首次投递前读取现有草稿并合并（避免覆盖用户正在写的内容）；页面未就绪按 900ms 重试 8 次；成功 toast「已把分享内容放入输入框/追加到输入框」，无输入框时 toast 说明 inbox 路径（字符串全部进 strings.xml ×3 语言）。
+  实测 vivo：冷启动分享 → 重试后 `write result=ok:written`；连续两次分享后 composer 内容为 `'A-draft\n\nB-second'`（合并而非覆盖）；`DshShare` 日志可追踪意图/重试/写入结果。
+  版本 1.3.44 / 284；doc v16、AGENTS seed 70、dotfiles VERSION 23。
 - **「显示文件位置」真正打通（2026-10-20 第七十二轮，v75）**：用户报 v74 后仍打不开；本轮开 CDP + logcat 实测复现并逐层定位（关键证据链）：
   ① 触发 reveal → 日志 `OpenWith: request kind=folder path=...` 后无后续、UI 报 revealError → 说明 `OpenWith` 在构造 intent 阶段抛异常（在 runCatching 外）。
   ② logcat 根因：`Permission Denial: opening provider com.android.externalstorage.ExternalStorageProvider ... requires ACTION_OPEN_DOCUMENT` —— `ClipData.newUri()` 会 resolver.getType() 打开目标 provider；对系统 ExternalStorageProvider 的 document URI，本 App 没有 SAF 授权（MANAGE_EXTERNAL_STORAGE 也不覆盖）→ SecurityException。

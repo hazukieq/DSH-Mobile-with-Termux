@@ -55,6 +55,12 @@ class MainActivity : Activity() {
     /** 页面缩放百分比（竖屏时应用；等价浏览器 Ctrl+/Ctrl-）。横屏桌面模式交给 1280px meta，不叠加 */
     private var pageScale = DEFAULT_PAGE_SCALE
 
+    /** v1.3.44：其它 App 分享进来的待写入内容（页面未就绪时暂存）。 */
+    private var pendingSharePrompt: String? = null
+    private var shareDeliverAttempts = 0
+    /** 首次投递前先读取现有草稿并合并，避免分享覆盖用户正在写的内容。 */
+    private var shareMergeChecked = false
+
     /** 本页当前生效的语言代码（onResume 比对，变了就重建） */
     private var appliedLocale: String = ""
 
@@ -113,6 +119,8 @@ class MainActivity : Activity() {
         // 若写在 apply{} 里会在赋值完成前执行而触发 UninitializedPropertyAccessException。
         webView = findViewById<WebView>(R.id.webView)
         setupWebView()
+        // v1.3.44：冷启动时若由其它 App 分享拉起，处理分享内容
+        runCatching { handleIncomingShare(intent) }
         // 读回用户保存的页面缩放与屏幕朝向偏好
         readUiPrefs()
         applyOrientation(orientationMode)
@@ -235,6 +243,157 @@ class MainActivity : Activity() {
     }
 
     /** 读取用户持久化的屏幕朝向与缩放偏好（设置页与首次引导共用同一组 prefs） */
+    /** v1.3.44：singleTask 下其它 App 再次分享会走 onNewIntent。 */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent != null) {
+            setIntent(intent)
+            runCatching { handleIncomingShare(intent) }
+        }
+    }
+
+    /**
+     * 接收其它 App 的分享（文本/链接/文件）。
+     *
+     * 文件先复制进 `$DSH_HOME/inbox/`（引擎与终端可直接读的稳定路径），然后把
+     * 「文件路径 + 分享文本」写进当前会话的输入框（只是预填，不自动发送）。
+     * 没有打开的会话/输入框时给出明确状态提示，而不是静默失败。
+     */
+    private fun handleIncomingShare(intent: Intent) {
+        val action = intent.action ?: return
+        Log.i("DshShare", "intent action=$action type=${intent.type}")
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
+        var rawText = intent.getStringExtra(Intent.EXTRA_TEXT)
+        if (rawText.isNullOrBlank()) rawText = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+        val uris = mutableListOf<Uri>()
+        intent.clipData?.let { cd ->
+            for (i in 0 until cd.itemCount) cd.getItemAt(i)?.uri?.let { uris.add(it) }
+        }
+        @Suppress("DEPRECATION")
+        (intent.getParcelableExtra<android.os.Parcelable>(Intent.EXTRA_STREAM) as? Uri)?.let { uris.add(it) }
+        val saved = mutableListOf<String>()
+        if (uris.isNotEmpty()) {
+            val inbox = java.io.File(app.dsh.mobile.engine.EngineConfig.dshHome(this), "inbox").apply { mkdirs() }
+            uris.distinct().forEach { uri ->
+                runCatching {
+                    val name = (displayNameOf(uri) ?: "shared-${System.currentTimeMillis()}").replace('/', '_')
+                    val dst = java.io.File(inbox, "${System.currentTimeMillis()}-$name")
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        dst.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    if (dst.isFile && dst.length() > 0) saved.add(dst.absolutePath)
+                }.onFailure { Log.w("MainActivity", "share copy failed: ${it.message}") }
+            }
+        }
+        val body = buildString {
+            if (saved.isNotEmpty()) {
+                append(getString(R.string.share_files_header)).append('\n')
+                saved.forEach { append("- ").append(it).append('\n') }
+                append('\n')
+            }
+            if (!rawText.isNullOrBlank()) append(rawText.trim())
+        }.trim()
+        if (body.isBlank()) {
+            Toast.makeText(this, getString(R.string.share_empty), Toast.LENGTH_SHORT).show()
+            return
+        }
+        pendingSharePrompt = body
+        shareDeliverAttempts = 0
+        shareMergeChecked = false
+        Log.i("DshShare", "prompt len=${body.length} files=${saved.size} webViewReady=${::webView.isInitialized}")
+        webView.postDelayed({ deliverPendingShare() }, 400)
+    }
+
+    private fun displayNameOf(uri: Uri): String? = runCatching {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull()
+
+    /**
+     * 把待写入的分享内容放进 WebUI 输入框。
+     *
+     * 不能只看 JS 返回值：Lexical 的 paste 管线是**异步**的，且 paste 可能完全无效
+     * （是语音输入踩过的坑）。所以这里按语音同样的「写入 → 读回 → 必要时 execCommand 补写」
+     * 三步走，但**不发送**，只预填给用户确认。
+     */
+    private fun deliverPendingShare() {
+        val prompt = pendingSharePrompt ?: return
+        if (!::webView.isInitialized) return
+        if (!shareMergeChecked) {
+            shareMergeChecked = true
+            readSendText { existing ->
+                if (!existing.isNullOrBlank() && existing != "none" && !existing.contains(prompt.take(16))) {
+                    pendingSharePrompt = existing.trimEnd() + "\n\n" + prompt
+                }
+                deliverPendingShare()
+            }
+            return
+        }
+        if (shareDeliverAttempts >= 8) {
+            pendingSharePrompt = null
+            val inbox = java.io.File(app.dsh.mobile.engine.EngineConfig.dshHome(this), "inbox").absolutePath
+            Toast.makeText(
+                this,
+                getString(R.string.share_no_composer, inbox),
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        shareDeliverAttempts++
+        Log.i("DshShare", "deliver attempt=$shareDeliverAttempts len=${prompt.length}")
+        webView.evaluateJavascript(buildVoiceInputJs(prompt)) { raw ->
+            Log.i("DshShare", "write result=${jsString(raw)}")
+            when (jsString(raw)) {
+                "entering-session", "no-input-found" ->
+                    webView.postDelayed({ deliverPendingShare() }, 900)
+                else -> webView.postDelayed({ verifyShareWrite(prompt) }, 700)
+            }
+        }
+    }
+
+    private fun verifyShareWrite(prompt: String) {
+        val probe = prompt.take(16)
+        readSendText { inBox ->
+            when {
+                inBox.contains(probe) -> {
+                    pendingSharePrompt = null
+                    Toast.makeText(this, getString(R.string.share_prefilled), Toast.LENGTH_SHORT).show()
+                }
+                inBox.isEmpty() || inBox == "none" -> {
+                    // paste 没生效 → execCommand 补写，再读一次
+                    webView.evaluateJavascript(buildVoiceRepairJs(prompt)) { _ ->
+                        webView.postDelayed({
+                            readSendText { after ->
+                                if (after.contains(probe)) {
+                                    pendingSharePrompt = null
+                                    Toast.makeText(this, getString(R.string.share_prefilled), Toast.LENGTH_SHORT).show()
+                                } else {
+                                    deliverPendingShare()
+                                }
+                            }
+                        }, 350)
+                    }
+                }
+                else -> {
+                    // 用户已有草稿：追加在末尾，不覆盖
+                    webView.evaluateJavascript(buildVoiceRepairJs("\n\n" + prompt)) { _ ->
+                        webView.postDelayed({
+                            readSendText { after ->
+                                if (after.contains(probe)) {
+                                    pendingSharePrompt = null
+                                    Toast.makeText(this, getString(R.string.share_appended), Toast.LENGTH_SHORT).show()
+                                } else {
+                                    deliverPendingShare()
+                                }
+                            }
+                        }, 350)
+                    }
+                }
+            }
+        }
+    }
+
     private fun readUiPrefs() {
         val p = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
         pageScale = p.getInt(KEY_PAGE_SCALE, DEFAULT_PAGE_SCALE)

@@ -17,7 +17,8 @@ fi
 #   native net                       只取联网状态（status 的子集，原始 JSON）
 #   native open-file <path>          用系统其它 App 打开文件（ACTION_VIEW + content:// 授权）
 #   native open-folder <path>        用系统文件 App 打开文件夹
-#   native share <path>              分享文件
+#   native share <path>              分享文件/文件夹
+#   native share-text "<text>"       分享文本/链接（转发给微信/QQ/邮件等）
 #   native files                     检查 $PREFIX/bin 里 App 管理的脚本：真实文件/可执行/符号链接
 #   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带；path 必须是真实端点，
 #                                     如 GET /notif、GET /process、POST /tap）
@@ -72,6 +73,11 @@ case "${1:-}" in
       pairs="$pairs\"$k\":$jv"
     done
     json_or_die POST /settings "{\"set\":{$pairs}}"
+    ;;
+  share-text)
+    shift
+    [ -n "${1:-}" ] || { echo "native share-text: need text" >&2; exit 2; }
+    json_or_die POST /share/text "{\"text\":\"$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')\"}"
     ;;
   open-file|open-folder|share)
     # 用系统其它 App 打开文件/文件夹/分享（v1.3.41）

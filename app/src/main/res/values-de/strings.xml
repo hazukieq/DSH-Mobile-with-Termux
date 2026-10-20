@@ -519,4 +519,9 @@ Engine: %6$s</string>
     <string name="terminal_exit_confirm_message">Keine weiteren Terminal-Tabs. App beenden?</string>
     <string name="terminal_exit_confirm_exit">App beenden</string>
     <string name="terminal_exit_confirm_new">Neues Terminal</string>
+    <string name="share_prefilled">Geteilte Inhalte stehen im Eingabefeld</string>
+    <string name="share_appended">Geteilte Inhalte wurden im Eingabefeld ergänzt</string>
+    <string name="share_empty">Geteilter Inhalt ist leer</string>
+    <string name="share_no_composer">Freigabe empfangen, aber kein Eingabefeld verfügbar. Dateien liegen in %1$s — öffne eine Unterhaltung, um sie zu referenzieren.</string>
+    <string name="share_files_header">Diese Dateien wurden geteilt (auf diesem Gerät gespeichert):</string>
 </resources>

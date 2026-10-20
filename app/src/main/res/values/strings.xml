@@ -509,4 +509,9 @@ engine: %6$s</string>
     <string name="terminal_exit_confirm_message">No terminal tabs left. Exit the app?</string>
     <string name="terminal_exit_confirm_exit">Exit app</string>
     <string name="terminal_exit_confirm_new">New terminal</string>
+    <string name="share_prefilled">Shared content placed in the input box</string>
+    <string name="share_appended">Shared content appended to the input box</string>
+    <string name="share_empty">Shared content is empty</string>
+    <string name="share_no_composer">Received share, but no conversation input box is available. Files are saved in %1$s — open a conversation to reference them.</string>
+    <string name="share_files_header">I shared these files (saved on this device):</string>
 </resources>

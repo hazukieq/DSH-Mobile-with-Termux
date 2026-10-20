@@ -155,6 +155,29 @@ foreground) and `handoff:true`; if no installed app can handle the type you get 
 with a readable error. When the start is blocked while the app is in the background, use the
 same BAL workarounds as `native open` (foreground the app / notification fallback).
 
+### Sharing (outgoing and incoming)
+
+**Outgoing** (agent → other apps): the share sheet is opened through the app, no permissions needed:
+
+```bash
+native share /sdcard/Download/a.pdf          # POST /open/share  (ACTION_SEND + EXTRA_STREAM)
+native share-text "看这个：https://..."       # POST /share/text   (ACTION_SEND text/plain)
+native open-file <path>                      # open with another app instead of sharing
+```
+
+Receipts are hand-offs (`opened` = the app really left the foreground); a chooser with no
+handler stays in front and reports `opened:false`.
+
+**Incoming** (other apps → DSH Mobile): DSH Mobile is registered for `ACTION_SEND` /
+`ACTION_SEND_MULTIPLE` (text and files). When the user shares something to it:
+
+- files are copied into `$DSH_HOME/inbox/` (stable path the engine/terminal can read);
+- the current conversation's composer is prefilled with the file paths plus the shared text
+  (draft is merged, not overwritten); nothing is sent automatically;
+- a toast confirms: "已把分享内容放入输入框"; if no conversation/composer is available the
+  toast explains the inbox path instead ("已接收分享，但当前没有可写入的会话输入框…");
+- shared text-only links land directly in the composer as text.
+
 ### Audio playback (native MediaPlayer)
 
 Music/TTS-length audio does **not** need any Termux audio stack (no ALSA/PulseAudio/mpv):

@@ -496,6 +496,7 @@ object AgentBridge {
             method == "POST" && path == "/open/file" -> openPath(ctx, body, "file")
             method == "POST" && path == "/open/folder" -> openPath(ctx, body, "folder")
             method == "POST" && path == "/open/share" -> openPath(ctx, body, "share")
+            method == "POST" && path == "/share/text" -> shareText(ctx, body)
             method == "POST" && path == "/gesture" -> gesture(body)
             method == "POST" && path == "/key" -> key(body)
             method == "POST" && path == "/wait" -> wait(body)
@@ -2200,6 +2201,16 @@ document.getElementById('api').textContent = checks.map(function(c){
         )
         val code = if (status.optBoolean("ok")) 200 else 422
         return code to status.put("instant", true).put("verify", "none").toString()
+    }
+
+    /** POST /share/text {"text":"...","subject":"..."} —— 把文本/链接转发给其它 App（v1.3.44）。 */
+    private fun shareText(ctx: Context, body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val text = obj.optString("text")
+        if (text.isBlank()) return 400 to """{"ok":false,"error":"text required"}"""
+        val r = OpenWith.shareText(ctx, text, obj.optString("subject"))
+        return (if (r.optBoolean("ok")) 200 else 500) to r.toString()
     }
 
     /** POST /open/file|folder|share {"path":"/sdcard/x.pdf","mime":"application/pdf"} */

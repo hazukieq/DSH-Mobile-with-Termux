@@ -509,4 +509,9 @@ dsh：%2$s
     <string name="terminal_exit_confirm_message">没有其他终端标签了，要退出 App 吗？</string>
     <string name="terminal_exit_confirm_exit">退出 App</string>
     <string name="terminal_exit_confirm_new">新建终端</string>
+    <string name="share_prefilled">已把分享内容放入输入框</string>
+    <string name="share_appended">已把分享内容追加到输入框</string>
+    <string name="share_empty">分享内容为空</string>
+    <string name="share_no_composer">已接收分享，但当前没有可写入的会话输入框。文件保存在 %1$s，打开会话后可从中引用。</string>
+    <string name="share_files_header">我分享了这些文件（已保存到本机）：</string>
 </resources>
