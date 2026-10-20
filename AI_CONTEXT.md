@@ -1,6 +1,11 @@
 # AI_CONTEXT
 
 ## Current progress
+- **出站分享「文件不存在」修复（2026-10-20 第七十四轮，v78）**：用户让 agent 分享文件，分享面板弹出但点发送后目标 App 报「文件不存在」。logcat 显示 `OpenWith: request kind=share path=…`、uri 正确（`content://com.termux.dshfiles/%2Fstorage%2F…`）、`leftApp=true`，说明问题在**目标 App 读取我们的 ContentProvider**。根因：`DshFileProvider.query()` 返回 null，而微信/QQ 等会先 query `OpenableColumns.DISPLAY_NAME/SIZE` 判断文件；拿到 null 就提示不存在。修复：
+  ① 实现 `query()` 返回 MatrixCursor（`_display_name`/`_size`），并加 `openAssetFile()`；`openFile()` 加日志（目标真来读时能看到路径）；
+  ② `fileFor()` 对 `encodedPath` 解码后归一化重复前导斜杠（`//storage` → `/storage`）；
+  ③ 分享 intent 显式挂 `ClipData.newRawUri`（部分 ROM 的微信/QQ 从 ClipData 取 grant，只设 EXTRA_STREAM 会读不到）。
+  之前 v77 已包含 query 元数据 + ClipData；v78 补 openAssetFile/路径归一化并把 AssetFileDescriptor 构造改正确。版本 1.3.46 / 286。待用户真机重试确认目标 App 能读。
 - **分享/转发能力（2026-10-20 第七十三轮，v76）**：用户要求「给 agent 增加弹出分享文件给其它 App 的功能（转发/分享很重要）；其它 App 分享时也有我们的 App（直接落入打开会话中，没有则要有状态说明）」。
   ① 出站分享：`OpenWith.shareText` + `POST /share/text`（ACTION_SEND text/plain + chooser），文件分享沿用 `/open/share`（ACTION_SEND + EXTRA_STREAM + 我方 provider 授权）；门脚本新增 `native share-text "<文本>"`、`native share <path>`；
   ② 入站分享：Manifest 给 MainActivity 加 `ACTION_SEND`（text/plain 与 */*）和 `ACTION_SEND_MULTIPLE` intent-filter；`handleIncomingShare` 把分享文件复制到 `$DSH_HOME/inbox/`，组装「文件路径 + 分享文本」后经 `buildVoiceInputJs` 写入当前会话输入框（复用语音输入踩过坑后的 **写入→readSendText 校验→execCommand 补写** 三步流程，不自动发送）；首次投递前读取现有草稿并合并（避免覆盖用户正在写的内容）；页面未就绪按 900ms 重试 8 次；成功 toast「已把分享内容放入输入框/追加到输入框」，无输入框时 toast 说明 inbox 路径（字符串全部进 strings.xml ×3 语言）。

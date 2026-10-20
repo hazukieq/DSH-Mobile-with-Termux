@@ -104,6 +104,9 @@ object OpenWith {
                 this.type = type
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_TITLE, file.name)
+                // ClipData 显式挂上：部分 ROM 的分享目标（微信/QQ）从 ClipData 取 grant，
+                // 只设 EXTRA_STREAM 时 Android 自动迁移在个别实现里不生效 → 目标读不到。
+                clipData = android.content.ClipData.newRawUri(file.name, uri)
             } else {
                 setDataAndType(uri, type)
             }
