@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **「显示文件位置」= 打开文件管理器定位（2026-10-20 第七十五轮，v79）**：用户澄清「打开文件就是打开文件管理器去定位即可，不需要其他」，并提醒权限问题要查官方文档。查证：[Android 共享存储文档](https://developer.android.google.cn/training/data-storage/shared/documents-files) 的 SAF/EXTRA_INITIAL_URI 用法，以及社区实践（ACTION_VIEW + ExternalStorageProvider document URI + `vnd.android.document/directory` 可让 DocumentsUI 定位目录）。实测（adb shell 直接验证）：
+  `am start -n com.android.documentsui/com.android.documentsui.files.FilesActivity -a VIEW -d content://com.android.externalstorage.documents/document/primary%3ADocuments%2Fdshdata%2Fworkspaces%2Fmobile%2Fmedia -t vnd.android.document/directory` → DocumentsUI 精确打开 `dshdata > workspaces > mobile > media`，文件 `逐家无输赢.mp3` 可见（截图确认）。
+  实现：`OpenWith` 对「folder/reveal」优先显式指定 DocumentsUI 的 FilesActivity（com.android.documentsui / com.google.android.documentsui），不弹「用哪个应用打开」选择器；document URI 用 `DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:<相对路径>")`；**不带 GRANT/ClipData**（外部 provider 的 document URI 不归我们所有，带授权尝试会 SecurityException）。App 私有目录（dsh-home/inbox 等）系统文件管理器无权浏览 → 直接返回 `ok:false` + 说明「先复制到 /sdcard」，不再给无效的 provider 目录 URI。版本 1.3.47 / 287。
 - **出站分享「文件不存在」修复（2026-10-20 第七十四轮，v78）**：用户让 agent 分享文件，分享面板弹出但点发送后目标 App 报「文件不存在」。logcat 显示 `OpenWith: request kind=share path=…`、uri 正确（`content://com.termux.dshfiles/%2Fstorage%2F…`）、`leftApp=true`，说明问题在**目标 App 读取我们的 ContentProvider**。根因：`DshFileProvider.query()` 返回 null，而微信/QQ 等会先 query `OpenableColumns.DISPLAY_NAME/SIZE` 判断文件；拿到 null 就提示不存在。修复：
   ① 实现 `query()` 返回 MatrixCursor（`_display_name`/`_size`），并加 `openAssetFile()`；`openFile()` 加日志（目标真来读时能看到路径）；
   ② `fileFor()` 对 `encodedPath` 解码后归一化重复前导斜杠（`//storage` → `/storage`）；

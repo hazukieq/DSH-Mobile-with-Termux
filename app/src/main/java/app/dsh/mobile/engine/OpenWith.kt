@@ -76,6 +76,28 @@ object OpenWith {
         }
     }
 
+    /**
+     * 系统「文件」App（DocumentsUI）能不能显式打开某个目录。
+     *
+     * 用户要求「打开文件/显示位置 = 打开文件管理器去定位即可」，所以优先显式指定
+     * DocumentsUI 的 FilesActivity（避免弹「用哪个应用打开」选择器）；机型没有
+     * DocumentsUI 时再退回不带 component 的 VIEW。
+     * 参考 AOSP：com.android.documentsui.files.FilesActivity + ACTION_VIEW +
+     * document URI + vnd.android.document/directory 即定位到该目录。
+     */
+    private fun documentsUiComponent(ctx: Context): android.content.ComponentName? {
+        val candidates = listOf(
+            "com.android.documentsui" to "com.android.documentsui.files.FilesActivity",
+            "com.google.android.documentsui" to "com.google.android.documentsui.files.FilesActivity",
+        )
+        for ((pkg, cls) in candidates) {
+            val cn = android.content.ComponentName(pkg, cls)
+            val ok = runCatching { ctx.packageManager.getActivityInfo(cn, 0) }.isSuccess
+            if (ok) return cn
+        }
+        return null
+    }
+
     fun open(ctx: Context, path: String, kind: String = "file", mimeOverride: String? = null): JSONObject {
         android.util.Log.i("OpenWith", "request kind=$kind path=$path")
         val file = File(path)
@@ -91,6 +113,11 @@ object OpenWith {
         // 也不行）→ SecurityException「you could obtain access using ACTION_OPEN_DOCUMENT」。
         // 所以：系统文档 URI 走「不带 grant」的纯 VIEW；我们自己的 provider URI 才带 grant。
         val externalDoc = if (effectiveKind == "folder") storageDocumentUri(file.absolutePath) else null
+        if (effectiveKind == "folder" && externalDoc == null) {
+            return JSONObject().put("ok", false)
+                .put("error", "folder is in app-private storage (${file.absolutePath}); the system file manager cannot browse it - copy it to /sdcard first")
+                .put("private_storage", true)
+        }
         val uri = externalDoc ?: providerUri(ctx, file)
         val action = if (effectiveKind == "share") Intent.ACTION_SEND else Intent.ACTION_VIEW
         val type = when (effectiveKind) {
@@ -100,6 +127,12 @@ object OpenWith {
         val intent = Intent(action).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (externalDoc == null) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // 「显示文件位置」：共享存储上的目录优先直接交给系统文件 App 并定位，
+            // 不弹选择器；App 私有目录（dsh-home 等）系统文件 App 无权限浏览，
+            // 不指定 component，让系统决定并如实返回结果。
+            if (effectiveKind == "folder" && externalDoc != null) {
+                documentsUiComponent(ctx)?.let { component = it }
+            }
             if (effectiveKind == "share") {
                 this.type = type
                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -119,10 +152,14 @@ object OpenWith {
         val before = AppState.resumedActivityName()
         val started = System.currentTimeMillis()
         return runCatching {
-            val chooser = Intent.createChooser(intent, null).addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-            ctx.startActivity(chooser)
+            if (effectiveKind == "folder" && intent.component != null) {
+                ctx.startActivity(intent)
+            } else {
+                val chooser = Intent.createChooser(intent, null).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+                ctx.startActivity(chooser)
+            }
             // 是否真的离开本 App：离开/切走说明系统界面已接管；本 App 仍在 → 可能被 BAL 拦下
             val deadline = System.currentTimeMillis() + 900
             var left = false
