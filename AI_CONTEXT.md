@@ -1,6 +1,11 @@
 # AI_CONTEXT
 
 ## Current progress
+- **「无法显示文件位置，请重试」修复（2026-10-20 第七十一轮，v74）**：用户点 WebUI 的「显示文件位置」报此错。定位：客户端 RPC 走 `session.openWorkspacePath({action:"reveal"})` → session-controller 调 `revealNativePath` → `nativeFileManager` 在 android 返回 null → 抛「native file manager is unsupported on android」→ revealError。上一版补丁只覆盖了 `openNativePath`（默认打开），没覆盖 reveal。修复：
+  ① 引擎补丁升级：helper 改为 `openAndroidPath(path, signal, env, route="/open/file")`（支持 route，升级时替换旧 v73 helper），`revealNativePath` 开头注入 android 分支（dirname → POST `/open/folder`）；`openNativePathWithIntent` 的 android 分支保留；`canOpenNativePath` android=true 保留；幂等（helper 用 v2 marker、open 分支用调用点检测）。
+  ② `OpenWith` 增强：调用方传 file 但实际是目录时按 folder 处理；chooser 也加 `FLAG_GRANT_READ_URI_PERMISSION`，提高各 ROM 文件管理器/查看器接受度。
+  ③ 宿主验证：对解压出的 `dsh-native-command` 模拟补丁并用 `node --check` 确认生成的 JS 可解析；vivo 日志确认 `native-command patch: bridge helper upgraded to v2` + `engine patch: android open-in-app enabled`。
+  版本 1.3.42 / 282；doc 74 routes / 106 mentions 校验通过。
 - **Android「用外部程序打开文件/文件夹」打通（2026-10-20 第七十轮，v73）**：用户遇到 WebUI 提示「此主机没有可用的桌面，无法使用外部程序打开文件或文件夹；文件仍可在侧边栏预览」，要求赋予调用系统能力去打开。实现：
   ① Kotlin 新增 `DshFileProvider`（自研最小 ContentProvider，exported=false、grantUriPermissions，`content://com.termux.dshfiles/<encoded abs path>`，只读打开，MimeTypeMap 推断类型）+ `OpenWith`：文件 ACTION_VIEW + content URI + FLAG_GRANT_READ_URI_PERMISSION/ClipData；/sdcard 目录用 ExternalStorageProvider document URI（系统文件 App 能处理），其它目录退回 provider URI + `vnd.android.document/directory`；分享 ACTION_SEND + EXTRA_STREAM；回执 `opened` 用「本 App 是否离开前台」判定 + handoff/verify:none；
   ② 桥端点 `POST /open/file|folder|share`（path/mime），门脚本 `native open-file|open-folder|share <path>`；

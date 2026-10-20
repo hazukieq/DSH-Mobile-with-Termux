@@ -41,8 +41,10 @@ object OpenWith {
         if (!file.exists()) {
             return JSONObject().put("ok", false).put("error", "not found: $path")
         }
+        // 调用方传 file 但实际是目录（引擎预览/文件夹按钮）时，按文件夹处理
+        val effectiveKind = if (kind == "file" && file.isDirectory) "folder" else kind
         val mime = mimeOverride?.takeIf { it.isNotBlank() } ?: mimeOf(file)
-        val (action, uri, type) = when (kind) {
+        val (action, uri, type) = when (effectiveKind) {
             "folder" -> {
                 val doc = storageDocumentUri(file.absolutePath)
                 if (doc != null) Triple(Intent.ACTION_VIEW, doc, "vnd.android.document/directory")
@@ -53,14 +55,14 @@ object OpenWith {
         }
         val intent = Intent(action).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            if (kind == "share") {
+            if (effectiveKind == "share") {
                 this.type = type
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_TITLE, file.name)
             } else {
                 setDataAndType(uri, type)
             }
-            if (kind == "file" || kind == "folder") {
+            if (effectiveKind == "file" || effectiveKind == "folder") {
                 @Suppress("DEPRECATION")
                 clipData = android.content.ClipData.newUri(ctx.contentResolver, file.name, uri)
             }
@@ -69,7 +71,10 @@ object OpenWith {
         val before = AppState.resumedActivityName()
         val started = System.currentTimeMillis()
         return runCatching {
-            ctx.startActivity(Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val chooser = Intent.createChooser(intent, null).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            ctx.startActivity(chooser)
             // 是否真的离开本 App：离开/切走说明系统界面已接管；本 App 仍在 → 可能被 BAL 拦下
             val deadline = System.currentTimeMillis() + 900
             var left = false
@@ -80,7 +85,7 @@ object OpenWith {
             JSONObject()
                 .put("ok", true)
                 .put("opened", left)
-                .put("kind", kind)
+                .put("kind", effectiveKind)
                 .put("action", action)
                 .put("uri", uri.toString())
                 .put("mime", type)
