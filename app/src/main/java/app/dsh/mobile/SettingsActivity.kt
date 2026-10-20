@@ -324,8 +324,14 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        app.dsh.mobile.engine.AppState.onResume(this)
         // 从系统无障碍设置返回后刷新状态；Shizuku 授权结果回调也会刷新
         refreshAll()
+    }
+
+    override fun onPause() {
+        app.dsh.mobile.engine.AppState.onPause(this)
+        super.onPause()
     }
 
     override fun onDestroy() {

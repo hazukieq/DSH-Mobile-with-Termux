@@ -228,8 +228,14 @@ before deep app work. Quick map:
   `$PREFIX/lib/node_modules/@deepseek-ai/dsh`). `$DSH_HOME` = `<files>/dsh-home`
   (profiles, sessions, workspaces, AGENTS.md).
 - Native gates already on PATH: `notify`, `scr` (dump/tap/tap-text), `say`, `psx`, `killx`,
-  `loop`, `fast`, `linux`, `dsh-update`, `trash-cli`, `shot` (system screenshot), `alarm`
-  (alarms/timers), `record` (screen recording; ROOT or SHIZUKU mode only).
+  `loop`, `fast`, `linux`, `dsh-update`, `trash-cli`, `shot` (system screenshot), `appshot`
+  (app-window screenshot), `alarm` (alarms/timers), `record` (screen recording; ROOT or SHIZUKU
+  mode only), `native` (app control/debug: status, settings read/write, open native pages).
+- Native control one-liners: `native status` (foreground + resumed activity, network, battery,
+  memory, storage, permission state), `native settings` / `native set page_scale=100`,
+  `native open settings|terminal|main`. Prefer these over `am start`, which is silently blocked
+  for background activity starts; `native open` reports the resumed activity so you can tell
+  whether the window really opened.
 - Screenshots: `appshot --out <png>` (or `dsh-mobile appshot`) is the **native** capture of the
   app window via PixelCopy - use it for evidence about the DSH UI (no accessibility, no CDP,
   reliable WebView pixels). `shot --out <png>` captures the whole screen through the

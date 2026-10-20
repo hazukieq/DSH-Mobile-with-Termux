@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- v1.3.30：Agent 原生控制 API 读取联网状态（GET /status） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- APK 型扩展（扩展中心）触发系统安装器（v1.2.127，如 dsh-asr-service） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

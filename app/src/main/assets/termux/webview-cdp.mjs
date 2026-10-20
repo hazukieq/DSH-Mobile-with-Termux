@@ -634,6 +634,64 @@ async function cmdBridge(args) {
   if (res.status >= 400) process.exit(2);
 }
 
+function parseSetPairs(pairs) {
+  const out = {};
+  for (const kv of pairs) {
+    const i = kv.indexOf('=');
+    if (i <= 0) die('want key=value, got ' + JSON.stringify(kv));
+    const k = kv.slice(0, i);
+    let v = kv.slice(i + 1);
+    if (v === 'true' || v === 'false') out[k] = (v === 'true');
+    else if (/^-?\d+$/.test(v)) out[k] = parseInt(v, 10);
+    else out[k] = v;
+  }
+  return out;
+}
+
+async function cmdApp(args) {
+  const sub = args[0];
+  const rest = args.slice(1);
+  if (!sub) die('usage: dsh-mobile app status|net|settings [set k=v...]|open settings|terminal|main');
+  const call = async (method, path, body) => {
+    let res;
+    try {
+      res = await bridge(method, path, body);
+    } catch (e) {
+      die('app: AgentBridge unreachable (' + ((e && e.message) || e) + '); is the engine running?');
+    }
+    const text = res.body.trim();
+    if (res.status >= 400) die(text);
+    try { console.log(JSON.stringify(JSON.parse(text), null, 2)); } catch { console.log(text); }
+    return text;
+  };
+  switch (sub) {
+    case 'status': return call('GET', '/status');
+    case 'net': {
+      const res = await bridge('GET', '/status');
+      if (res.status >= 400) die(res.body.trim());
+      const o = JSON.parse(res.body);
+      console.log(JSON.stringify({ net: o.net, battery: o.battery, screen: o.screen, app: { foreground: o.app && o.app.foreground, resumed_activity: o.app && o.app.resumed_activity } }, null, 2));
+      return;
+    }
+    case 'settings': {
+      if (rest[0] === 'set' || rest[0] === 'write') {
+        const set = parseSetPairs(rest.slice(1));
+        return call('POST', '/settings', { set });
+      }
+      return call('GET', '/settings');
+    }
+    case 'open': {
+      const name = rest[0] || 'settings';
+      return call('POST', '/activity', { name });
+    }
+    default: {
+      // allow `dsh-mobile app GET /status` style passthrough
+      if (/^(GET|POST|PUT|DELETE)$/i.test(sub)) return call(sub.toUpperCase(), rest[0] || '/status', rest[1]);
+      die('usage: dsh-mobile app status|net|settings [set k=v...]|open settings|terminal|main');
+    }
+  }
+}
+
 function cmdUi(args) {
   const json = args.includes('--json');
   const ui = {
@@ -693,6 +751,9 @@ if (cmd === 'cdp') {
   cmd = rest[0] || 'status';
   rest = rest.slice(1);
 }
+if (cmd === 'app') {
+  cmd = 'app';
+}
 try {
   switch (cmd) {
     case 'status': await cmdStatus(); break;
@@ -717,6 +778,7 @@ try {
     case 'appshot': await cmdAppShot(rest[0], rest[1]); break;
     case 'bridge': await cmdBridge(rest); break;
     case 'doctor': await cmdDoctor(); break;
+    case 'app': await cmdApp(rest); break;
     case 'ui': cmdUi(rest); break;
     case 'info': cmdInfo(); break;
     case 'doc': console.log(fs.readFileSync(DOC, 'utf8')); break;
@@ -724,6 +786,10 @@ try {
       console.log(`dsh-mobile — WebView CDP bridge, AgentBridge client, app info
 
 usage (CDP subcommands also accept the shorter "dsh-mobile <sub>" form):
+  dsh-mobile app status                 app/engine/net/battery/memory/storage/permissions snapshot
+  dsh-mobile app net                    just network + battery + screen
+  dsh-mobile app settings [set k=v...]  read or write native settings
+  dsh-mobile app open <settings|terminal|main>   open a native page (reports resumed activity)
   dsh-mobile ui [--json]                layer map: native / web / terminal, ambiguous words
   dsh-mobile info                       paths, node, sockets, bridge token state
   dsh-mobile doc                        print $DSH_HOME/DSH-MOBILE.md

@@ -1,0 +1,67 @@
+#!/system/bin/sh
+# [dsh-android] 自举到引擎 bash（/dev/tcp 是 bash 特性，toybox sh 不支持）。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+# [dsh-android] native: App 原生控制/调试 API 的快捷入口（v1.3.30）。
+#
+# usage:
+#   native status                    App/引擎/联网/电量/内存/存储/屏幕/权限 总览
+#   native settings                  读取原生设置当前值
+#   native set key=value [key=value…] 写入原生设置（数字/布尔自动识别）
+#   native open settings|terminal|main  打开 App 自己的页面（回执含 resumed_activity）
+#   native net                       只取联网状态（status 的子集，原始 JSON）
+#   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带）
+#
+# 例：native open settings && native set page_scale=100 orientation=auto
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/_dsh_http.sh"
+
+usage() { sed -n '9,22p' "$0" >&2; exit 2; }
+
+json_or_die() {
+  out=$(dsh_http "$1" "$2" "$3")
+  rc=$?
+  [ "$rc" = 0 ] || { echo "native: bridge failed (rc=$rc)${out:+ — $out}" >&2; exit 1; }
+  printf '%s\n' "$out"
+}
+
+case "${1:-}" in
+  status) shift; json_or_die GET /status ;;
+  settings|get) shift; json_or_die GET /settings ;;
+  net)
+    out=$(dsh_http GET /status); rc=$?
+    [ "$rc" = 0 ] || { echo "native: bridge failed (rc=$rc)" >&2; exit 1; }
+    printf '%s\n' "$out" | sed -n 's/.*"net":\({[^}]*}\).*/\1/p'
+    ;;
+  open)
+    page="${2:-}"; [ -n "$page" ] || usage
+    json_or_die POST /activity "{\"name\":\"$(printf '%s' "$page" | sed 's/"/\\"/g')\"}"
+    ;;
+  set|write)
+    shift
+    pairs=""
+    for kv in "$@"; do
+      k=${kv%%=*}; v=${kv#*=}
+      [ "$k" != "$kv" ] || { echo "native set: want key=value, got '$kv'" >&2; exit 2; }
+      case "$v" in
+        true|false) jv="$v" ;;
+        out-of-range) jv="$v" ;;
+        ''|*[!0-9.-]*) jv="\"$(printf '%s' "$v" | sed 's/\\/\\\\/g; s/"/\\"/g')\"" ;;
+        *) jv="$v" ;;
+      esac
+      [ -n "$pairs" ] && pairs="$pairs,"
+      pairs="$pairs\"$k\":$jv"
+    done
+    json_or_die POST /settings "{\"set\":{$pairs}}"
+    ;;
+  json)
+    m="${2:-}"; p="${3:-}"; b="${4:-}"
+    [ -n "$m" ] && [ -n "$p" ] || usage
+    json_or_die "$m" "$p" "$b"
+    ;;
+  -h|--help|help|"") usage ;;
+  *) echo "native: unknown command '$1'" >&2; usage ;;
+esac

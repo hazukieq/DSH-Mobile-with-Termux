@@ -107,6 +107,30 @@ Renderer console errors also land in logcat under the `chromium` tag (`[INFO:CON
 - **Alarms/timers**: `alarm 07:30 "standup"`, `alarm timer 600 "tea"`, `alarm show`; standard
   AlarmClock intents, retried through `shz` when background activity start is blocked.
 
+## Native control / debug API (app internals for agents)
+
+Besides UI automation, the app exposes its own state and controls. All of it is token-gated
+bridge HTTP on `127.0.0.1:3083`, reachable as `dsh-mobile bridge ...` or the `native` gate:
+
+| command | endpoint | what |
+| --- | --- | --- |
+| `native status` / `dsh-mobile app status` | `GET /status` | app+engine, foreground + **resumed activity**, network (type/validated/metered/bandwidth), battery, memory, storage, screen on/locked, permissions (accessibility, all-files, overlay, notifications, battery optimisation) |
+| `native settings` | `GET /settings` | current native settings: page_scale, orientation, lan_web_access, a11y_max_provider, priv_mode + writable keys |
+| `native set page_scale=100 orientation=auto` | `POST /settings` | write native settings; returns `applied` / `restartRequired` / `errors` |
+| `native open settings` | `POST /activity` | open our own Activity (`settings` / `terminal` / `main` / Class); after 350 ms it reports `resumed_before`/`resumed_after` so a BAL-blocked start is visible |
+| `native net` | `GET /status` subset | network + battery + screen |
+| `dsh-mobile app open terminal` | same | convenience from the helper |
+| `dsh-mobile app settings set priv_mode=root` | `POST /settings` | switches privilege mode (engine restart required) |
+
+Other useful native endpoints: `GET /process` (pid/uid/version/debug flag/devtools socket),
+`GET /app-screenshot?max=N` (PixelCopy of the app window), `GET /screen` + `/tap*` (accessibility),
+`POST /launch-intent` (`component` + `extras`), `GET /notify`, `POST /notify`, `GET /say`/`POST /say`,
+`GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`.
+
+Honesty rules baked into the API: `/activity` compares the resumed activity before/after and
+reports `hint` when the window did not change; `/launch-intent` returns 404 for unknown
+components instead of a fake `ok`; `/settings` masks secrets and reports `restartRequired`.
+
 ## Three UI layers — decide the layer before touching "settings/plugins/terminal"
 
 | layer | what it is | typical entry | CDP? | shell launch? |

@@ -47,6 +47,16 @@ class TerminalActivity : Activity() {
 
     private val prefs by lazy { getSharedPreferences(DshAppPrefs.NAME, Context.MODE_PRIVATE) }
 
+    override fun onResume() {
+        super.onResume()
+        app.dsh.mobile.engine.AppState.onResume(this)
+    }
+
+    override fun onPause() {
+        app.dsh.mobile.engine.AppState.onPause(this)
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_terminal)

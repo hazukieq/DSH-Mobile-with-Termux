@@ -8,6 +8,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import app.dsh.mobile.DshAccessibilityService
+import app.dsh.mobile.DshApp
+import app.dsh.mobile.OrientationMode
+import app.dsh.mobile.OrientationPrefs
 import app.dsh.mobile.R
 import app.dsh.mobile.StatusOverlay
 import org.json.JSONArray
@@ -426,6 +429,10 @@ object AgentBridge {
             method == "GET" && path == "/screenshot" -> screenshot(query)
             method == "GET" && path == "/app-screenshot" -> appScreenshot(query)
             method == "GET" && path == "/process" -> processInfo()
+            method == "GET" && path == "/status" -> status()
+            method == "GET" && path == "/settings" -> settingsGet()
+            method == "POST" && path == "/settings" -> settingsSet(body)
+            method == "POST" && path == "/activity" -> openActivity(body)
             method == "POST" && path == "/gesture" -> gesture(body)
             method == "POST" && path == "/key" -> key(body)
             method == "POST" && path == "/wait" -> wait(body)
@@ -1793,6 +1800,263 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 主进程自己知道 pid，而 socket 名是确定规则 `webview_devtools_remote_<app pid>`，
      * 由宿主直接告诉 helper，比扫描/读 /proc 都可靠。
      */
+    /**
+     * GET /status —— App 运行时状态总览（v1.3.30，Agent 原生控制 API）。
+     *
+     * 一次返回 Agent 判断上下文所需的一切：进程/前台 Activity、引擎端口与调试开关、
+     * 联网状态（传输类型/已验证/计费）、电量、内存、存储、屏幕与权限状态。
+     * 全部是只读探测，不做任何危险操作。
+     */
+    private fun status(): Pair<Int, String> {
+        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
+        return runCatching {
+            val pm = ctx.packageManager
+            val pi = pm.getPackageInfo(ctx.packageName, 0)
+            val verCode = if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()
+            val app = JSONObject()
+                .put("package", ctx.packageName)
+                .put("version_name", pi.versionName)
+                .put("version_code", verCode)
+                .put("pid", android.os.Process.myPid())
+                .put("uid", android.os.Process.myUid())
+                .put("foreground", AppState.isForeground(ctx))
+                .put("resumed_activity", AppState.resumedActivityName() ?: JSONObject.NULL)
+                .put("sdk", android.os.Build.VERSION.SDK_INT)
+                .put("model", android.os.Build.MODEL)
+
+            val engine = JSONObject()
+                .put("port", 3080)
+                .put("priv_mode", Privilege.getMode(ctx).name.lowercase())
+                .put("webview_debug", ctx.getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug") }?.isFile == true)
+
+            val net = JSONObject()
+            runCatching {
+                val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
+                val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+                val type = when {
+                    caps == null -> "none"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "bluetooth"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_USB) -> "usb"
+                    else -> "other"
+                }
+                net.put("connected", caps != null)
+                    .put("type", type)
+                    .put("validated", caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) ?: false)
+                    .put("internet", caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false)
+                    .put("vpn", caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) ?: false)
+                    .put("metered", cm.isActiveNetworkMetered)
+                    .put("down_kbps", caps?.linkDownstreamBandwidthKbps ?: 0)
+                    .put("up_kbps", caps?.linkUpstreamBandwidthKbps ?: 0)
+            }.onFailure { net.put("error", it.message) }
+
+            val battery = JSONObject()
+            runCatching {
+                val i = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+                val level = i?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = i?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+                val statusInt = i?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val pct = if (level >= 0 && scale > 0) level * 100 / scale else -1
+                battery.put("percent", pct)
+                    .put("charging", statusInt == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                        statusInt == android.os.BatteryManager.BATTERY_STATUS_FULL)
+                    .put("temperature_c", (i?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0)
+            }
+
+            val memory = JSONObject()
+            runCatching {
+                val am = ctx.getSystemService(android.app.ActivityManager::class.java)
+                val mi = android.app.ActivityManager.MemoryInfo()
+                am.getMemoryInfo(mi)
+                memory.put("avail_mb", mi.availMem / 1048576).put("total_mb", mi.totalMem / 1048576).put("low", mi.lowMemory)
+            }
+
+            val storage = JSONObject()
+            runCatching {
+                val fs1 = android.os.StatFs(ctx.filesDir.absolutePath)
+                storage.put("files_free_mb", fs1.availableBytes / 1048576)
+                runCatching { storage.put("sdcard_free_mb", android.os.StatFs("/sdcard").availableBytes / 1048576) }
+            }
+
+            val screen = JSONObject()
+            runCatching {
+                val pm2 = ctx.getSystemService(android.os.PowerManager::class.java)
+                val km = ctx.getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+                screen.put("on", pm2.isInteractive).put("locked", km.isKeyguardLocked)
+            }
+
+            val perms = JSONObject()
+                .put("accessibility", DshAccessibilityService.instance != null)
+                .put("all_files", runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false))
+                .put("overlay", runCatching { android.provider.Settings.canDrawOverlays(ctx) }.getOrDefault(false))
+                .put("notifications", if (android.os.Build.VERSION.SDK_INT >= 33)
+                    ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") == android.content.pm.PackageManager.PERMISSION_GRANTED
+                else true)
+                .put("battery_optimization_ignored", runCatching {
+                    (ctx.getSystemService(android.os.PowerManager::class.java))
+                        .isIgnoringBatteryOptimizations(ctx.packageName)
+                }.getOrDefault(false))
+
+            return 200 to JSONObject()
+                .put("ok", true)
+                .put("app", app)
+                .put("engine", engine)
+                .put("net", net)
+                .put("battery", battery)
+                .put("memory", memory)
+                .put("storage", storage)
+                .put("screen", screen)
+                .put("permissions", perms)
+                .toString()
+        }.getOrElse { 500 to """{"ok":false,"error":"${it.message}"}""" }
+    }
+
+    /**
+     * GET /settings —— 原生设置当前值（v1.3.30）。
+     *
+     * 只暴露白名单键；密码类字段打码。写入口见 [settingsSet]。
+     */
+    private fun settingsGet(): Pair<Int, String> {
+        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
+        val ui = ctx.getSharedPreferences(DshApp.PREFS_UI, android.content.Context.MODE_PRIVATE)
+        val out = JSONObject()
+            .put("page_scale", ui.getInt("page_scale", 90))
+            .put("orientation", OrientationPrefs.get(ctx).key)
+            .put("lan_web_access", ui.getBoolean(DshApp.KEY_LAN_WEB, false))
+            .put("lan_web_password_set", (ui.getString("lan_web_password", "") ?: "").isNotBlank())
+            .put("a11y_max_provider", ui.getString(DshApp.KEY_A11Y_MAX_PROVIDER, "") ?: "")
+            .put("priv_mode", Privilege.getMode(ctx).name.lowercase())
+            .put("writable_keys", JSONObject().put("page_scale", "int 50..120")
+                .put("orientation", "portrait|landscape|auto")
+                .put("lan_web_access", "boolean")
+                .put("a11y_max_provider", "credential ref string")
+                .put("priv_mode", "normal|shizuku|root (restarts engine)"))
+        return 200 to JSONObject().put("ok", true).put("settings", out).toString()
+    }
+
+    /** POST /settings {"set":{"page_scale":100,"orientation":"auto",...}} */
+    private fun settingsSet(body: String): Pair<Int, String> {
+        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val set = obj.optJSONObject("set") ?: return 400 to """{"ok":false,"error":"need {\"set\":{...}}"}"""
+        val ui = ctx.getSharedPreferences(DshApp.PREFS_UI, android.content.Context.MODE_PRIVATE).edit()
+        val applied = org.json.JSONArray()
+        val errors = org.json.JSONArray()
+        var restartRequired = false
+        val keys = set.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            when (key) {
+                "page_scale" -> {
+                    val v = set.optInt(key, -1)
+                    if (v in 50..120) { ui.putInt("page_scale", v); applied.put("page_scale=$v") }
+                    else errors.put("page_scale must be 50..120")
+                }
+                "orientation" -> {
+                    val v = set.optString(key)
+                    val mode = when (v) {
+                        "portrait" -> OrientationMode.PORTRAIT
+                        "landscape" -> OrientationMode.LANDSCAPE
+                        "auto" -> OrientationMode.AUTO
+                        else -> null
+                    }
+                    if (mode != null) {
+                        OrientationPrefs.set(ctx, mode)
+                        runCatching {
+                            AppState.currentActivity()?.requestedOrientation =
+                                OrientationPrefs.toActivityInfo(mode)
+                        }
+                        applied.put("orientation=$v")
+                    } else errors.put("orientation must be portrait|landscape|auto")
+                }
+                "lan_web_access" -> {
+                    val v = set.optBoolean(key, false)
+                    DshApp.setLanWebEnabled(ctx, v)
+                    if (v) DshApp.lanWebPassword(ctx)
+                    applied.put("lan_web_access=$v")
+                    restartRequired = true
+                }
+                "a11y_max_provider" -> {
+                    ui.putString(DshApp.KEY_A11Y_MAX_PROVIDER, set.optString(key))
+                    applied.put("a11y_max_provider")
+                }
+                "priv_mode" -> {
+                    val v = set.optString(key).lowercase()
+                    val mode = when (v) {
+                        "normal" -> PrivMode.NORMAL
+                        "shizuku" -> PrivMode.SHIZUKU
+                        "root" -> PrivMode.ROOT
+                        else -> null
+                    }
+                    if (mode != null) {
+                        Privilege.setMode(ctx, mode)
+                        applied.put("priv_mode=$v")
+                        restartRequired = true
+                    } else errors.put("priv_mode must be normal|shizuku|root")
+                }
+                else -> errors.put("unknown key: $key")
+            }
+        }
+        ui.apply()
+        val ok = applied.length() > 0
+        val payload = JSONObject().put("ok", ok)
+            .put("applied", applied)
+            .put("restartRequired", restartRequired)
+            .put("errors", errors)
+        if (!ok) payload.put("hint", "see /settings writable_keys")
+        return (if (ok) 200 else 400) to payload.toString()
+    }
+
+    /**
+     * POST /activity {"name":"settings|terminal|main|<Class>"} —— 打开 App 自己的 Activity。
+     *
+     * 与 /launch-intent 的区别：这里只允许本 App 的 Activity（安全），并在 startActivity
+     * 之后 350ms 回读 [AppState.resumedActivityName]：如果前台 Activity 没变，说明系统以
+     * BAL 拦下了后台启动（或用户切走了），回执会如实说明，而不是假 ok。
+     */
+    private fun openActivity(body: String): Pair<Int, String> {
+        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val wanted = obj.optString("name").ifBlank { obj.optString("activity") }
+        if (wanted.isBlank()) return 400 to """{"ok":false,"error":"name required (main|settings|terminal|<Class>)"}"""
+        val cls = when (wanted.lowercase()) {
+            "main", "home" -> app.dsh.mobile.MainActivity::class.java
+            "settings" -> app.dsh.mobile.SettingsActivity::class.java
+            "terminal", "term" -> app.dsh.mobile.term.TerminalActivity::class.java
+            else -> runCatching {
+                val full = if (wanted.contains('.')) wanted else "app.dsh.mobile.$wanted"
+                Class.forName(full).asSubclass(android.app.Activity::class.java)
+            }.getOrNull() ?: return 404 to """{"ok":false,"error":"activity not found: $wanted (allowed: main|settings|terminal|<Class>)"}"""
+        }
+        val before = AppState.resumedActivityName()
+        val startedAt = System.currentTimeMillis()
+        return runCatching {
+            val intent = android.content.Intent(ctx, cls).addFlags(
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+            obj.optString("action").takeIf { it.isNotBlank() }?.let { intent.action = it }
+            ctx.startActivity(intent)
+            Thread.sleep(350)
+            val after = AppState.resumedActivityName()
+            val result = JSONObject()
+                .put("ok", after == cls.name || after == null || after != before)
+                .put("requested", cls.name)
+                .put("resumed_before", before ?: JSONObject.NULL)
+                .put("resumed_after", after ?: JSONObject.NULL)
+                .put("foreground", AppState.isForeground(ctx))
+                .put("elapsed_ms", System.currentTimeMillis() - startedAt)
+                .put("hint", if (after != cls.name) "the window may have been blocked by Android background-activity rules; bring the app to the foreground and retry" else "opened")
+            200 to result.toString()
+        }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
+    }
+
     private fun processInfo(): Pair<Int, String> {
         val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
         val pid = android.os.Process.myPid()
