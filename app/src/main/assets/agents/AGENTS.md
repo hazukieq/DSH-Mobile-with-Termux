@@ -314,6 +314,31 @@ Rules:
 - Verify after each step (dialog present, text changed, or `appshot`); an element with x<0 means
   its panel is not open yet - open it first. Two failures -> ask the user which entry they mean.
 
+## Background activity starts (BAL) - how to tell "opened" from "silently refused"
+
+Android may refuse an activity start issued from the background: `startActivity` does not throw
+and the window never appears. `POST /activity` (and `native open`) therefore reports:
+
+```json
+{"ok":true,"opened":true|false,"background_blocked":true|false,
+ "bal_exempt":{"foreground":bool,"overlay":bool,"accessibility":bool},
+ "notification_posted":false,"resumed_before":"...","observed_resumed":"..."}
+```
+
+- `ok:true` = the request was submitted. `opened:true` = the page actually resumed within 1.2 s.
+- `opened:false` + `background_blocked:true` = the OS refused the background start (no exemption).
+  **Do not retry blindly and do not screenshot to "check".** Options, in order:
+  1. ask the user to bring the app to the foreground, then call again;
+  2. use `native open <page> --notify` (or `{"notifyIfBlocked":true}`): when the start is
+     blocked, the app posts a tappable notification and returns `notification_posted:true` - ask
+     the user to tap it;
+  3. if this keeps happening, suggest granting "display over other apps" (`overlay`) or enabling
+     the accessibility service - either one is a BAL exemption and makes `opened:true` work from
+     the background. `native status` shows both permissions.
+- `opened:true` still means hand-off: no screenshots, no polling; the user may already be there.
+- Other apps opened via `/launch` / `/launch-intent` cannot be confirmed this way; treat them as
+  hand-offs and do not check.
+
 ## Instant actions (tap / scroll / type / key) - dispatched, not confirmed
 
 Simulated input is fire-and-forget by nature: the event is dispatched, the UI may start changing

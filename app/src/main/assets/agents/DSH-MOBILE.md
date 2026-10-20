@@ -136,6 +136,16 @@ type|key|scroll`) return `instant:true`, `verify:"none"` and
 may be mid-animation or the user may have moved on. To verify a result: settle (`scr idle` or
 `cdp wait`) then read once. Screenshots are for evidence/diagnosis, not tap confirmation.
 
+### Background launches (BAL) and the `opened` field
+
+`POST /activity` waits up to 1.2 s for the target Activity to actually resume and reports
+`opened:true|false`, `background_blocked`, the current BAL exemptions
+(`bal_exempt.foreground|overlay|accessibility`) and `notification_posted`. If the OS refused a
+background start, `opened:false` (not a fake success). Pass `{"notifyIfBlocked":true}` (or
+`native open <page> --notify`) to post a tappable notification fallback. Do not retry blindly
+and do not screenshot to confirm; ask the user to foreground the app or grant overlay /
+accessibility, both of which are BAL exemptions.
+
 ### Hand-off semantics (opening pages for the user)
 
 `POST /activity` is a **hand-off**: it opens the page and returns immediately with

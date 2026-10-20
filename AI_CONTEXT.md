@@ -1,6 +1,13 @@
 # AI_CONTEXT
 
 ## Current progress
+- **BAL 后台启动检测 + 通知兜底（2026-10-20 第六十六轮，v69）**：用户报「从后台 shell 发出的启动请求可能被系统拒绝，返回成功但什么都没打开」。修复：
+  ① `AppState` 记录 `lastResumeClass/lastResumeAt`（elapsedRealtime），提供 `resumedSince(t)`；
+  ② `POST /activity` 不再只看 startActivity 是否抛异常：启动后最多轮询 1.2s 等「目标 Activity 真的 resume」→ 返回 `opened:true|false`；同时给出 `bal_exempt{foreground,overlay,accessibility}`、`background_blocked`（未打开且无豁免）、`notification_posted`；已在前台打开同一页时直接 `already_open:true`;
+  ③ 新增 `notifyIfBlocked`：被拦时发一条可点击通知（channel dsh_open_page，PendingIntent 指向目标 Activity），返回 `notification_posted:true`，并提示让用户点通知；
+  ④ `native open <page> --notify` 与 `dsh-mobile app open <page> --notify` 支持该开关；
+  ⑤ 文档：AGENTS seed 66 新增「Background activity starts (BAL) - how to tell opened from silently refused」：opened:false + background_blocked 时不要重试/不要截图；按顺序：请用户切前台 → `--notify` 发通知 → 建议授予悬浮窗/无障碍（两者都是 BAL 豁免）；`/launch`、`/launch-intent` 打开别的应用无法确认，按 hand-off 处理；`DSH-MOBILE.md` v11 增 opened 字段与豁免说明；dotfiles VERSION 18 / doc marker v11。
+  实测 vivo：seed v66、doc v11、15 gate 可执行、engine healthy。versionName 1.3.37 / versionCode 277。
 - **即时动作回执统一（2026-10-20 第六十五轮，v68）**：用户要求「全面检查所有工具及指令，尤其模拟动作（点击/滚动等）即时性太强，也要改」。实现：
   ① `AgentBridge.decorateActionMeta(method,path,status,json)` 在响应出口统一注入语义（仅 POST + 200 + JSON 对象）：即时动作端点（/tap、/tap-id、/gesture、/key、/input、/scroll-find、/scroll-center、/scroll-edge、/vision/tap、/vision/drag、/pick、/overlay、/loop/run）加 `instant:true`、`verify:"none"`、`do_not:["screenshot_immediately","retry_immediately"]` + 提示「动作已派发，界面可能正在变化；要确认先等稳定（scr idle/cdp wait）再读一次，别立刻截图/重试」；打开页面（/launch、/launch-intent）加 `handoff:true` 同语义（/activity 自带更详细字段，不重复注入）；`POST /settings` 加 `verify:"none"`（设置已在进程内生效）。
   ② CDP helper 的 click/click-text/tap/type/key/scroll 输出统一带 `instant:true, verify:"none", do_not:[…]`。

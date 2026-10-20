@@ -2089,7 +2089,15 @@ document.getElementById('api').textContent = checks.map(function(c){
             }.getOrNull() ?: return 404 to """{"ok":false,"error":"activity not found: $wanted (allowed: main|settings|terminal|<Class>)"}"""
         }
         val before = AppState.resumedActivityName()
+        val alreadyOpen = before == cls.name
+        // BAL 豁免现状：前台 / 悬浮窗权限 / 无障碍服务，三者有其一才「可能」允许后台启动 Activity
+        val overlay = runCatching { android.provider.Settings.canDrawOverlays(ctx) }.getOrDefault(false)
+        val a11y = DshAccessibilityService.instance != null
+        val foreground = AppState.isForeground(ctx)
+        val likelyAllowed = foreground || overlay || a11y
+        val notifyIfBlocked = obj.optBoolean("notifyIfBlocked", false)
         val startedAt = System.currentTimeMillis()
+        val sinceElapsed = android.os.SystemClock.elapsedRealtime()
         return runCatching {
             val intent = android.content.Intent(ctx, cls).addFlags(
                 android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -2098,25 +2106,80 @@ document.getElementById('api').textContent = checks.map(function(c){
             )
             obj.optString("action").takeIf { it.isNotBlank() }?.let { intent.action = it }
             ctx.startActivity(intent)
-            // 只观察一个很短的窗口；不等待「用户操作完」。手递手打开页面的语义是
-            // 「交给你了」，用户可能立刻改完返回，此时再截图/轮询只会得到误导信息。
-            Thread.sleep(120)
-            val observed = AppState.resumedActivityName()
+            // 等待「真的 resume」的回调：BAL 拦截时 startActivity 不抛异常、但不会有 resume。
+            // 最多等 1200ms；已经在前台打开同一页时直接判已打开。
+            var resumedAfter: String? = if (alreadyOpen) cls.name else null
+            if (!alreadyOpen) {
+                val deadline = System.currentTimeMillis() + 1200
+                while (System.currentTimeMillis() < deadline && resumedAfter == null) {
+                    Thread.sleep(60)
+                    resumedAfter = AppState.resumedSince(sinceElapsed)
+                    if (resumedAfter == null) {
+                        val cur = AppState.resumedActivityName()
+                        if (cur != null && cur != before) resumedAfter = cur
+                    }
+                }
+            }
+            val opened = resumedAfter == cls.name
+            val notificationPosted = if (!opened && notifyIfBlocked) postOpenNotification(ctx, cls.name) else false
             val result = JSONObject()
                 .put("ok", true)
+                .put("opened", opened)
                 .put("requested", cls.name)
+                .put("already_open", alreadyOpen)
                 .put("handoff", true)
                 .put("verify", "none")
                 .put("do_not", org.json.JSONArray().put("screenshot").put("poll").put("retry"))
                 .put("resumed_before", before ?: JSONObject.NULL)
-                .put("observed_resumed", observed ?: JSONObject.NULL)
-                .put("returned_to_previous", observed == before)
-                .put("foreground", AppState.isForeground(ctx))
+                .put("observed_resumed", resumedAfter ?: JSONObject.NULL)
+                .put("foreground", foreground)
+                .put("bal_exempt", JSONObject().put("foreground", foreground).put("overlay", overlay).put("accessibility", a11y))
+                .put("background_blocked", !opened && !likelyAllowed)
+                .put("notification_posted", notificationPosted)
                 .put("elapsed_ms", System.currentTimeMillis() - startedAt)
-                .put("note", "Hand-off complete: this page was opened for the user. The user may change things and come back before you read this - that is expected, not a failure. Do not screenshot, poll or re-run to confirm; continue with the next step (or wait for the user to speak).")
+                .put(
+                    "hint",
+                    when {
+                        opened -> "Opened. Hand-off complete: do not screenshot or poll; the user may already be interacting with it."
+                        notificationPosted -> "Android blocked the background activity start; a notification was posted instead - ask the user to tap it (or bring the app to the foreground and call again)."
+                        !likelyAllowed -> "Android blocked the background activity start (no BAL exemption). Ask the user to open the app first, or grant 'display over other apps' / enable the accessibility service. Do not retry blindly."
+                        else -> "startActivity returned but the page did not resume; the user may still be switching or the window was suppressed. Ask the user before retrying."
+                    },
+                )
             200 to result.toString()
         }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
     }
+
+    /** BAL 拦截时的兜底：发一条可点击的通知，用户点一下就能打开目标页。 */
+    private fun postOpenNotification(ctx: Context, className: String): Boolean = runCatching {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return false
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val channelId = "dsh_open_page"
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(
+                android.app.NotificationChannel(channelId, "Open page", android.app.NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val target = Class.forName(className)
+        val intent = android.content.Intent(ctx, target).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            ctx, className.hashCode(), intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                if (android.os.Build.VERSION.SDK_INT >= 23) android.app.PendingIntent.FLAG_IMMUTABLE else 0,
+        )
+        val n = android.app.Notification.Builder(ctx, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("DSH Mobile")
+            .setContentText("Tap to open " + className.substringAfterLast('.'))
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(4711, n)
+        true
+    }.getOrDefault(false)
+
 
 
     private fun processInfo(): Pair<Int, String> {

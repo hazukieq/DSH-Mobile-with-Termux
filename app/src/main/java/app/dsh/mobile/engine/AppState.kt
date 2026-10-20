@@ -18,9 +18,19 @@ import java.lang.ref.WeakReference
 object AppState {
     @Volatile private var resumed: WeakReference<Activity>? = null
 
+    /** 最近一次 onResume 的类名与单调时间（用于确认「启动请求真的把页面带起来了」）。 */
+    @Volatile private var lastResumeClass: String? = null
+    @Volatile private var lastResumeAt: Long = 0L
+
     fun onResume(activity: Activity) {
         resumed = WeakReference(activity)
+        lastResumeClass = activity.javaClass.name
+        lastResumeAt = android.os.SystemClock.elapsedRealtime()
     }
+
+    /** 自 [sinceElapsed] 之后是否有 Activity 真正 resume 过（BAL 拦截时不会发生）。 */
+    fun resumedSince(sinceElapsed: Long): String? =
+        if (lastResumeAt >= sinceElapsed) lastResumeClass else null
 
     fun onPause(activity: Activity) {
         val cur = resumed?.get()

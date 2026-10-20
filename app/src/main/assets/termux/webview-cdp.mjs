@@ -681,8 +681,9 @@ async function cmdApp(args) {
       return call('GET', '/settings');
     }
     case 'open': {
-      const name = rest[0] || 'settings';
-      return call('POST', '/activity', { name });
+      const notify = rest.includes('--notify');
+      const name = rest.filter(a => a !== '--notify')[0] || 'settings';
+      return call('POST', '/activity', notify ? { name, notifyIfBlocked: true } : { name });
     }
     default: {
       // allow `dsh-mobile app GET /status` style passthrough
