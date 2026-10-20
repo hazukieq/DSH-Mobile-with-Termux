@@ -237,6 +237,11 @@ before deep app work. Quick map:
   start; the app also replaces bootstrap toybox/busybox symlinks that would shadow them. If a
   gate reports "command not found" or "Permission denied", run `ls -l "$PREFIX/bin/<name>"`
   and include that output in your report - do not work around it with `/system/bin/*`.
+- Opening files with other apps: `native open-file <path>` / `native open-folder <path>` /
+  `native share <path>` (or `POST /open/file|folder|share`). The WebUI's own "open in app" and
+  "reveal in folder" buttons use the same path now, so Android no longer reports "no desktop".
+  Receipts are hand-offs (`opened` means the app actually left the foreground); no screenshot
+  verification.
 - Native control one-liners: `native status` (foreground + resumed activity, network, battery,
   memory, storage, permission state), `native settings` / `native set page_scale=100`,
   `native open settings|terminal|main`. Prefer these over `am start`, which is silently blocked

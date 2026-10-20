@@ -493,6 +493,9 @@ object AgentBridge {
             method == "POST" && path == "/media/resume" -> mediaResume(ctx)
             method == "POST" && path == "/media/stop" -> mediaStop(ctx)
             method == "GET" && path == "/media/status" -> 200 to AudioPlayer.status().toString()
+            method == "POST" && path == "/open/file" -> openPath(ctx, body, "file")
+            method == "POST" && path == "/open/folder" -> openPath(ctx, body, "folder")
+            method == "POST" && path == "/open/share" -> openPath(ctx, body, "share")
             method == "POST" && path == "/gesture" -> gesture(body)
             method == "POST" && path == "/key" -> key(body)
             method == "POST" && path == "/wait" -> wait(body)
@@ -2197,6 +2200,17 @@ document.getElementById('api').textContent = checks.map(function(c){
         )
         val code = if (status.optBoolean("ok")) 200 else 422
         return code to status.put("instant", true).put("verify", "none").toString()
+    }
+
+    /** POST /open/file|folder|share {"path":"/sdcard/x.pdf","mime":"application/pdf"} */
+    private fun openPath(ctx: Context, body: String, kind: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val path = obj.optString("path").ifBlank { obj.optString("file") }
+        if (path.isBlank()) return 400 to """{"ok":false,"error":"path required"}"""
+        val result = OpenWith.open(ctx, path, kind, obj.optString("mime"))
+        val code = if (result.optBoolean("ok")) 200 else 404
+        return code to result.toString()
     }
 
     private fun mediaPause(ctx: Context): Pair<Int, String> = 200 to AudioPlayer.pause(ctx).put("instant", true).toString()

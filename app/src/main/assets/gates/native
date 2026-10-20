@@ -15,6 +15,9 @@ fi
 #                                    打开 App 自己的页面；回执含 opened / background_blocked
 #                                    （后台启动被 BAL 拦截时会明确报 opened:false，--notify 可发通知兜底）
 #   native net                       只取联网状态（status 的子集，原始 JSON）
+#   native open-file <path>          用系统其它 App 打开文件（ACTION_VIEW + content:// 授权）
+#   native open-folder <path>        用系统文件 App 打开文件夹
+#   native share <path>              分享文件
 #   native files                     检查 $PREFIX/bin 里 App 管理的脚本：真实文件/可执行/符号链接
 #   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带；path 必须是真实端点，
 #                                     如 GET /notif、GET /process、POST /tap）
@@ -69,6 +72,17 @@ case "${1:-}" in
       pairs="$pairs\"$k\":$jv"
     done
     json_or_die POST /settings "{\"set\":{$pairs}}"
+    ;;
+  open-file|open-folder|share)
+    # 用系统其它 App 打开文件/文件夹/分享（v1.3.41）
+    sub="$1"; shift
+    [ -n "${1:-}" ] || { echo "native $sub: need a path" >&2; exit 2; }
+    case "$sub" in
+      open-file) route="/open/file" ;;
+      open-folder) route="/open/folder" ;;
+      share) route="/open/share" ;;
+    esac
+    json_or_die POST "$route" "{\"path\":\"$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')\"}"
     ;;
   files|perms|doctor)
     # 检查 App 管理的脚本是否真实文件且可执行（v1.3.34，排查「command not found / Permission denied」）

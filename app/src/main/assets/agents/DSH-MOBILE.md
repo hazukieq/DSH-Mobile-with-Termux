@@ -136,6 +136,25 @@ type|key|scroll`) return `instant:true`, `verify:"none"` and
 may be mid-animation or the user may have moved on. To verify a result: settle (`scr idle` or
 `cdp wait`) then read once. Screenshots are for evidence/diagnosis, not tap confirmation.
 
+### Opening files with system apps (no desktop needed)
+
+The WebUI "open in app" / "reveal in folder" works on Android now: the engine patch makes
+`dsh-native-command` hand the path to the app instead of failing with "this host has no
+desktop". From the shell/bridge:
+
+```bash
+native open-file /sdcard/Download/a.pdf     # POST /open/file  {path, mime?}
+native open-folder /sdcard/Download         # POST /open/folder
+native share /sdcard/Download/a.pdf         # POST /open/share
+```
+
+Files are exposed through the app's own read-only content provider
+(`content://<pkg>.dshfiles/...`) with a one-shot read grant; folders under `/sdcard` use the
+system Files app document URI. The receipt reports `opened` (whether the app really left the
+foreground) and `handoff:true`; if no installed app can handle the type you get `ok:false`
+with a readable error. When the start is blocked while the app is in the background, use the
+same BAL workarounds as `native open` (foreground the app / notification fallback).
+
 ### Audio playback (native MediaPlayer)
 
 Music/TTS-length audio does **not** need any Termux audio stack (no ALSA/PulseAudio/mpv):

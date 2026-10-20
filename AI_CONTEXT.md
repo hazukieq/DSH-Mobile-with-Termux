@@ -1,6 +1,12 @@
 # AI_CONTEXT
 
 ## Current progress
+- **Android「用外部程序打开文件/文件夹」打通（2026-10-20 第七十轮，v73）**：用户遇到 WebUI 提示「此主机没有可用的桌面，无法使用外部程序打开文件或文件夹；文件仍可在侧边栏预览」，要求赋予调用系统能力去打开。实现：
+  ① Kotlin 新增 `DshFileProvider`（自研最小 ContentProvider，exported=false、grantUriPermissions，`content://com.termux.dshfiles/<encoded abs path>`，只读打开，MimeTypeMap 推断类型）+ `OpenWith`：文件 ACTION_VIEW + content URI + FLAG_GRANT_READ_URI_PERMISSION/ClipData；/sdcard 目录用 ExternalStorageProvider document URI（系统文件 App 能处理），其它目录退回 provider URI + `vnd.android.document/directory`；分享 ACTION_SEND + EXTRA_STREAM；回执 `opened` 用「本 App 是否离开前台」判定 + handoff/verify:none；
+  ② 桥端点 `POST /open/file|folder|share`（path/mime），门脚本 `native open-file|open-folder|share <path>`；
+  ③ **引擎补丁** `patchNativeCommandForAndroid`：按内容锚点给 `dsh-native-command` 增加 android 分支（`openNativePathWithIntent` 里 POST 到 127.0.0.1:3083/open/file，token 取 env 或 `$PREFIX/.bridge-token` 回退），并把 `canOpenNativePath` 对 android 返回 true —— 于是 WebUI 的「open in app / 在文件夹中显示」不再显示「没有桌面」，按钮真正可用；
+  ④ 文档 DSH v15 增「Opening files with system apps」、AGENTS seed 69 增 `native open-file/open-folder/share` 说明；dotfiles VERSION 22。
+  实测 vivo：日志 `engine patch: android open-in-app enabled (native-command)`、seed v69、doc v15、engine healthy；APK manifest 确认 provider `com.termux.dshfiles` exported=false + grantUriPermissions。versionName 1.3.41 / versionCode 281。
 - **原生音乐播放（2026-10-20 第六十九轮，v72）**：用户问「app 内 agent 调用音乐播放能否只用系统硬件、播放器属于 Termux 环境」。实现结论：**播放器本体放在 App（Kotlin/MediaPlayer），解码与输出走 Android 音频硬件（AudioTrack/音频 HAL）+ 音频焦点**，Termux 里不需要 ALSA/PulseAudio/mpv；引擎常驻前台服务，App 退后台仍可播。新增：
   ① `AudioPlayer.kt`：MediaPlayer 封装，USAGE_MEDIA 音频焦点（API26+ AudioFocusRequest，失去焦点自动暂停）、支持本机路径与 http(s) URL、loop、status（state/playing/position/duration/source/title/artist/error）、错误可读化（文件不存在、格式不支持、音频焦点被拒）；
   ② 桥端点：`POST /media/play`（body: source/path/url + title/artist/loop）、`/media/pause`、`/media/resume`、`/media/stop`、`GET /media/status`；play/pause/resume/stop 回执带 `instant:true`（无需截图核对）；

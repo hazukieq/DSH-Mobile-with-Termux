@@ -61,6 +61,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- v1.3.41：把本机文件交给其它 App 打开（WebUI「open in app / 在文件夹中显示」） -->
+        <provider
+            android:name=".engine.DshFileProvider"
+            android:authorities="${applicationId}.dshfiles"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

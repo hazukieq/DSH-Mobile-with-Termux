@@ -1003,6 +1003,58 @@ object EngineConfig {
         if (patched == 0) Log.i(TAG, "engine patch: android terminal inspection already patched")
         patchInspectorWorkerForAndroid(root)
         patchFrontendSpaFallback(root)
+        patchNativeCommandForAndroid(root)
+    }
+
+    /**
+     * 让 WebUI 的「open in app / 在文件夹中显示」在 Android 上生效（v1.3.41）。
+     *
+     * 上游 `dsh-native-command` 把 android 当作「没有桌面」直接拒绝，于是 WebUI 显示
+     * 「此主机没有可用的桌面，无法使用外部程序打开文件或文件夹」。这里按内容锚点打补丁：
+     *  - `canOpenNativePath` 对 android 返回 true（让按钮出现）；
+     *  - `openNativePathWithIntent` 增加 android 分支：POST 到本 App 的 AgentBridge
+     *    `/open/file`，由 Kotlin 侧用 DshFileProvider + ACTION_VIEW 交给系统 App 打开。
+     * token 优先取进程环境，否则回退读 $PREFIX/.bridge-token。
+     */
+    private fun patchNativeCommandForAndroid(root: File) {
+        val file = File(root, "lib/node_modules/@deepseek-ai/dsh-native-command/lib/index.js")
+        if (!file.isFile) { Log.w(TAG, "native-command patch: module not found, skip"); return }
+        val text = runCatching { file.readText() }.getOrNull() ?: return
+        if (text.contains("[dsh-android] android open")) return
+        val helperAnchor = "/** Dispatch one shell-free platform command for the requested open intent. */"
+        val helper = """/** [dsh-android] android open: hand the path to the app's AgentBridge (v1.3.41). */
+async function openAndroidPath(path, signal, env) {
+	let token = env.DSH_BRIDGE_TOKEN || process.env.DSH_BRIDGE_TOKEN || "";
+	if (!token) {
+		try {
+			token = (await readFile(process.env.PREFIX + "/.bridge-token", "utf8")).trim();
+		} catch {}
+	}
+	const res = await fetch("http://127.0.0.1:3083/open/file", {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-dsh-token": token },
+		body: JSON.stringify({ path }),
+		signal
+	});
+	const text = await res.text();
+	if (!res.ok) throw new Error("android open failed (" + res.status + "): " + text);
+	return text;
+}
+/** Dispatch one shell-free platform command for the requested open intent. */"""
+        if (!text.contains(helperAnchor)) { Log.w(TAG, "native-command patch: dispatch anchor missing"); return }
+        var patched = text.replace(helperAnchor, helper)
+        val throwAnchor = "throw new Error(`native path opener is unsupported on \${platform}`);"
+        if (!patched.contains(throwAnchor)) { Log.w(TAG, "native-command patch: throw anchor missing"); return }
+        val androidBranch = "\tif (platform === \"android\") {\n\t\tawait openAndroidPath(path, signal, env);\n\t\treturn;\n\t}\n"
+        patched = patched.replace(throwAnchor, androidBranch + throwAnchor)
+        val canOpenAnchor = "if (platform === \"darwin\" || platform === \"win32\") return true;"
+        if (patched.contains(canOpenAnchor)) {
+            patched = patched.replace(canOpenAnchor, "if (platform === \"darwin\" || platform === \"win32\" || platform === \"android\") return true;")
+        }
+        runCatching {
+            file.writeText(patched)
+            Log.i(TAG, "engine patch: android open-in-app enabled (native-command)")
+        }.onFailure { Log.w(TAG, "native-command patch failed: ${it.message}") }
     }
 
     /**
