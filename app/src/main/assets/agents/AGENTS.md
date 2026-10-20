@@ -237,11 +237,15 @@ before deep app work. Quick map:
 - The UI map (top toolbar, the capsule handle that restores it, native Settings, mobile drawer,
   right pane, native terminal tabs/keys) is documented in `$DSH_HOME/DSH-MOBILE.md`, section
   "App UI map". Read it before explaining the app to the user or automating it.
-- The rest of the native API (61 endpoints: screen, screenshot, gesture, key, input, launch,
+- The rest of the native API (60+ endpoints: screen, screenshot, gesture, key, input, launch,
   launch-intent, ocr, vision, memory, notif, plugin list/install, diag, pty, runtime) lives on
   `127.0.0.1:3083` and is reachable as
   `dsh-mobile bridge <GET|POST> <path> [json]` (it handles the bridge token). Never hand-roll
   an Android intent or a shell workaround when the bridge already exposes the capability.
+  `POST /launch` and `/launch-intent` accept `{"component":"pkg/cls"}` (+ optional `action`,
+  `data`, `extras`): an unknown component now returns `ok:false` instead of a fake success, and
+  a real success carries `backgroundLaunchMayBeBlocked` because Android may refuse background
+  activity starts.
 
 ## Debugging the Web UI over CDP - mandatory
 
@@ -264,9 +268,28 @@ file exists; drive the real page:
 
 Renderer console errors also appear in logcat under the `chromium` tag.
 
+## Three UI layers — disambiguate "settings / plugins / terminal" first
+
+| layer | what | typical entry | CDP | shell launch |
+| --- | --- | --- | --- | --- |
+| native | Android activities + top-bar overlay | top-bar gear -> native Settings; capsule handle | no | **no** (am start of our own activity is silently blocked; exit 0 but nothing opens) |
+| web | React WebUI at 127.0.0.1:3080 | drawer; **account menu -> 设置 (Settings)** | yes | n/a |
+| terminal | Termux shell / native terminal activity | terminal entry | no | yes (run commands) |
+
+- "Settings" has two meanings: the **WebUI settings** is account menu -> 设置, a full-screen dialog
+  overlay whose URL stays `/` (NOT a `/settings` route); the **native settings** is the top-bar gear
+  (Android `SettingsActivity`). Do not try `GET /settings` and do not `am start` our own activities.
+- Same for "plugins" (web drawer plugins vs native plugin centre) and "terminal" (native terminal
+  activity vs the engine sidebar terminal).
+- If the layer is ambiguous, **ask the user which one** before spending more than two steps; if two
+  probes fail, switch layer or ask instead of exploring further in the wrong layer.
+- `dsh-mobile ui` prints the layer map (JSON with `--json`).
+
 ## Working agreements
 
-- Start with the user's task; this file has already answered "where am I".
+- Start with the user's task; this file has already answered "where am I". When the target surface
+  is ambiguous (native layer / WebUI / terminal), ask one clarifying question first; after two
+  failed probes switch layer or ask instead of continuing in the wrong one.
 - Do not install glibc/native binaries (`npm rebuild`, linux-x64 prebuilts) — they cannot run
   here. Prefer pure-JS packages or `pkg install`ed Termux binaries.
 - If a tool is missing: `pkg search <name>` → `pkg install -y <name>`; state plainly when the

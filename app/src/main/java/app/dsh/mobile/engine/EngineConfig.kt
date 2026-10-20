@@ -570,6 +570,16 @@ object EngineConfig {
             |    compressionLevel: 1
             |    compressionThresholdBytes: 1024
             |
+            |# Web fetch provider (v1.3.27): keep the shipped Messages search provider, move
+            |# fetch to the composite provider registered below (official Fetch API first,
+            |# local fallback with fake-IP ranges allowed). A patch replaces the whole config
+            |# row, so both fields are restated rather than inherited.
+            |- id: web
+            |  name: '@deepseek-ai/dsh-web'
+            |  config:
+            |    searchProvider: deepseek-official
+            |    fetchProvider: android-fetch-auto
+            |
             |# This probe is intentionally last: Cordis keeps failed imports as
             |# entries without a fiber, while the HTTP port can still be healthy.
             |# The app consumes its marker and can quarantine only a user bundle.
@@ -595,6 +605,20 @@ object EngineConfig {
             |- insert:
             |    - id: android-fast-mode
             |      name: ./android-plugins/fast-mode.mjs
+            |
+            |# Web fetch composite (v1.3.27): official DeepSeek Fetch API first, local HTTP(S)
+            |# fetch as the fallback. Two reasons, one provider:
+            |#  1. the official Fetch API refuses sites it cannot scrape (anti-bot / captcha
+            |#     answers 404 "failed to fetch URL"), while the local hop behind the
+            |#     side-router reads them fine;
+            |#  2. this engine pins npm 0.2.1-rc.2, which predates the upstream
+            |#     allowedNonPublicRanges knob, so the local hop's SSRF guard rejects every
+            |#     fake-IP answer (198.18.0.0/15) with WEB_BLOCKED_URL.
+            |# The plugin registers the composite provider below; its local resolver allows the
+            |# configured fake-IP ranges and still rejects loopback / RFC1918 / link-local.
+            |- insert:
+            |    - id: android-fetch-auto
+            |      name: ./android-plugins/android-fetch-auto.mjs
             |
             |# Narrow-screen UI fixes (v1.2.175 - v1.2.181). Each is a *client plugin
             |# package* (directory form, e.g. narrow-sidebar/package.json): the package
@@ -630,7 +654,7 @@ object EngineConfig {
         // sit beside it. Deploy from assets (kept in sync by the same idempotent check).
         runCatching {
             // 单文件插件（.mjs）：overlay 直接指向文件
-            listOf("priv-mode.mjs", "bridge-token.mjs", "fast-mode.mjs", "plugin-health.mjs").forEach { fileName ->
+            listOf("priv-mode.mjs", "bridge-token.mjs", "fast-mode.mjs", "plugin-health.mjs", "android-fetch-auto.mjs").forEach { fileName ->
                 val src = ctx.assets.open("android-plugins/$fileName").use { it.readBytes() }
                 val dst = File(f.parentFile, "android-plugins/$fileName")
                 deployOne(dst, src.toString(Charsets.UTF_8), fileName)
@@ -978,6 +1002,51 @@ object EngineConfig {
         }
         if (patched == 0) Log.i(TAG, "engine patch: android terminal inspection already patched")
         patchInspectorWorkerForAndroid(root)
+        patchFrontendSpaFallback(root)
+    }
+
+    /**
+     * WebUI 客户端路由 fallback（v1.3.27，issue「设置页歧义」）。
+     *
+     * 上游 `dsh-host-frontend-static` 对 dist 里不存在的路径一律 404，导致任何
+     * 客户端路由（/settings、/settings/general…）一刷新/直链就白屏；WebUI 的
+     * 设置其实是「账号菜单 → 设置」的全屏浮层（URL 不变），不是路由。这里按
+     * 内容锚点把「扩展名缺失的未知路径」改回 index.html，让深链/刷新得到 SPA
+     * 入口而不是错误页（API/静态资源路径有扩展名或是具名路由，不受影响）。
+     */
+    private fun patchFrontendSpaFallback(root: File) {
+        val file = File(root, "lib/node_modules/@deepseek-ai/dsh-host-frontend-static/lib/index.js")
+        if (!file.isFile) { Log.w(TAG, "spa fallback: frontend-static not found, skip"); return }
+        val text = runCatching { file.readText() }.getOrNull() ?: return
+        if (text.contains("[dsh-android] SPA fallback")) return
+        val anchor = """	} catch (error) {
+		if (!STATIC_MISS_CODES.has(error.code)) throw error;
+		res.writeHead(404);
+		res.end();
+		return;
+	}"""
+        val replacement = """	} catch (error) {
+		if (!STATIC_MISS_CODES.has(error.code)) throw error;
+		// [dsh-android] SPA fallback (v1.3.27): extensionless client routes such as
+		// /settings must return index.html instead of 404 (refresh/deep links otherwise
+		// show chrome-error and look like the settings page is broken).
+		const lastSegment = target.slice(distRoot.length).split(sep).pop() ?? "";
+		if (lastSegment.includes(".")) {
+			res.writeHead(404);
+			res.end();
+			return;
+		}
+		if (!authorizeIndex()) return;
+		const spaBody = await renderIndex();
+		res.writeHead(200, { "content-type": HTML_MIME });
+		res.end(spaBody);
+		return;
+	}"""
+        if (!text.contains(anchor)) { Log.w(TAG, "spa fallback anchor missing (upstream changed?)"); return }
+        runCatching {
+            file.writeText(text.replace(anchor, replacement))
+            Log.i(TAG, "engine patch: SPA fallback enabled in frontend-static")
+        }.onFailure { Log.w(TAG, "spa fallback patch failed: ${it.message}") }
     }
 
     /**

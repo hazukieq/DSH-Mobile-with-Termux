@@ -50,7 +50,10 @@ Groups (see the actual handlers for params):
 - Screen/UI: `GET /screen`, `/screen-changed`, `/frame-diff`, `/diff`, `/screenshot`, `/ocr`,
   `POST /tap`, `/tap-id`, `/gesture`, `/key`, `/input`, `/scroll-find`, `/scroll-center`,
   `/scroll-edge`, `/wait`, `/wait-text`, `/idle`, `/interference`, `/launch`, `/launch-intent`,
-  `/batch`, `/loop/run`, `/pick`.
+  `/batch`, `/loop/run`, `/pick`. `POST /launch` and `/launch-intent` accept
+  `{"component":"pkg/cls"}` (plus optional `action`, `data`, `extras`); a missing component returns
+  `{"ok":false,"error":"component not found: ..."}`, and a successful component start is flagged
+  `backgroundLaunchMayBeBlocked` because Android may silently refuse background activity starts.
 - Vision: `POST /vision/crop`, `/vision/track`, `/vision/tap`, `/vision/drag`, `GET /vision/list`.
 - Memory: `GET /memory/list`, `/memory/stats`, `POST /memory/lookup`, `/memory/store`,
   `/memory/confirm`, `/memory/clear`.
@@ -103,6 +106,24 @@ Renderer console errors also land in logcat under the `chromium` tag (`[INFO:CON
   exits 3 with an explanation.
 - **Alarms/timers**: `alarm 07:30 "standup"`, `alarm timer 600 "tea"`, `alarm show`; standard
   AlarmClock intents, retried through `shz` when background activity start is blocked.
+
+## Three UI layers — decide the layer before touching "settings/plugins/terminal"
+
+| layer | what it is | typical entry | CDP? | shell launch? |
+| --- | --- | --- | --- | --- |
+| native | Android activities + the top-bar overlay | top-bar gear → native Settings; capsule handle | no | **no** — `am start` of the app's own activity is silently blocked by Android (exit 0, nothing opens) |
+| web | the React WebUI on `127.0.0.1:3080` | drawer; **account menu → 设置 (Settings)** | yes | n/a |
+| terminal | Termux shell / native terminal activity | terminal activity or engine sidebar terminal | no | yes (run commands) |
+
+- **"Settings" is ambiguous**:
+  - **WebUI settings** = `账号菜单 → 设置`: a full-screen dialog overlay (`role=dialog`), the URL
+    stays `/`; it is **not** a `/settings` route, so opening that URL never worked (now the engine
+    serves index.html for extensionless client routes as a fallback, but the entry is still the menu).
+  - **Native settings** = the top-bar gear → Android `SettingsActivity` (permission centre, plugin
+    centre, engine restart, terminal font, mobile-UI rollback).
+- When the layer is unclear, **ask the user**: "do you mean the WebUI settings (account menu) or the
+  gear/native settings?" — then act. Blindly trying layers costs many steps.
+- `dsh-mobile ui` prints this layer map (add `--json` for machine use).
 
 ## App UI map (what the user sees)
 

@@ -502,6 +502,45 @@ async function cmdBridge(args) {
   if (res.status >= 400) process.exit(2);
 }
 
+function cmdUi(args) {
+  const json = args.includes('--json');
+  const ui = {
+    layers: {
+      native: {
+        what: 'Android activities + the native top-bar overlay (engine status / restart / hide / gear)',
+        entries: ['top-bar gear -> SettingsActivity (permission centre, plugin centre, engine restart, font, mobile-UI rollback)', 'top-bar hide -> capsule handle (drag it, tap to restore the toolbar)', 'terminal activity (native terminal)'],
+        automation: 'accessibility taps / dsh-mobile appshot. CDP cannot see this layer. Do NOT `am start` the app\'s own activities: Android may block the background start and still exit 0.',
+      },
+      web: {
+        what: 'the React WebUI at http://127.0.0.1:3080 (WebView)',
+        entries: ['drawer (sidebar / files / sessions)', 'account menu -> 设置 (Settings): a full-screen dialog overlay; the URL stays "/", it is NOT a /settings route', 'right pane tabs (document preview / engine terminal)'],
+        automation: 'CDP: dsh-mobile cdp serve 9222 + eval/Playwright. Deep links are client-side only; /settings is not a route.',
+      },
+      terminal: {
+        what: 'Termux shell inside the engine and the native terminal activity',
+        entries: ['native terminal activity (own tabs / extra keys)', 'engine sidebar terminal (PTY owned by the engine)'],
+        automation: 'just run commands; rm on /sdcard goes to dsh-trash; exit closes the tab.',
+      },
+    },
+    ambiguous: {
+      '设置': ['web: account menu -> 设置 (overlay, URL unchanged)', 'native: top-bar gear -> Android SettingsActivity'],
+      '插件': ['web: drawer -> 插件 / 插件市场', 'native: Settings -> plugin centre'],
+      '终端': ['native terminal activity', 'engine right-pane terminal (PTY)'],
+    },
+    rule: 'If the layer is ambiguous (native / web / terminal), ask the user which one before trying more than two steps; never assume `am start` or GET /settings works.',
+  };
+  if (json) { console.log(JSON.stringify(ui, null, 2)); return; }
+  console.log('DSH Mobile UI layers');
+  for (const [k, v] of Object.entries(ui.layers)) {
+    console.log('\n[' + k + '] ' + v.what);
+    for (const e of v.entries) console.log('  - ' + e);
+    console.log('  automation: ' + v.automation);
+  }
+  console.log('\nambiguous words:');
+  for (const [k, v] of Object.entries(ui.ambiguous)) console.log('  ' + k + ': ' + v.join(' | '));
+  console.log('\nrule: ' + ui.rule);
+}
+
 function cmdInfo() {
   console.log('dsh-mobile helper');
   console.log('  node       : ' + process.version);
@@ -534,12 +573,14 @@ try {
     case 'appshot': await cmdAppShot(rest[0], rest[1]); break;
     case 'bridge': await cmdBridge(rest); break;
     case 'doctor': await cmdDoctor(); break;
+    case 'ui': cmdUi(rest); break;
     case 'info': cmdInfo(); break;
     case 'doc': console.log(fs.readFileSync(DOC, 'utf8')); break;
     default:
       console.log(`dsh-mobile — WebView CDP bridge, AgentBridge client, app info
 
 usage (CDP subcommands also accept the shorter "dsh-mobile <sub>" form):
+  dsh-mobile ui [--json]                layer map: native / web / terminal, ambiguous words
   dsh-mobile info                       paths, node, sockets, bridge token state
   dsh-mobile doc                        print $DSH_HOME/DSH-MOBILE.md
   dsh-mobile appshot [out.png] [max]    native screenshot of the app window (PixelCopy)

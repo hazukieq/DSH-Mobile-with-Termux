@@ -2300,7 +2300,11 @@ document.getElementById('api').textContent = checks.map(function(c){
             // （AI 体验反馈实测抓到：报 "need 'package' or 'label' field"）。
             val pkg = obj.optString("package").ifBlank { obj.optString("pkg") }.orEmpty()
             val label = obj.optString("label").orEmpty()
+            val component = obj.optString("component").ifBlank { obj.optString("activity") }.orEmpty()
             val pm = ctx.packageManager
+
+            // 显式 component（v1.3.27）：以前被静默忽略（只开 launcher），现在按 component 打开
+            if (component.isNotBlank()) return launchComponent(ctx, component, obj)
 
             // 按包名直接启动
             if (pkg.isNotBlank()) {
@@ -2348,16 +2352,61 @@ document.getElementById('api').textContent = checks.map(function(c){
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val act = obj.optString("action")
-        if (act.isBlank()) return 400 to """{"ok":false,"error":"action required"}"""
+        val component = obj.optString("component").ifBlank { obj.optString("activity") }.orEmpty()
+        if (act.isBlank() && component.isBlank()) {
+            return 400 to """{"ok":false,"error":"need 'action' and/or 'component'"}"""
+        }
+        if (component.isNotBlank()) return launchComponent(ctx, component, obj)
         return runCatching {
             val intent = android.content.Intent(act)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             obj.optString("data").takeIf { it.isNotBlank() }?.let {
                 intent.data = android.net.Uri.parse(it)
             }
+            applyIntentExtras(intent, obj)
             ctx.startActivity(intent)
             200 to """{"ok":true,"launched":"$act"}"""
         }.getOrElse { 500 to """{"ok":false,"error":"${it.message}"}""" }
+    }
+
+    /**
+     * 按显式 component 启动 Activity（v1.3.27）。
+     *
+     * 回执必须可信（issue 的核心诉求）：
+     *  - component 不存在 / 不可见 → 404 component not found；
+     *  - 存在但系统 BAL 拦截后台启动 → startActivity 不抛异常，回执带
+     *    backgroundLaunchMayBeBlocked 让调用方核对界面，而不是假装一定成功。
+     */
+    private fun launchComponent(ctx: Context, component: String, obj: JSONObject): Pair<Int, String> {
+        val name = runCatching { android.content.ComponentName.unflattenFromString(component) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"bad component (want pkg/cls): $component"}"""
+        val exists = runCatching { ctx.packageManager.getActivityInfo(name, 0) }.isSuccess
+        if (!exists) return 404 to """{"ok":false,"error":"component not found: $component"}"""
+        return runCatching {
+            val intent = android.content.Intent().apply {
+                this.component = name
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                obj.optString("action").takeIf { it.isNotBlank() }?.let { action = it }
+                obj.optString("data").takeIf { it.isNotBlank() }?.let { data = android.net.Uri.parse(it) }
+            }
+            applyIntentExtras(intent, obj)
+            ctx.startActivity(intent)
+            200 to """{"ok":true,"launched":"$component","component":true,"backgroundLaunchMayBeBlocked":true,"hint":"Android may block background activity starts; if no UI appeared, open it from the app UI (top-bar gear) instead"}"""
+        }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
+    }
+
+    /** extras：{"extras":{"name":"text","count":3,"flag":true,"big":1234567890123}} */
+    private fun applyIntentExtras(intent: android.content.Intent, obj: JSONObject) {
+        val extras = obj.optJSONObject("extras") ?: return
+        extras.keys().forEach { key ->
+            when (val v = extras.opt(key)) {
+                is Boolean -> intent.putExtra(key, v)
+                is Int -> intent.putExtra(key, v)
+                is Long -> intent.putExtra(key, v)
+                is Double -> intent.putExtra(key, v)
+                is String -> intent.putExtra(key, v)
+            }
+        }
     }
 
     /** POST /tap-id —— 按 resource-id 点击（v1.2.141）。比文本定位稳：不受界面语言、OCR 误差影响 */
