@@ -37,6 +37,7 @@ object OpenWith {
     }
 
     fun open(ctx: Context, path: String, kind: String = "file", mimeOverride: String? = null): JSONObject {
+        android.util.Log.i("OpenWith", "request kind=$kind path=$path")
         val file = File(path)
         if (!file.exists()) {
             return JSONObject().put("ok", false).put("error", "not found: $path")
@@ -44,17 +45,21 @@ object OpenWith {
         // 调用方传 file 但实际是目录（引擎预览/文件夹按钮）时，按文件夹处理
         val effectiveKind = if (kind == "file" && file.isDirectory) "folder" else kind
         val mime = mimeOverride?.takeIf { it.isNotBlank() } ?: mimeOf(file)
-        val (action, uri, type) = when (effectiveKind) {
-            "folder" -> {
-                val doc = storageDocumentUri(file.absolutePath)
-                if (doc != null) Triple(Intent.ACTION_VIEW, doc, "vnd.android.document/directory")
-                else Triple(Intent.ACTION_VIEW, providerUri(ctx, file), "vnd.android.document/directory")
-            }
-            "share" -> Triple(Intent.ACTION_SEND, providerUri(ctx, file), mime)
-            else -> Triple(Intent.ACTION_VIEW, providerUri(ctx, file), mime)
+        // /sdcard 下的目录优先交给系统的 ExternalStorageProvider（DocumentsUI 能直接显示）。
+        // ⚠️ 这个 provider 的文档 URI 不归我们所有：带上 GRANT/ClipData 会让系统尝试
+        // 把读权限授予目标 App，而本 App 本身没有该 URI 权限（即使有 MANAGE_EXTERNAL_STORAGE
+        // 也不行）→ SecurityException「you could obtain access using ACTION_OPEN_DOCUMENT」。
+        // 所以：系统文档 URI 走「不带 grant」的纯 VIEW；我们自己的 provider URI 才带 grant。
+        val externalDoc = if (effectiveKind == "folder") storageDocumentUri(file.absolutePath) else null
+        val uri = externalDoc ?: providerUri(ctx, file)
+        val action = if (effectiveKind == "share") Intent.ACTION_SEND else Intent.ACTION_VIEW
+        val type = when (effectiveKind) {
+            "folder" -> "vnd.android.document/directory"
+            else -> mime
         }
         val intent = Intent(action).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (externalDoc == null) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (effectiveKind == "share") {
                 this.type = type
                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -62,12 +67,12 @@ object OpenWith {
             } else {
                 setDataAndType(uri, type)
             }
-            if (effectiveKind == "file" || effectiveKind == "folder") {
-                @Suppress("DEPRECATION")
-                clipData = android.content.ClipData.newUri(ctx.contentResolver, file.name, uri)
+            if (externalDoc == null) {
+                clipData = android.content.ClipData.newRawUri(file.name, uri)
             }
         }
         val target = ctx.packageManager.resolveActivity(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        android.util.Log.i("OpenWith", "intent action=$action uri=$uri type=$type resolved=${target?.activityInfo?.packageName}")
         val before = AppState.resumedActivityName()
         val started = System.currentTimeMillis()
         return runCatching {
@@ -82,6 +87,7 @@ object OpenWith {
                 if (AppState.resumedActivityName() == null) { left = true; break }
                 Thread.sleep(50)
             }
+            android.util.Log.i("OpenWith", "started kind=$effectiveKind uri=$uri leftApp=$left")
             JSONObject()
                 .put("ok", true)
                 .put("opened", left)
@@ -99,6 +105,7 @@ object OpenWith {
                     else "startActivity returned but the app stayed in front; the system chooser may have been blocked (BAL) - foreground the app and retry, or ask the user.",
                 )
         }.getOrElse {
+            android.util.Log.w("OpenWith", "failed: ${it.message}")
             JSONObject().put("ok", false).put("error", "no app can open this: ${it.message}")
         }
     }

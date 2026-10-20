@@ -1,6 +1,12 @@
 # AI_CONTEXT
 
 ## Current progress
+- **「显示文件位置」真正打通（2026-10-20 第七十二轮，v75）**：用户报 v74 后仍打不开；本轮开 CDP + logcat 实测复现并逐层定位（关键证据链）：
+  ① 触发 reveal → 日志 `OpenWith: request kind=folder path=...` 后无后续、UI 报 revealError → 说明 `OpenWith` 在构造 intent 阶段抛异常（在 runCatching 外）。
+  ② logcat 根因：`Permission Denial: opening provider com.android.externalstorage.ExternalStorageProvider ... requires ACTION_OPEN_DOCUMENT` —— `ClipData.newUri()` 会 resolver.getType() 打开目标 provider；对系统 ExternalStorageProvider 的 document URI，本 App 没有 SAF 授权（MANAGE_EXTERNAL_STORAGE 也不覆盖）→ SecurityException。
+  ③ 改用 `ClipData.newRawUri()`（不查询 provider）后继续前进，报 `UID 10375 does not have permission to content://...externalstorage...; you could obtain access using ACTION_OPEN_DOCUMENT` —— `startActivity` 尝试把外部 provider 的 URI 读权限授予目标，而本 App 本身不持有该 URI 权限。
+  ④ 最终修法：系统 document URI（/sdcard 目录）走**不带 GRANT、不带 ClipData** 的纯 ACTION_VIEW（DocumentsUI 自己有权访问 provider）；只有我们自己的 `content://<pkg>.dshfiles` URI 才带 FLAG_GRANT_READ_URI_PERMISSION + ClipData。`OpenWith` 增加 `externalDoc` 分支、日志（请求/意图/失败原因）。
+  ⑤ 实测：点「显示文件位置」→ 系统 DocumentsUI 打开到 `/storage/emulated/0/Documents/...` 目录（截图确认），UI 不再弹 toast；engine patch 仍带 `[dsh-android] bridge open` 调试日志便于后续排查。版本 1.3.43 / 283。
 - **「无法显示文件位置，请重试」修复（2026-10-20 第七十一轮，v74）**：用户点 WebUI 的「显示文件位置」报此错。定位：客户端 RPC 走 `session.openWorkspacePath({action:"reveal"})` → session-controller 调 `revealNativePath` → `nativeFileManager` 在 android 返回 null → 抛「native file manager is unsupported on android」→ revealError。上一版补丁只覆盖了 `openNativePath`（默认打开），没覆盖 reveal。修复：
   ① 引擎补丁升级：helper 改为 `openAndroidPath(path, signal, env, route="/open/file")`（支持 route，升级时替换旧 v73 helper），`revealNativePath` 开头注入 android 分支（dirname → POST `/open/folder`）；`openNativePathWithIntent` 的 android 分支保留；`canOpenNativePath` android=true 保留；幂等（helper 用 v2 marker、open 分支用调用点检测）。
   ② `OpenWith` 增强：调用方传 file 但实际是目录时按 folder 处理；chooser 也加 `FLAG_GRANT_READ_URI_PERMISSION`，提高各 ROM 文件管理器/查看器接受度。

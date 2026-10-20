@@ -1024,7 +1024,7 @@ object EngineConfig {
 
         // 1) 注入/升级 bridge 调用助手（android 分支共用；v73 的旧助手没有 route 参数，必须替换）
         val helperAnchor = "/** Dispatch one shell-free platform command for the requested open intent. */"
-        val helper = """/** [dsh-android] android open v2: hand the path to the app's AgentBridge (v1.3.41). */
+        val helper = """/** [dsh-android] android open v3: hand the path to the app's AgentBridge (v1.3.42). */
 async function openAndroidPath(path, signal, env, route = "/open/file") {
 	let token = env.DSH_BRIDGE_TOKEN || process.env.DSH_BRIDGE_TOKEN || "";
 	if (!token) {
@@ -1032,6 +1032,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
 			token = (await readFile(process.env.PREFIX + "/.bridge-token", "utf8")).trim();
 		} catch {}
 	}
+	console.error("[dsh-android] bridge open " + route + " path=" + path);
 	const res = await fetch("http://127.0.0.1:3083" + route, {
 		method: "POST",
 		headers: { "content-type": "application/json", "x-dsh-token": token },
@@ -1039,6 +1040,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
 		signal
 	});
 	const body = await res.text();
+	console.error("[dsh-android] bridge open result " + res.status + " " + body.slice(0, 400));
 	if (!res.ok) throw new Error("android open failed (" + res.status + "): " + body);
 	return body;
 }
