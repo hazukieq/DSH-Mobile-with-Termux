@@ -30,13 +30,13 @@ object TermuxDotfiles {
     private const val TRASH_CLI_MARKER = "DSH Mobile trash-cli"
     private const val APP_DOC_ASSET = "agents/DSH-MOBILE.md"
     private const val APP_DOC_MARKER = "dsh-mobile app doc v"
-    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v13 "
+    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v14 "
     private const val CDP_HELPER_ASSET = "termux/webview-cdp.mjs"
     private const val CDP_WRAPPER_ASSET = "termux/dsh-mobile.sh"
     private const val CDP_HELPER_MARKER = "DSH Mobile helper"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 20
+    private const val VERSION = 21
 
     fun ensure(ctx: Context) {
         val body = runCatching {
@@ -123,7 +123,7 @@ object TermuxDotfiles {
             val names = listOf(
                 "rm", "trash-cli", "dsh-mobile", "_dsh_http.sh", "notify", "scr", "say",
                 "psx", "killx", "loop", "fast", "linux", "dsh-update",
-                "shot", "appshot", "alarm", "record", "native",
+                "shot", "appshot", "alarm", "record", "native", "media",
             )
             var fixed = 0
             var removedLinks = 0

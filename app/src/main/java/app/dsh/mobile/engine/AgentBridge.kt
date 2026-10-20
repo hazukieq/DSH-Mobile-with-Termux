@@ -488,6 +488,11 @@ object AgentBridge {
             method == "GET" && path == "/settings" -> settingsGet()
             method == "POST" && path == "/settings" -> settingsSet(body)
             method == "POST" && path == "/activity" -> openActivity(body)
+            method == "POST" && path == "/media/play" -> mediaPlay(ctx, body)
+            method == "POST" && path == "/media/pause" -> mediaPause(ctx)
+            method == "POST" && path == "/media/resume" -> mediaResume(ctx)
+            method == "POST" && path == "/media/stop" -> mediaStop(ctx)
+            method == "GET" && path == "/media/status" -> 200 to AudioPlayer.status().toString()
             method == "POST" && path == "/gesture" -> gesture(body)
             method == "POST" && path == "/key" -> key(body)
             method == "POST" && path == "/wait" -> wait(body)
@@ -2170,6 +2175,33 @@ document.getElementById('api').textContent = checks.map(function(c){
         }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
     }
 
+
+    /**
+     * POST /media/play {"path"|"url", "title","artist","loop"} —— 原生音频播放（v1.3.40）。
+     *
+     * 解码与输出交给平台 MediaPlayer（AudioTrack/音频 HAL），不依赖 Termux 里的
+     * ALSA/PulseAudio，也不需要在 Termux 安装额外播放器；音频焦点按 USAGE_MEDIA 申请。
+     * 支持本机路径（App 同 uid，Termux 文件可直接放）与 http(s) URL。
+     */
+    private fun mediaPlay(ctx: Context, body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val source = obj.optString("path").ifBlank { obj.optString("url") }.ifBlank { obj.optString("source") }
+        if (source.isBlank()) return 400 to """{"ok":false,"error":"need 'path' or 'url'"}"""
+        val status = AudioPlayer.play(
+            ctx,
+            source,
+            title = obj.optString("title"),
+            artist = obj.optString("artist"),
+            loop = obj.optBoolean("loop", false),
+        )
+        val code = if (status.optBoolean("ok")) 200 else 422
+        return code to status.put("instant", true).put("verify", "none").toString()
+    }
+
+    private fun mediaPause(ctx: Context): Pair<Int, String> = 200 to AudioPlayer.pause(ctx).put("instant", true).toString()
+    private fun mediaResume(ctx: Context): Pair<Int, String> = 200 to AudioPlayer.resume(ctx).put("instant", true).toString()
+    private fun mediaStop(ctx: Context): Pair<Int, String> = 200 to AudioPlayer.stop(ctx).let { AudioPlayer.status() }.put("instant", true).toString()
 
     /** BAL 拦截时的兜底：发一条可点击的通知，用户点一下就能打开目标页。 */
     private fun postOpenNotification(ctx: Context, target: String, cls: Class<out android.app.Activity>?): Boolean = runCatching {

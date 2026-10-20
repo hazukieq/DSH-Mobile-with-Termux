@@ -1151,7 +1151,7 @@ object EngineConfig {
      */
     private val AGENT_GATES = listOf(
         "_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast",
-        "linux", "dsh-update", "shot", "appshot", "alarm", "record", "native",
+        "linux", "dsh-update", "shot", "appshot", "alarm", "record", "native", "media",
     )
 
     /** 权限位（用于诊断日志，如 0600/0755）。 */

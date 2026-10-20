@@ -1,6 +1,11 @@
 # AI_CONTEXT
 
 ## Current progress
+- **原生音乐播放（2026-10-20 第六十九轮，v72）**：用户问「app 内 agent 调用音乐播放能否只用系统硬件、播放器属于 Termux 环境」。实现结论：**播放器本体放在 App（Kotlin/MediaPlayer），解码与输出走 Android 音频硬件（AudioTrack/音频 HAL）+ 音频焦点**，Termux 里不需要 ALSA/PulseAudio/mpv；引擎常驻前台服务，App 退后台仍可播。新增：
+  ① `AudioPlayer.kt`：MediaPlayer 封装，USAGE_MEDIA 音频焦点（API26+ AudioFocusRequest，失去焦点自动暂停）、支持本机路径与 http(s) URL、loop、status（state/playing/position/duration/source/title/artist/error）、错误可读化（文件不存在、格式不支持、音频焦点被拒）；
+  ② 桥端点：`POST /media/play`（body: source/path/url + title/artist/loop）、`/media/pause`、`/media/resume`、`/media/stop`、`GET /media/status`；play/pause/resume/stop 回执带 `instant:true`（无需截图核对）；
+  ③ 门脚本 `media`：`media play <path|url> [title] [artist] [--loop]`、pause/resume/stop/status，加入 AGENT_GATES（第 16 个）与 repair 列表；
+  ④ 文档 `DSH-MOBILE.md` v14 增「Audio playback (native MediaPlayer)」：支持格式（平台解码器：MP3/AAC/FLAC/OGG/WAV…）、不支持 opus-in-webm/APE/DSD（需先转码）、/sdcard 需所有文件权限、后台可播；AGENTS seed 68 门脚本清单加 `media`。已知局限如实写在文档：平台 MediaPlayer 不能/难做的格式建议先用 Termux 的 ffmpeg 转码，或改用 Termux 里的 mpv（OpenSL/AAudio 输出）。versionName 1.3.40 / versionCode 280；vivo 已装（16 gate executable、seed v68、doc v14、engine healthy）。
 - **文档端点审计 + 自动化校验（2026-10-20 第六十八轮，v71）**：用户指出「原生桥有没有 native json GET /notify？文档经常写没有的/没实现的」。审计结果：真实路由里**没有 GET /notify**（只有 `GET /notif` 列表、`POST /notify` 发通知），而 `DSH-MOBILE.md` 第 127 行写成了 `GET /notify` → 已改为 `GET /notif (list notifications)`；`native json` 本身会如实把 404 返回给调用方（不是文档说的「查通知」）。同时新增 `scripts/check-doc-endpoints.py`：以 `AgentBridge.kt` 的 66 条路由与 `webview-cdp.mjs` 的 26 个子命令为唯一真源，扫描 `assets/agents/*.md` 与 `gates/native` 里所有 `GET|POST /path`、`dsh-mobile [cdp] <sub>` 提法；发现不存在即 exit 1。当前 99 处提及全部通过。gate `native json` 的 usage 也补了「path 必须是真实端点，如 GET /notif、GET /process、POST /tap」。doc marker 升 v13、dotfiles VERSION 20。versionName 1.3.39 / versionCode 279，vivo 已装。
 - **悬浮窗仅作可选建议 + 系统设置页入口（2026-10-20 第六十七轮，v70）**：用户指示「让用户开悬浮窗可以建议，没授予就是 fallback」。调整：
   ① `/activity` 支持打开系统设置页：`overlay-settings`（ACTION_MANAGE_OVERLAY_PERMISSION + package uri）、`accessibility-settings`（ACTION_ACCESSIBILITY_SETTINGS）；这类请求用「本 App 是否离开前台」判定 `opened`（`requested_kind:"system-settings"`），回执仍带 handoff/verify:none；

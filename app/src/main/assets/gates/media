@@ -1,0 +1,53 @@
+#!/system/bin/sh
+# [dsh-android] 自举到引擎 bash（/dev/tcp 是 bash 特性，toybox sh 不支持）。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+# [dsh-android] media: play audio through the app's native MediaPlayer (v1.3.40).
+#
+# 为什么用它：解码/输出在 App 侧走 Android 音频硬件（AudioTrack/HAL）+ 音频焦点，
+# Termux 里不需要 ALSA/PulseAudio/mpv；本机路径与 http(s) URL 都能放。
+# 平台解码器限制：MP3/AAC/FLAC/OGG/WAV 等 OK；opus-in-webm、ape、dsd 等不支持。
+#
+# usage:
+#   media play <path|url> [title] [artist] [--loop]
+#   media pause | resume | stop | status
+#   media <GET|POST> <path> [json]        直接调桥（同 native json）
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/_dsh_http.sh"
+
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+usage() { sed -n '9,18p' "$0" >&2; exit 2; }
+
+case "${1:-}" in
+  play)
+    shift
+    src=""; title=""; artist=""; loop=false
+    for a in "$@"; do
+      case "$a" in
+        --loop) loop=true ;;
+        -*) echo "media play: unknown flag '$a'" >&2; exit 2 ;;
+        *) if [ -z "$src" ]; then src="$a"; elif [ -z "$title" ]; then title="$a"; else artist="$a"; fi ;;
+      esac
+    done
+    [ -n "$src" ] || usage
+    body="{\"source\":\"$(esc "$src")\",\"title\":\"$(esc "$title")\",\"artist\":\"$(esc "$artist")\",\"loop\":$loop}"
+    out=$(dsh_http POST /media/play "$body"); rc=$?
+    [ "$rc" = 0 ] || { echo "media: bridge failed (rc=$rc)${out:+ — $out}" >&2; exit 1; }
+    printf '%s\n' "$out"
+    ;;
+  pause|resume|stop)
+    out=$(dsh_http POST "/media/$1" ""); rc=$?
+    [ "$rc" = 0 ] || { echo "media: bridge failed (rc=$rc)${out:+ — $out}" >&2; exit 1; }
+    printf '%s\n' "$out"
+    ;;
+  status)
+    out=$(dsh_http GET /media/status); rc=$?
+    [ "$rc" = 0 ] || { echo "media: bridge failed (rc=$rc)" >&2; exit 1; }
+    printf '%s\n' "$out"
+    ;;
+  -h|--help|"") usage ;;
+  *) echo "media: unknown command '$1'" >&2; usage ;;
+esac

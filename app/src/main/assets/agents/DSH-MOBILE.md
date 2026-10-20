@@ -136,6 +136,25 @@ type|key|scroll`) return `instant:true`, `verify:"none"` and
 may be mid-animation or the user may have moved on. To verify a result: settle (`scr idle` or
 `cdp wait`) then read once. Screenshots are for evidence/diagnosis, not tap confirmation.
 
+### Audio playback (native MediaPlayer)
+
+Music/TTS-length audio does **not** need any Termux audio stack (no ALSA/PulseAudio/mpv):
+the app decodes and outputs through Android's own audio path with a media audio focus.
+
+```bash
+media play /sdcard/Music/song.mp3 "Song" "Artist" --loop
+media pause | resume | stop | status
+# bridge equivalents: POST /media/play {"path"|"url","title","artist","loop"},
+#                     POST /media/pause, /media/resume, /media/stop; GET /media/status
+```
+
+- Local paths: same uid, so files under `$PREFIX`/`$DSH_HOME` work; `/sdcard` needs the
+  all-files grant. `http(s)` URLs work too.
+- Supported formats are whatever the platform MediaPlayer decodes (MP3, AAC/M4A, FLAC, OGG,
+  WAV…). Not supported: opus-in-webm, APE, DSD - transcode first (e.g. `ffmpeg` in Termux).
+- Playback continues in the background because the engine runs in a foreground service.
+- This is an instant action: `ok:true` means playback was started; no screenshot verification.
+
 ### Background launches (BAL) and the `opened` field
 
 `POST /activity` waits up to 1.2 s for the target Activity to actually resume and reports
