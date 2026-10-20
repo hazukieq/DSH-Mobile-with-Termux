@@ -343,7 +343,14 @@ function cmdInfo() {
   console.log('  debug flag : ' + FLAG + ' [' + (fs.existsSync(FLAG) ? 'present' : 'absent') + ']');
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+// Support both `dsh-mobile cdp <sub>` (documented form) and the bare `dsh-mobile <sub>`.
+let cmd = argv[0];
+let rest = argv.slice(1);
+if (cmd === 'cdp') {
+  cmd = rest[0] || 'status';
+  rest = rest.slice(1);
+}
 try {
   switch (cmd) {
     case 'status': await cmdStatus(); break;
@@ -360,7 +367,7 @@ try {
     default:
       console.log(`dsh-mobile — WebView CDP bridge, AgentBridge client, app info
 
-usage:
+usage (CDP subcommands also accept the shorter "dsh-mobile <sub>" form):
   dsh-mobile info                       paths, node, sockets, bridge token state
   dsh-mobile doc                        print $DSH_HOME/DSH-MOBILE.md
   dsh-mobile appshot [out.png] [max]    native screenshot of the app window (PixelCopy)
