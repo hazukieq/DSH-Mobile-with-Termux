@@ -1,4 +1,4 @@
-﻿# DSH Mobile （Deepseek-harness-Mobile)
+# DSH Mobile （Deepseek-harness-Mobile)
 
 <p align="center">
   <img src="docs/promo/dsh-mobile-github.png" alt="DSH Mobile — DeepSeek Harness for Android" width="100%">
@@ -205,6 +205,16 @@ specialUse 前台服务 + 指数退避监督器扛住系统回收，长任务锁
 python scripts/dedupe-runtime.py app/src/main/assets/runtime.zip   # 别名去重，省 ~33MB
 gradle assembleDebug -Pabi=arm64-v8a
 ```
+
+> **国内网络**：Gradle 直连 Maven Central 可能报 `Remote host terminated the handshake`
+> （TLS 握手被网络/旁路由掐断），而 `curl` 同一地址是正常的。用仓库里的镜像初始化脚本：
+>
+> ```bash
+> gradle -I scripts/gradle-mirror.gradle assembleDebug -Pabi=arm64-v8a
+> ```
+>
+> 想对之后所有本机构建常驻：`cp scripts/gradle-mirror.gradle ~/.gradle/init.d/10-cn-mirrors.gradle`。
+> 脚本只调整仓库顺序（阿里云镜像优先，缺包仍回落到原有仓库），不改任何依赖版本。
 
 或 Fork 后在 GitHub Actions 运行 **android-build** 工作流云端出包。
 

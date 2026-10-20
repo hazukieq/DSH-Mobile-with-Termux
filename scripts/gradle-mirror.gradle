@@ -1,0 +1,58 @@
+// scripts/gradle-mirror.gradle
+//
+// 国内网络下的 Gradle 初始化脚本：把阿里云 Maven 镜像**插到所有仓库列表最前面**。
+//
+// 为什么需要：本机直连 repo.maven.apache.org 时，Gradle 下载插件依赖会失败在
+//   > Could not HEAD 'https://repo.maven.apache.org/maven2/...'
+//      > The server may not support the client's requested TLS protocol versions
+//         > Remote host terminated the handshake
+// 而 curl 访问同一地址是正常的（假 IP / 旁路由环境下 JVM 的 TLS 握手会被掐断）。
+// 把阿里云镜像放到最前面后构建即可通过；镜像缺包时 Gradle 仍会继续走后面原有的仓库。
+//
+// 用法（二选一）：
+//   一次性：  gradle -I scripts/gradle-mirror.gradle assembleDebug -Pabi=arm64-v8a
+//   常驻：    mkdir -p ~/.gradle/init.d
+//             cp scripts/gradle-mirror.gradle ~/.gradle/init.d/10-cn-mirrors.gradle
+//           （之后本机所有 Gradle 构建都会自动带镜像；只想给本项目用就别拷，改用 -I）
+//
+// 注意：只调整仓库顺序，不改任何依赖版本；不写死凭据；对 CI 无影响（CI 不加载它）。
+
+import org.gradle.api.artifacts.dsl.RepositoryHandler
+import org.gradle.api.artifacts.repositories.MavenArtifactRepository
+
+def MIRRORS = [
+    'https://maven.aliyun.com/repository/public',
+    'https://maven.aliyun.com/repository/google',
+    'https://maven.aliyun.com/repository/gradle-plugin',
+]
+
+/**
+ * 把镜像仓库插到列表最前面。
+ *
+ * maven {} 会先追加，随后 remove + addFirst 把它挪到首位；reverseEach 保证
+ * 插入后顺序仍是 public -> google -> gradle-plugin。同名仓库先移除，避免重复。
+ */
+def prependMirrors = { RepositoryHandler repos ->
+    MIRRORS.reverseEach { String url ->
+        def name = 'cnMirror-' + url.tokenize('/').last()
+        def existing = repos.findByName(name)
+        if (existing != null) repos.remove(existing)
+        MavenArtifactRepository repo = repos.maven { MavenArtifactRepository it ->
+            it.name = name
+            it.url = url
+        }
+        repos.remove(repo)
+        repos.addFirst(repo)
+    }
+}
+
+settingsEvaluated { settings ->
+    prependMirrors(settings.pluginManagement.repositories)
+    prependMirrors(settings.dependencyResolutionManagement.repositories)
+}
+
+// buildscript 仓库（插件 classpath）也补上；项目级 repositories 不动，
+// 避免与 settings 里 dependencyResolutionManagement.repositoriesMode 的 FAIL_ON_PROJECT_REPOS 冲突。
+allprojects { project ->
+    prependMirrors(project.buildscript.repositories)
+}

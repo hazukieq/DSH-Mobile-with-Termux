@@ -1,4 +1,4 @@
-﻿# DSH Mobile
+# DSH Mobile
 
 <p align="center">
   <img src="docs/promo/dsh-mobile-github.png" alt="DSH Mobile — DeepSeek Harness for Android" width="100%">
@@ -188,6 +188,18 @@ Normal mode is the default; choose Shizuku or Root only when the task requires a
 ./scripts/collect-termux-runtime.sh app/src/main/assets/runtime.zip aarch64
 gradle assembleDebug -Pabi=arm64-v8a
 ```
+
+> **In mainland China**: Gradle may fail against Maven Central with
+> `Remote host terminated the handshake` (the TLS handshake is cut by the network or a
+> side-router), even though `curl` reaches the same URL. Use the mirror init script shipped here:
+>
+> ```bash
+> gradle -I scripts/gradle-mirror.gradle assembleDebug -Pabi=arm64-v8a
+> ```
+>
+> To keep it for every local build: `cp scripts/gradle-mirror.gradle ~/.gradle/init.d/10-cn-mirrors.gradle`.
+> The script only reorders repositories (Aliyun mirrors first, the original ones still act as a
+> fallback) and changes no dependency versions.
 
 Alternatively, fork the repo and run the **android-build** workflow on GitHub Actions for a cloud build.
 

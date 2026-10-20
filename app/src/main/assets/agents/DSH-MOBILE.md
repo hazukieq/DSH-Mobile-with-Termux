@@ -125,6 +125,34 @@ Renderer console errors also land in logcat under the `chromium` tag (`[INFO:CON
   gear/native settings?" — then act. Blindly trying layers costs many steps.
 - `dsh-mobile ui` prints this layer map (add `--json` for machine use).
 
+## Driving the WebUI over CDP — the correct way
+
+The mobile UI replaces the engine app bar: the engine's own "打开侧边栏" button sits off-screen
+(x ≈ -308) and must not be clicked. Use the mobile-ui app bar and real pointer events.
+
+1. Open the drawer: `dsh-mobile cdp click 'button[aria-label="菜单"]'` (top-left, aria-label 菜单).
+2. Drawer entries are buttons with these aria-labels: `新建会话`, `插件`, `插件市场`,
+   `自动化任务`, `记忆系统`, `搜索会话`, `视图选项`, `添加工作区`; the account menu is
+   `button[aria-label="账号菜单"]` near the bottom of the drawer.
+3. Click the account menu, then a menu item (they are `[role=menuitem]`):
+   `dsh-mobile cdp click-text 设置 --exact` → 设置 / 意见反馈 / 退出登录.
+4. Wait for the overlay: `dsh-mobile cdp wait '[role=dialog]'`; the settings panel is
+   `[role=dialog]` (`class VOzbGW_panel`) with 账号与余额 / 通用设置 / 模型 / 内置插件 /
+   Agent 预设 / 刷B站 tabs and a close (关闭) button.
+5. Read state with `dsh-mobile cdp eval '...'`, verify visually with `dsh-mobile appshot`.
+
+Rules for reliable WebUI automation:
+
+- **Never anchor on hashed CSS class names** (`hHd-Xa_iconButton`, `VOzbGW_panel`, `wSkVaW_tab`):
+  they change between builds. Use `aria-label`, `role` and visible text.
+- **Synthetic `element.click()` / dispatched KeyboardEvent do not work**: the components listen
+  to real pointer events. Use `dsh-mobile cdp click | click-text | tap | type | key | scroll`,
+  which dispatch `Input.dispatchMouseEvent` / `dispatchTouchEvent` / `insertText`, or Playwright.
+- **Check state after every step** (`[role=dialog]` present, drawer closed, text changed) or take
+  an `appshot`. A click whose element rect is x<0 / outside the viewport means the drawer or
+  panel was not open — open it first instead of retrying the same click.
+- After two failed attempts, ask the user which layer/entry they mean (see AGENTS.md).
+
 ## App UI map (what the user sees)
 
 - **Top overlay toolbar** (native, 40 dp, semi-transparent): engine status text plus

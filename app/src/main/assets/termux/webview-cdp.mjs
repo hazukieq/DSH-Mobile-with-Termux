@@ -455,6 +455,138 @@ async function cmdEval(expr) {
   console.log(typeof v === 'string' ? v : JSON.stringify(v));
 }
 
+async function cdpTarget() {
+  const pick = await findSocket() || die('no devtools socket; enable debugging and restart the app first');
+  const target = firstPage(await listTargets(pick.name));
+  return { pick, target };
+}
+
+/** Real mouse click at viewport coordinates (Input domain, not element.click()). */
+async function mouseClick(pick, target, x, y, { touch = false } = {}) {
+  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
+  if (touch) {
+    await cdpCall(pick.name, target, 'Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await cdpCall(pick.name, target, 'Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  }
+  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+}
+
+const elementProbe = (selector) => `(() => {
+  const el = document.querySelector(${JSON.stringify(selector)});
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return { visible: false };
+  return { visible: true, x: r.x + r.width / 2, y: r.y + r.height / 2,
+           tag: el.tagName, label: el.getAttribute('aria-label') || '', text: (el.textContent || '').trim().slice(0, 40) };
+})()`;
+
+async function cmdClick(selector, touch) {
+  if (!selector) die('usage: dsh-mobile cdp click <css-selector>');
+  const { pick, target } = await cdpTarget();
+  const hit = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: elementProbe(selector), returnByValue: true });
+  const info = hit.result && hit.result.value;
+  if (!info) die('click: no element matches ' + selector);
+  if (!info.visible) die('click: element is not visible: ' + selector);
+  await mouseClick(pick, target, info.x, info.y, { touch });
+  console.log(JSON.stringify({ ok: true, clicked: selector, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag, label: info.label, text: info.text }));
+}
+
+async function cmdClickText(text, exact) {
+  if (!text) die('usage: dsh-mobile cdp click-text <text> [--exact]');
+  const { pick, target } = await cdpTarget();
+  const expr = `(() => {
+    const wanted = ${JSON.stringify(text)}; const exact = ${exact ? 'true' : 'false'};
+    const els = [...document.querySelectorAll('button,[role=menuitem],[role=menuitemradio],[role=option],[role=tab],a,[role=button],span,div')];
+    let best = null;
+    for (const el of els) {
+      const t = (el.textContent || '').trim();
+      if (!t) continue;
+      const ok = exact ? t === wanted : t.includes(wanted);
+      if (!ok) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) continue;
+      const area = r.width * r.height;
+      if (!best || area < best.area) best = { area, x: r.x + r.width / 2, y: r.y + r.height / 2, tag: el.tagName, text: t.slice(0, 60) };
+    }
+    return best;
+  })()`;
+  const hit = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: expr, returnByValue: true });
+  const info = hit.result && hit.result.value;
+  if (!info) die('click-text: nothing visible contains ' + JSON.stringify(text));
+  await mouseClick(pick, target, info.x, info.y);
+  console.log(JSON.stringify({ ok: true, clickedText: info.text, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag }));
+}
+
+async function cmdTap(x, y) {
+  const px = Number(x), py = Number(y);
+  if (!Number.isFinite(px) || !Number.isFinite(py)) die('usage: dsh-mobile cdp tap <x> <y>');
+  const { pick, target } = await cdpTarget();
+  await mouseClick(pick, target, px, py, { touch: true });
+  console.log(JSON.stringify({ ok: true, tapped: [px, py] }));
+}
+
+async function cmdType(text, selector) {
+  if (text === undefined) die('usage: dsh-mobile cdp type <text> [--selector css]');
+  const { pick, target } = await cdpTarget();
+  if (selector) {
+    const hit = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: elementProbe(selector), returnByValue: true });
+    const info = hit.result && hit.result.value;
+    if (!info || !info.visible) die('type: selector not visible: ' + selector);
+    await mouseClick(pick, target, info.x, info.y);
+  }
+  await cdpCall(pick.name, target, 'Input.insertText', { text });
+  console.log(JSON.stringify({ ok: true, typed: text.length, selector: selector || null }));
+}
+
+const KEYMAP = {
+  Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
+  Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 },
+  Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+  Backspace: { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 },
+  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 },
+  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 },
+  ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
+  ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 },
+};
+async function cmdKey(name) {
+  const k = KEYMAP[name] || KEYMAP[name && name[0].toUpperCase() + name.slice(1)];
+  if (!k) die('usage: dsh-mobile cdp key <Enter|Tab|Escape|Backspace|ArrowUp|ArrowDown|ArrowLeft|ArrowRight>');
+  const { pick, target } = await cdpTarget();
+  await cdpCall(pick.name, target, 'Input.dispatchKeyEvent', { type: 'keyDown', key: k.key, code: k.code, windowsVirtualKeyCode: k.windowsVirtualKeyCode, nativeVirtualKeyCode: k.windowsVirtualKeyCode });
+  await cdpCall(pick.name, target, 'Input.dispatchKeyEvent', { type: 'keyUp', key: k.key, code: k.code, windowsVirtualKeyCode: k.windowsVirtualKeyCode, nativeVirtualKeyCode: k.windowsVirtualKeyCode });
+  console.log(JSON.stringify({ ok: true, key: k.key }));
+}
+
+async function cmdScroll(dy) {
+  const delta = Number(dy || 600);
+  const { pick, target } = await cdpTarget();
+  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: 200, y: 400, deltaX: 0, deltaY: delta });
+  console.log(JSON.stringify({ ok: true, scrolled: delta }));
+}
+
+async function cmdWait(what, timeoutArg) {
+  if (!what) die('usage: dsh-mobile cdp wait <css-selector|text> [timeoutMs]');
+  const timeout = Number(timeoutArg || 8000);
+  const { pick, target } = await cdpTarget();
+  const expr = `(() => {
+    const sel = ${JSON.stringify(what)};
+    const bySelector = document.querySelector(sel);
+    if (bySelector) { const r = bySelector.getBoundingClientRect(); if (r.width > 2 && r.height > 2) return 'selector'; }
+    if ((document.body.innerText || '').includes(sel)) return 'text';
+    return null;
+  })()`;
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < timeout) {
+    const res = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: expr, returnByValue: true });
+    last = res.result && res.result.value;
+    if (last) { console.log(JSON.stringify({ ok: true, matched: last, waitedMs: Date.now() - t0 })); return; }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  die('wait: timed out after ' + timeout + 'ms waiting for ' + JSON.stringify(what));
+}
+
 async function cmdReload() {
   const pick = await findSocket() || die('no devtools socket; enable debugging and restart the app first');
   const target = firstPage(await listTargets(pick.name));
@@ -514,7 +646,7 @@ function cmdUi(args) {
       web: {
         what: 'the React WebUI at http://127.0.0.1:3080 (WebView)',
         entries: ['drawer (sidebar / files / sessions)', 'account menu -> 设置 (Settings): a full-screen dialog overlay; the URL stays "/", it is NOT a /settings route', 'right pane tabs (document preview / engine terminal)'],
-        automation: 'CDP: dsh-mobile cdp serve 9222 + eval/Playwright. Deep links are client-side only; /settings is not a route.',
+        automation: 'CDP: dsh-mobile cdp click \'button[aria-label="菜单"]\' opens the drawer; click-text 设置 opens the settings overlay; use click/click-text/tap/type/key (real Input events), never element.click().',
       },
       terminal: {
         what: 'Termux shell inside the engine and the native terminal activity',
@@ -569,6 +701,18 @@ try {
     case 'list': await cmdList(); break;
     case 'eval': await cmdEval(rest.join(' ')); break;
     case 'reload': await cmdReload(); break;
+    case 'click': await cmdClick(rest[0], rest.includes('--touch')); break;
+    case 'click-text': await cmdClickText(rest.filter(a => a !== '--exact').join(' '), rest.includes('--exact')); break;
+    case 'tap': await cmdTap(rest[0], rest[1]); break;
+    case 'type': {
+      const selIdx = rest.indexOf('--selector');
+      const sel = selIdx >= 0 ? rest[selIdx + 1] : null;
+      const text = (selIdx >= 0 ? rest.slice(0, selIdx) : rest).join(' ');
+      await cmdType(text, sel); break;
+    }
+    case 'key': await cmdKey(rest[0]); break;
+    case 'scroll': await cmdScroll(rest[0]); break;
+    case 'wait': await cmdWait(rest[0], rest[1]); break;
     case 'serve': await cmdServe(rest[0]); break;
     case 'appshot': await cmdAppShot(rest[0], rest[1]); break;
     case 'bridge': await cmdBridge(rest); break;
@@ -590,6 +734,13 @@ usage (CDP subcommands also accept the shorter "dsh-mobile <sub>" form):
   dsh-mobile cdp list                   /json/list targets
   dsh-mobile cdp serve [port]           bridge abstract devtools socket -> 127.0.0.1:port (default 9222)
   dsh-mobile cdp eval <js>              Runtime.evaluate in the WebView page, prints the value
+  dsh-mobile cdp click <css>            real mouse click (Input.dispatchMouseEvent) on a selector
+  dsh-mobile cdp click-text <text>      real click on the smallest visible element containing <text>
+  dsh-mobile cdp tap <x> <y>            real touch tap at viewport coordinates
+  dsh-mobile cdp type <text> [--selector css]   focus (optional) then Input.insertText
+  dsh-mobile cdp key <Enter|Tab|Escape|Backspace|Arrow*>   dispatch a real key event
+  dsh-mobile cdp scroll <dy>            mouse-wheel scroll
+  dsh-mobile cdp wait <css|text> [ms]   poll until a selector is visible or text appears
   dsh-mobile cdp reload                 Page.reload
   dsh-mobile bridge <GET|POST> <path> [json]   call the AgentBridge API (token handled)
 

@@ -285,6 +285,25 @@ Renderer console errors also appear in logcat under the `chromium` tag.
   probes fail, switch layer or ask instead of exploring further in the wrong layer.
 - `dsh-mobile ui` prints the layer map (JSON with `--json`).
 
+## Driving the WebUI correctly (CDP)
+
+The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button is off-screen. Use:
+
+1. `dsh-mobile cdp click 'button[aria-label="菜单"]'` opens the drawer (mobile-ui app bar).
+2. Drawer buttons by aria-label: 新建会话 / 插件 / 插件市场 / 自动化任务 / 记忆系统 / 搜索会话 /
+   视图选项 / 添加工作区; the account menu is `button[aria-label="账号菜单"]` at the drawer bottom.
+3. Account menu items are `[role=menuitem]`: 设置 / 意见反馈 / 退出登录 ->
+   `dsh-mobile cdp click-text 设置 --exact`; then `dsh-mobile cdp wait '[role=dialog]'`.
+4. Settings is the `[role=dialog]` overlay (账号与余额 / 通用设置 / 模型 / 内置插件 / Agent 预设 …).
+
+Rules:
+- Hashed class names change per build (`hHd-Xa_*`, `VOzbGW_panel`) - anchor on aria-label / role /
+  text instead.
+- `element.click()` and synthetic KeyboardEvents do NOT drive this UI; use the helper's
+  `click / click-text / tap / type / key / scroll` (real Input events) or Playwright.
+- Verify after each step (dialog present, text changed, or `appshot`); an element with x<0 means
+  its panel is not open yet - open it first. Two failures -> ask the user which entry they mean.
+
 ## Working agreements
 
 - Start with the user's task; this file has already answered "where am I". When the target surface

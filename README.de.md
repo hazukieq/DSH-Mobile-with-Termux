@@ -168,6 +168,19 @@ Normaler Modus ist der Standard; Optionen, deren Fähigkeit noch nicht bereitste
 gradle assembleDebug -Pabi=arm64-v8a
 ```
 
+> **In Festlandchina**: Gradle kann bei Maven Central mit
+> `Remote host terminated the handshake` scheitern (der TLS-Handshake wird vom Netz oder einem
+> Side-Router abgebrochen), obwohl `curl` dieselbe URL erreicht. Nutze das mitgelieferte
+> Mirror-Init-Skript:
+>
+> ```bash
+> gradle -I scripts/gradle-mirror.gradle assembleDebug -Pabi=arm64-v8a
+> ```
+>
+> Dauerhaft für alle lokalen Builds: `cp scripts/gradle-mirror.gradle ~/.gradle/init.d/10-cn-mirrors.gradle`.
+> Das Skript ordnet nur die Repositories neu (Aliyun-Mirrors zuerst, die ursprünglichen dienen als
+> Fallback) und ändert keine Abhängigkeitsversionen.
+
 Alternativ: Forke das Repository und lasse den Workflow **android-build** auf GitHub Actions in der Cloud ein APK bauen.
 
 **Systemvoraussetzungen**: Android 8.0+ (**WebView ≥ Chrome 85**, siehe Grenzen) · arm64-v8a / x86_64 · **700 MB+ freier Speicher empfohlen** (APK ~130 MB plus die entpackte Laufzeit).
