@@ -1,0 +1,41 @@
+#!/system/bin/sh
+# [dsh-android] 自举到引擎 bash（/dev/tcp 是 bash 特性，toybox sh 不支持）。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+# [dsh-android] shot: system screenshot via the accessibility service.
+# usage: shot [--max N] [--out /path/file.png]
+#   Prints the JSON from the bridge ({"ok":true,"path":"..."}), or copies to --out.
+# Requires the accessibility service (DSH 屏幕点击) to be enabled.
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/_dsh_http.sh"
+
+MAX=1280
+OUT=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --max) shift; MAX="${1:-1280}" ;;
+    --out) shift; OUT="${1:-}" ;;
+    -h|--help) echo "usage: shot [--max N] [--out /path.png]"; exit 0 ;;
+    *) echo "shot: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+out=$(dsh_http GET "/screenshot?save=1&max=$MAX")
+rc=$?
+[ "$rc" = 0 ] || { echo "shot: bridge failed (rc=$rc)${out:+ — $out}" >&2; exit 1; }
+printf '%s\n' "$out"
+
+if [ -n "$OUT" ]; then
+  src=$(printf '%s' "$out" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    cp -f "$src" "$OUT" && echo "copied: $OUT"
+  else
+    echo "shot: could not locate saved screenshot" >&2
+    exit 1
+  fi
+fi
+exit 0

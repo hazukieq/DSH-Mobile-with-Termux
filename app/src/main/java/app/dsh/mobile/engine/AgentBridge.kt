@@ -424,6 +424,7 @@ object AgentBridge {
             method == "POST" && path == "/daemon/stop" -> daemonStop()
             method == "POST" && path == "/tap" -> tap(body)
             method == "GET" && path == "/screenshot" -> screenshot(query)
+            method == "GET" && path == "/app-screenshot" -> appScreenshot(query)
             method == "POST" && path == "/gesture" -> gesture(body)
             method == "POST" && path == "/key" -> key(body)
             method == "POST" && path == "/wait" -> wait(body)
@@ -1772,6 +1773,26 @@ document.getElementById('api').textContent = checks.map(function(c){
             val arr = text.lineSequence().joinToString(",") { JSONObject.quote(it) }
             200 to """{"ok":true,"changed":true,"events":[$arr]}"""
         }
+    }
+
+    /**
+     * GET /app-screenshot?save=1&max=N —— App 自身窗口的原生截图（v1.3.24）。
+     *
+     * 与 /screenshot 的区别：
+     *  - /screenshot 走无障碍服务抓整屏（包含系统状态栏/其它 App），需要服务开启；
+     *  - /app-screenshot 用 PixelCopy 抓当前 DSH Mobile 窗口（WebView 的合成结果），
+     *    不需要任何权限，但要求 App 在前台（MainActivity 已注册窗口）。
+     * 返回 {"ok":true,"path":...,"width":...,"height":...}；读图用 read_image。
+     */
+    private fun appScreenshot(query: String): Pair<Int, String> {
+        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
+        if (!AppShot.hasWindow()) {
+            return 503 to """{"ok":false,"error":"app foreground window not available; open the DSH Mobile UI (main activity) first"}"""
+        }
+        val maxDim = parseQuery(query)["max"]?.toIntOrNull()?.coerceIn(256, 4096) ?: 1280
+        val shot = AppShot.capture(ctx, maxDim)
+            ?: return 500 to """{"ok":false,"error":"app screenshot failed (PixelCopy could not capture the window)"}"""
+        return 200 to """{"ok":true,"path":"${shot.first.absolutePath}","width":${shot.second},"height":${shot.third},"hint":"read it with the read_image tool"}"""
     }
 
     private fun screenshot(query: String): Pair<Int, String> {

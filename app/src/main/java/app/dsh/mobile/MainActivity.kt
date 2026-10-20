@@ -164,6 +164,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        app.dsh.mobile.engine.AppShot.register(this)
         // 🔴 v1.2.91：恢复 WebView 的 JS 定时器。
         // 主人实测「回到后台时通过语音发送消息，消息发出去了但模型不响应，
         // 切回前台才开始响应」—— 根因就是这里缺 webView.onResume()：
@@ -221,6 +222,8 @@ class MainActivity : Activity() {
     override fun onPause() {
         // 后台停看门狗：系统会节流后台 WebView，探针超时会造成误判并反复重建页面
         stopHangWatchdog()
+        // 不在前台就不再提供「App 内部截图」窗口
+        app.dsh.mobile.engine.AppShot.unregister(this)
         // 刻意不调用 super.onPause() 里的 WebView 暂停逻辑；
         // 同时显式 resumeTimers，确保切后台瞬间定时器仍在跑。
         if (::webView.isInitialized) {

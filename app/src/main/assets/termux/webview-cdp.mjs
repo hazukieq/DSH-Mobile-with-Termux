@@ -309,6 +309,19 @@ function cmdServe(portArg) {
   process.on('SIGINT', () => { console.log('\nstopped'); process.exit(0); });
 }
 
+async function cmdAppShot(outArg, maxArg) {
+  const max = Number(maxArg || 1280);
+  const res = await bridge('GET', `/app-screenshot?max=${max}`);
+  if (res.status >= 400) die(res.body.trim());
+  let info = {};
+  try { info = JSON.parse(res.body); } catch {}
+  if (outArg && info.path) {
+    fs.copyFileSync(info.path, outArg);
+    info.path = outArg;
+  }
+  console.log(JSON.stringify(info));
+}
+
 async function cmdBridge(args) {
   const [method, p, body] = args;
   if (!method || !p) die('usage: dsh-mobile bridge <GET|POST> <path> [json-body]');
@@ -340,6 +353,7 @@ try {
     case 'eval': await cmdEval(rest.join(' ')); break;
     case 'reload': await cmdReload(); break;
     case 'serve': cmdServe(rest[0]); break;
+    case 'appshot': await cmdAppShot(rest[0], rest[1]); break;
     case 'bridge': await cmdBridge(rest); break;
     case 'info': cmdInfo(); break;
     case 'doc': console.log(fs.readFileSync(DOC, 'utf8')); break;
@@ -349,6 +363,7 @@ try {
 usage:
   dsh-mobile info                       paths, node, sockets, bridge token state
   dsh-mobile doc                        print $DSH_HOME/DSH-MOBILE.md
+  dsh-mobile appshot [out.png] [max]    native screenshot of the app window (PixelCopy)
   dsh-mobile cdp on|off                 toggle the webview-debug flag (restart app afterwards)
   dsh-mobile cdp status                 flag/socket/target diagnostics
   dsh-mobile cdp list                   /json/list targets

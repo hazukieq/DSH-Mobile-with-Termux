@@ -1,0 +1,63 @@
+#!/system/bin/sh
+# [dsh-android] 自举到引擎 bash（/dev/tcp 是 bash 特性，toybox sh 不支持）。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+# [dsh-android] alarm: alarms and timers through the system clock app.
+# usage:
+#   alarm 07:30 [label]           set an alarm (24h HH:MM)
+#   alarm timer 300 [label]       start a timer for N seconds
+#   alarm show                    open the alarm list
+# Extras follow AlarmClock: HOUR/MINUTES/SKIP_UI/MESSAGE or LENGTH/SKIP_UI/MESSAGE.
+set -u
+AM=/system/bin/am
+usage() { echo "usage: alarm <HH:MM> [label] | alarm timer <seconds> [label] | alarm show" >&2; exit 2; }
+esc() { printf '%s' "$1" | sed 's/"/\\"/g'; }
+
+run_intent() {
+  # $1 = action, rest = extra args for am
+  act="$1"; shift
+  if "$AM" start -a "$act" --user 0 "$@" >/dev/null 2>&1; then return 0; fi
+  # background-activity launch can be denied for the app uid; retry through shz when available
+  if command -v shz >/dev/null 2>&1; then
+    cmd="$AM start -a $act --user 0"
+    for a in "$@"; do cmd="$cmd $(printf '%q' "$a")"; done
+    shz "$cmd" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+case "${1:-}" in
+  ""|-h|--help) usage ;;
+  show)
+    run_intent android.intent.action.SHOW_ALARMS || { echo "alarm: could not open the clock app (background launch blocked?)" >&2; exit 1; }
+    echo "opened alarm list" ;;
+  timer)
+    secs="${2:-}"; [ -n "$secs" ] || usage
+    case "$secs" in *[!0-9]*) echo "alarm: timer seconds must be an integer" >&2; exit 2 ;; esac
+    label="${3:-Timer}"
+    run_intent android.intent.action.SET_TIMER \
+      --ei android.intent.extra.alarm.LENGTH "$secs" \
+      --es android.intent.extra.alarm.MESSAGE "$(esc "$label")" \
+      --ez android.intent.extra.alarm.SKIP_UI true \
+      || { echo "alarm: failed to start timer" >&2; exit 1; }
+    echo "timer set: ${secs}s ($label)" ;;
+  *)
+    hhmm="$1"; label="${2:-Alarm}"
+    case "$hhmm" in
+      [0-2][0-9]:[0-5][0-9]) ;;
+      *) echo "alarm: time must be HH:MM (24h)" >&2; exit 2 ;;
+    esac
+    h=${hhmm%%:*}; m=${hhmm##*:}
+    # strip leading zero so am --ei parses as decimal
+    h=$((10#$h)); m=$((10#$m))
+    run_intent android.intent.action.SET_ALARM \
+      --ei android.intent.extra.alarm.HOUR "$h" \
+      --ei android.intent.extra.alarm.MINUTES "$m" \
+      --es android.intent.extra.alarm.MESSAGE "$(esc "$label")" \
+      --ez android.intent.extra.alarm.SKIP_UI true \
+      || { echo "alarm: failed to set alarm (background launch blocked?)" >&2; exit 1; }
+    printf 'alarm set: %02d:%02d (%s)\n' "$h" "$m" "$label" ;;
+esac

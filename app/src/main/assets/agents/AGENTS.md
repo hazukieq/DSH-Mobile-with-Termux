@@ -228,7 +228,15 @@ before deep app work. Quick map:
   `$PREFIX/lib/node_modules/@deepseek-ai/dsh`). `$DSH_HOME` = `<files>/dsh-home`
   (profiles, sessions, workspaces, AGENTS.md).
 - Native gates already on PATH: `notify`, `scr` (dump/tap/tap-text), `say`, `psx`, `killx`,
-  `loop`, `fast`, `linux`, `dsh-update`, `trash-cli`.
+  `loop`, `fast`, `linux`, `dsh-update`, `trash-cli`, `shot` (system screenshot), `alarm`
+  (alarms/timers), `record` (screen recording; ROOT or SHIZUKU mode only).
+- Screenshots: `appshot --out <png>` (or `dsh-mobile appshot`) is the **native** capture of the
+  app window via PixelCopy - use it for evidence about the DSH UI (no accessibility, no CDP,
+  reliable WebView pixels). `shot --out <png>` captures the whole screen through the
+  accessibility service. Do not use CDP screenshots: they can be blank/stale.
+- The UI map (top toolbar, the capsule handle that restores it, native Settings, mobile drawer,
+  right pane, native terminal tabs/keys) is documented in `$DSH_HOME/DSH-MOBILE.md`, section
+  "App UI map". Read it before explaining the app to the user or automating it.
 - The rest of the native API (61 endpoints: screen, screenshot, gesture, key, input, launch,
   launch-intent, ocr, vision, memory, notif, plugin list/install, diag, pty, runtime) lives on
   `127.0.0.1:3083` and is reachable as

@@ -1,0 +1,64 @@
+#!/system/bin/sh
+# [dsh-android] 自举到引擎 bash（/dev/tcp 是 bash 特性，toybox sh 不支持）。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+# [dsh-android] record: screen recording (MP4) via the system screenrecord binary.
+#
+# screenrecord needs the shell/root identity, so this works only in ROOT or SHIZUKU
+# privilege mode. In NORMAL mode ask the user to use the phone's own screen recorder,
+# or switch the app to Shizuku/Root in Settings.
+#
+# usage:
+#   record start [seconds] [out.mp4]   default 60s, /sdcard/Movies/dsh-<ts>.mp4
+#   record stop                        stop an active recording
+#   record status                      show whether screenrecord is running
+set -u
+SR=/system/bin/screenrecord
+MODE="${DSH_ANDROID_PRIV_MODE:-normal}"
+ts() { /system/bin/date +%Y%m%d-%H%M%S; }
+
+has_su=0; command -v su >/dev/null 2>&1 && [ "$MODE" = "root" ] && has_su=1
+has_shz=0; command -v shz >/dev/null 2>&1 && has_shz=1
+
+usage() { echo "usage: record start [seconds] [out.mp4] | record stop | record status" >&2; exit 2; }
+
+case "${1:-}" in
+  start)
+    secs="${2:-60}"; out="${3:-}"
+    case "$secs" in *[!0-9]*) echo "record: seconds must be an integer" >&2; exit 2 ;; esac
+    [ "$secs" -ge 1 ] && [ "$secs" -le 1800 ] || { echo "record: seconds must be 1..1800" >&2; exit 2; }
+    [ -n "$out" ] || out="/sdcard/Movies/dsh-$(ts).mp4"
+    mkdir -p "$(dirname "$out")" 2>/dev/null
+    cmd="$SR --time-limit $secs --bit-rate 8000000 '$out'"
+    if [ "$has_su" = 1 ]; then
+      su -c "nohup $cmd >/dev/null 2>&1 &" >/dev/null 2>&1 && { echo "recording (root, ${secs}s): $out"; exit 0; }
+    fi
+    if [ "$has_shz" = 1 ]; then
+      nohup shz "$cmd" >/tmp/dsh-record.log 2>&1 &
+      sleep 1
+      if pgrep -f "screenrecord --time-limit" >/dev/null 2>&1; then
+        echo "recording (shizuku, ${secs}s): $out"
+      else
+        echo "record: shizuku screenrecord did not start (see /tmp/dsh-record.log)" >&2
+        exit 1
+      fi
+      exit 0
+    fi
+    echo "record: needs ROOT or SHIZUKU privilege mode (current: $MODE)." >&2
+    echo "        Use the phone's built-in screen recorder, or switch the app's privilege mode." >&2
+    exit 3 ;;
+  stop)
+    if [ "$has_su" = 1 ]; then su -c "pkill -f 'screenrecord --time-limit'" >/dev/null 2>&1; fi
+    if [ "$has_shz" = 1 ]; then shz "pkill -f 'screenrecord --time-limit'" >/dev/null 2>&1; fi
+    sleep 1
+    if pgrep -f "screenrecord --time-limit" >/dev/null 2>&1; then
+      echo "record: still running (or no permission to stop it)" >&2; exit 1
+    fi
+    echo "recording stopped (saved when screenrecord flushed its buffer)" ;;
+  status)
+    if pgrep -f "screenrecord --time-limit" >/dev/null 2>&1; then echo "recording: running"; else echo "recording: idle"; fi ;;
+  *) usage ;;
+esac

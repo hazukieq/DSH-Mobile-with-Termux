@@ -79,6 +79,45 @@ screenshots; drive the real page.
 `dsh-mobile cdp status` prints the flag state, the app pid and every devtools socket.
 Renderer console errors also land in logcat under the `chromium` tag (`[INFO:CONSOLE]`).
 
+### Screenshots, recording and alarms
+
+- **App-internal screenshot (native)**: `appshot [--max N] [--out /path.png]` or
+  `dsh-mobile appshot [out.png] [max]`. Kotlin-side `PixelCopy` captures the DSH Mobile window
+  surface (WebView pixels included) - no accessibility, no CDP, no screen-capture permission.
+  Requires the DSH Mobile UI to be in the foreground; the JSON returns the saved PNG path and
+  the file can be read with the `read_image` tool. Do **not** rely on CDP/WebView screenshots:
+  they can come out blank or stale.
+- **System screenshot** (whole screen, incl. status bar and other apps): `shot --out /path.png`.
+  Uses the accessibility service; without it the gate explains what to enable.
+- **Screen recording**: `record start 60 /sdcard/Movies/demo.mp4`, `record stop`, `record status`.
+  `screenrecord` runs as shell/root, so this needs ROOT or SHIZUKU privilege mode; NORMAL mode
+  exits 3 with an explanation.
+- **Alarms/timers**: `alarm 07:30 "standup"`, `alarm timer 600 "tea"`, `alarm show`; standard
+  AlarmClock intents, retried through `shz` when background activity start is blocked.
+
+## App UI map (what the user sees)
+
+- **Top overlay toolbar** (native, 40 dp, semi-transparent): engine status text plus
+  `重启` (restart engine), `隐藏` (hide toolbar) and the gear (open native Settings). The text
+  area itself hides the toolbar when tapped.
+- **Capsule handle**: after hiding the toolbar a small rounded capsule (64x16 dp) stays at the
+  top centre; drag it anywhere to avoid covering content, tap it to bring the toolbar back.
+  When the user says "顶部胶囊/把手" they mean this handle and the toolbar it restores.
+- **Native Settings page** (gear): display (orientation, page zoom), permission centre (privilege
+  mode, root, Shizuku, accessibility, all-files access, TTS), plugin centre, terminal font size,
+  engine restart, and the mobile-UI rollback switch.
+- **Web UI mobile layer** (`dsh-mobile-ui` v0.1.17): app bar with ☰ drawer, conversation title,
+  right-pane toggle and ⓘ info button; drawer lists new session, plugins, automations, memory and
+  workspace sessions; the right pane opens full-screen with its own tab strip.
+- **Right pane** (engine dock): tabs for document preview / terminal / guide, `+` to add a tab,
+  split and collapse buttons. Its terminal is the engine PTY (bash), separate from the native
+  terminal.
+- **Native terminal activity**: back arrow + title, `+` for a new session, menu; a tab strip when
+  several sessions exist; the extra-key row (`ESC TAB CTRL ALT SHIFT ^C ^D ...`, sticky modifiers
+  apply to the next input); `exit` closes its tab and the last tab asks whether to exit the app.
+- **First launch**: onboarding flow (language, permission mode, optional Linux userland), then the
+  engine boots and the Web UI appears behind the toolbar.
+
 ## Privilege modes and limits
 
 - Modes: `normal` (app sandbox), `shizuku` (adb identity via the `shz` gate), `root` (real su).

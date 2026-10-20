@@ -1063,6 +1063,19 @@ object EngineConfig {
         }
     }
 
+    /**
+     * 每次 App 启动都确认一次 Agent 侧产物（门脚本 / shz / su 闸门 / runtime overlay）。
+     *
+     * 为什么需要：这些文件以前只在「装运行时」那一步部署；用户升级 APK 后如果运行时
+     * 目录已存在，启动流程会跳过安装步骤，新版本新增的门脚本（比如 appshot/alarm/
+     * record）就永远不落地 —— Agent 调 `appshot` 会 command not found。这里做幂等复查，
+     * 缺什么补什么（applyAgentGates 内部按文件写，成本毫秒级）。
+     */
+    fun ensureAgentArtifacts(ctx: android.content.Context) {
+        runCatching { applyAgentGates(ctx, engineRoot(ctx)) }
+            .onFailure { Log.w(TAG, "ensureAgentArtifacts failed: ${it.message}") }
+    }
+
     private fun applyAgentGates(ctx: android.content.Context, root: File) {
         val bindir = File(root, "bin").apply { mkdirs() }
         try {
@@ -1081,7 +1094,7 @@ object EngineConfig {
             // 漏掉了这两个，但种子仍在教 agent 使用 → agent 照着调用得到 command not found
             // （Agent 审计 N8 实测）。它们解决的是真问题：agent 常以 `bash -c '... pkill -f X'`
             // 形式执行，完整命令行含 pattern 会命中自己并自杀，必须按 comm 匹配。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { name ->
+            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update", "shot", "appshot", "alarm", "record").forEach { name ->
                 val dst = File(bindir, name)
                 runCatching {
                     val text = ctx.assets.open("gates/$name").use { it.readBytes().toString(Charsets.UTF_8) }
@@ -1097,6 +1110,7 @@ object EngineConfig {
                     )
                 }.onFailure { Log.w(TAG, "agent gate $name deploy failed: ${it.message}") }
             }
+            Log.i(TAG, "agent gates deployed: _dsh_http notify scr say psx killx loop fast linux dsh-update shot appshot alarm record")
             // planner-daemon 已于 v1.2.167 移除（用户要求：AI 用自己的工具做无障碍）
 
     // LAN 反向代理脚本（v1.2.160）：与 daemon 同一套部署方式（assets → tools）。

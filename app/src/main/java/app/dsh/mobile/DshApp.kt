@@ -51,6 +51,12 @@ class DshApp : Application() {
                 android.util.Log.i("DshApp", "WebView remote debugging enabled")
             }
         }
+        // 每次启动都复查 Agent 侧产物（v1.3.24）：不是首次安装也要补齐缺失的门脚本、
+        // 自述文档、dsh-mobile 助手与 dotfiles。后台线程做，避免阻塞首帧。
+        Thread({
+            runCatching { app.dsh.mobile.engine.TermuxDotfiles.ensure(this) }
+            runCatching { app.dsh.mobile.engine.EngineConfig.ensureAgentArtifacts(this) }
+        }, "dsh-asset-sync").start()
         supervisor = EngineSupervisor(this)
     }
 
