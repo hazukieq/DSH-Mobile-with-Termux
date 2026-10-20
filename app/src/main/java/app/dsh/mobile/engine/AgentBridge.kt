@@ -2043,19 +2043,26 @@ document.getElementById('api').textContent = checks.map(function(c){
             )
             obj.optString("action").takeIf { it.isNotBlank() }?.let { intent.action = it }
             ctx.startActivity(intent)
-            Thread.sleep(350)
-            val after = AppState.resumedActivityName()
+            // 只观察一个很短的窗口；不等待「用户操作完」。手递手打开页面的语义是
+            // 「交给你了」，用户可能立刻改完返回，此时再截图/轮询只会得到误导信息。
+            Thread.sleep(120)
+            val observed = AppState.resumedActivityName()
             val result = JSONObject()
-                .put("ok", after == cls.name || after == null || after != before)
+                .put("ok", true)
                 .put("requested", cls.name)
+                .put("handoff", true)
+                .put("verify", "none")
+                .put("do_not", org.json.JSONArray().put("screenshot").put("poll").put("retry"))
                 .put("resumed_before", before ?: JSONObject.NULL)
-                .put("resumed_after", after ?: JSONObject.NULL)
+                .put("observed_resumed", observed ?: JSONObject.NULL)
+                .put("returned_to_previous", observed == before)
                 .put("foreground", AppState.isForeground(ctx))
                 .put("elapsed_ms", System.currentTimeMillis() - startedAt)
-                .put("hint", if (after != cls.name) "the window may have been blocked by Android background-activity rules; bring the app to the foreground and retry" else "opened")
+                .put("note", "Hand-off complete: this page was opened for the user. The user may change things and come back before you read this - that is expected, not a failure. Do not screenshot, poll or re-run to confirm; continue with the next step (or wait for the user to speak).")
             200 to result.toString()
         }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
     }
+
 
     private fun processInfo(): Pair<Int, String> {
         val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""

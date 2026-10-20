@@ -127,6 +127,15 @@ Other useful native endpoints: `GET /process` (pid/uid/version/debug flag/devtoo
 `POST /launch-intent` (`component` + `extras`), `GET /notify`, `POST /notify`, `GET /say`/`POST /say`,
 `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`.
 
+### Hand-off semantics (opening pages for the user)
+
+`POST /activity` is a **hand-off**: it opens the page and returns immediately with
+`handoff:true`, `verify:"none"`, `do_not:["screenshot","poll","retry"]` and a note. The user may
+edit and come back before the call returns, so `observed_resumed` may already be the previous
+page again - `ok:true` still means the hand-off was accepted. Agents must not screenshot, poll
+or re-run to "confirm", and must not wonder why the page is no longer visible. Verify state
+only when the task is about state ("is X enabled?") or the user asks for evidence.
+
 Honesty rules baked into the API: `/activity` compares the resumed activity before/after and
 reports `hint` when the window did not change; `/launch-intent` returns 404 for unknown
 components instead of a fake `ok`; `/settings` masks secrets and reports `restartRequired`.

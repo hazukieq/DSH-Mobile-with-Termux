@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **「打开页面后反复截图确认」治理：hand-off 语义（2026-10-20 第六十四轮，v67）**：用户反馈 agent 每次跳转（如打开原生设置）都要截图确认，而用户通常很快改完返回、甚至指令返回前就回来了，agent 于是反复困惑。根因：旧 `openActivity` 以「350ms 后 resumed 是否等于目标 Activity」判定 `ok`，用户快速返回时被判成 `ok:false`，看起来像失败 → agent 去截图/重试。修复：
+  ① `POST /activity` 改为 hand-off 语义：`ok:true` 只表示启动请求被接受；新增 `handoff:true`、`verify:"none"`、`do_not:["screenshot","poll","retry"]`、`returned_to_previous`、`elapsed_ms`，并带 `note` 明确「用户可能在你读取结果前就改完返回，这是预期，不是失败；不要截图/轮询/重试」；观察窗口 350ms→120ms（不再等待用户操作）。
+  ② 文档：AGENTS seed 64 新增「Hand-off actions: opening a page FOR THE USER needs no verification」——ok:true 即完成，不截图不轮询不重跑；只有任务本身是核对状态（「X 开了吗」「改了缩放值是多少」）才读一次状态；截图只用于用户要求看证据或诊断渲染 bug；用户说「我改完回来了」就信任并继续。`DSH-MOBILE.md` v9 增「Hand-off semantics」；dotfiles VERSION 16、doc marker v9。
+  实测 vivo：AGENTS.md upgraded to v64、doc v9 部署、engine healthy。versionName 1.3.35 / versionCode 275。
 - **脚本 0600 权限事故 + toybox 遗留物审计（2026-10-20 第六十三轮，v66）**：用户反馈 `$PREFIX/bin` 里 native/appshot/shot/alarm/record 变成 0600 不可执行。根因：Android 上 Java 新建文件默认 0600，门脚本部署只 `writeText` 没有任何 chmod；而旧安装升级时「安装运行时」步骤被跳过，这些新脚本从未被修过权限。修复：
   ① `applyAgentGates` 集中定义 `AGENT_GATES`（15 个），逐个：若是符号链接/非普通文件先删除（避免写穿 bootstrap 的 toybox 链接）→ 写入 → `setReadable`+`setExecutable` → 校验 `canExecute()`；完整性探针改用同一份清单并新增「不可执行（含 octal 权限位）」判据。
   ② `TermuxDotfiles.repairScriptModes`（每次启动）：对 18 个受管脚本（rm/trash-cli/dsh-mobile + 15 gate）幂等 chmod 0755；遇到 toybox/busybox 同名符号链接（指向 /system/bin、/system/xbin 或含 toybox/busybox）直接删除并记日志，随后由 deploy 重建真文件。

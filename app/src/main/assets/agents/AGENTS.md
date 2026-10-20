@@ -314,6 +314,32 @@ Rules:
 - Verify after each step (dialog present, text changed, or `appshot`); an element with x<0 means
   its panel is not open yet - open it first. Two failures -> ask the user which entry they mean.
 
+## Hand-off actions: opening a page FOR THE USER needs no verification
+
+Some actions are hand-offs, not automation: opening the app Settings page, opening the native
+terminal, launching an app so the user can use it. The user may change things and come back
+**before you even read the tool result** - that is expected. `POST /activity` (and `native open`)
+returns this explicitly:
+
+```json
+{"ok":true,"handoff":true,"verify":"none","do_not":["screenshot","poll","retry"],
+ "resumed_before":"...MainActivity","observed_resumed":"...MainActivity",
+ "note":"Hand-off complete ... Do not screenshot, poll or re-run to confirm ..."}
+```
+
+Rules:
+
+- `ok:true` means the start request was accepted; the step is **done**. Do not screenshot, do
+  not poll `/status`, do not re-run `native open`, and do not wonder why `observed_resumed` is
+  not the page you opened - returning quickly is normal.
+- Verify only when the task itself is about state: "check that X is enabled", "did the terminal
+  open and is it at a prompt?", "change page scale to 110 and tell me the value". Then read the
+  state (`native settings` / `native status` / `scr dump`) - once.
+- Use screenshots as evidence when the user asks to see something or you are diagnosing a
+  rendering bug - not as a reflex after every navigation.
+- If the user says "I already came back / I changed it", trust them: continue from that answer
+  instead of re-checking the UI.
+
 ## Working agreements
 
 - Start with the user's task; this file has already answered "where am I". When the target surface
