@@ -231,6 +231,10 @@ before deep app work. Quick map:
   `loop`, `fast`, `linux`, `dsh-update`, `trash-cli`, `shot` (system screenshot), `appshot`
   (app-window screenshot), `alarm` (alarms/timers), `record` (screen recording; ROOT or SHIZUKU
   mode only), `native` (app control/debug: status, settings read/write, open native pages).
+- Gate scripts are real files (not symlinks) and are made executable (0755) on every app
+  start; the app also replaces bootstrap toybox/busybox symlinks that would shadow them. If a
+  gate reports "command not found" or "Permission denied", run `ls -l "$PREFIX/bin/<name>"`
+  and include that output in your report - do not work around it with `/system/bin/*`.
 - Native control one-liners: `native status` (foreground + resumed activity, network, battery,
   memory, storage, permission state), `native settings` / `native set page_scale=100`,
   `native open settings|terminal|main`. Prefer these over `am start`, which is silently blocked

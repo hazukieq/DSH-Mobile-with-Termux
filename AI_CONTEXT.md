@@ -1,6 +1,13 @@
 # AI_CONTEXT
 
 ## Current progress
+- **脚本 0600 权限事故 + toybox 遗留物审计（2026-10-20 第六十三轮，v66）**：用户反馈 `$PREFIX/bin` 里 native/appshot/shot/alarm/record 变成 0600 不可执行。根因：Android 上 Java 新建文件默认 0600，门脚本部署只 `writeText` 没有任何 chmod；而旧安装升级时「安装运行时」步骤被跳过，这些新脚本从未被修过权限。修复：
+  ① `applyAgentGates` 集中定义 `AGENT_GATES`（15 个），逐个：若是符号链接/非普通文件先删除（避免写穿 bootstrap 的 toybox 链接）→ 写入 → `setReadable`+`setExecutable` → 校验 `canExecute()`；完整性探针改用同一份清单并新增「不可执行（含 octal 权限位）」判据。
+  ② `TermuxDotfiles.repairScriptModes`（每次启动）：对 18 个受管脚本（rm/trash-cli/dsh-mobile + 15 gate）幂等 chmod 0755；遇到 toybox/busybox 同名符号链接（指向 /system/bin、/system/xbin 或含 toybox/busybox）直接删除并记日志，随后由 deploy 重建真文件。
+  ③ 新增 `writeSafe()`：$PREFIX 内所有部署写（zshrc/插件/自述文档/dsh-mobile/webview-cdp.mjs/trash-cli/rm wrapper/资源树）先删符号链接再写，并按需 chmod，杜绝写穿。
+  ④ `native files|perms|doctor`：一条命令列出受管脚本是否 MISSING/SYMLINK/NOT-EXEC/ok，便于 agent 自检（AGENTS seed 63 也提示「command not found/Permission denied 时先 ls -l 并上报」）。
+  ⑤ toybox 审计结论：受管脚本无一依赖 toybox 命令（bootstrap 自带 pgrep/pkill/ps/grep/sed/awk/tr/curl，roots 来自 Termux procps/coreutils/curl）；现存 toybox 字样均为**有意保留**：AGENTS 环境段说明「Termux 工具是真实构建、/system/bin 才是 toybox」、trash 规则禁止用 toybox rm 绕过、注释解释 /system/bin/sh 是 toybox 不支持 /dev/tcp、Privilege 兼容 toybox 版 su、alarm/record 有意调用 /system/bin 的 am/screenrecord、rm wrapper 非共享路径回退 /system/bin/rm。无遗留 toybox 符号链接（启动日志未发现可删项，bin/rm 早已换成 wrapper）。
+  实测 vivo：启动日志 `agent gates deployed (15): …` + `agent gates: 15 scripts deployed, executable`。版本 1.3.34 / 274；提交见下。
 - **App 原生控制/调试 API（2026-10-20 第六十二轮，v62）**：用户明确「开放原生能力」= 给 agent 大量 debug/控制能力（直接开设置 Activity/终端、读写设置项、看联网状态等）。实现：
   ① 新增 `AppState.kt`：各 Activity（Main/Terminal/Settings）onResume/onPause 登记，提供 `resumedActivityName`/`isForeground`；
   ② `AgentBridge` 新端点：`GET /status`（app/引擎/前台 Activity、联网 type/validated/metered/带宽/vpn、电量/充电/温度、内存、files 与 /sdcard 剩余、屏幕亮/锁屏、无障碍/所有文件/悬浮窗/通知/电池优化）、`GET /settings`（page_scale/orientation/lan_web_access/a11y_max_provider/priv_mode + 可写键说明）、`POST /settings`（白名单写入，返回 applied/restartRequired/errors；priv_mode 与局域网开关需重启引擎）、`POST /activity`（只允许本 App Activity：main/settings/terminal/Class，start 后 350ms 回读 resumed_before/after + hint，如实暴露被 BAL 拦下）；

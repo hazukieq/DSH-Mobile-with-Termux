@@ -1145,6 +1145,37 @@ object EngineConfig {
             .onFailure { Log.w(TAG, "ensureAgentArtifacts failed: ${it.message}") }
     }
 
+    /**
+     * 由 applyAgentGates 部署到 engine/bin 的门脚本清单（v1.3.31 起集中定义）。
+     * 新加门脚本只改这里，部署与完整性探针共用同一份，避免探针漏检新脚本。
+     */
+    private val AGENT_GATES = listOf(
+        "_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast",
+        "linux", "dsh-update", "shot", "appshot", "alarm", "record", "native",
+    )
+
+    /** 权限位（用于诊断日志，如 0600/0755）。 */
+    private fun octalMode(f: File): String = runCatching {
+        val perms = java.nio.file.Files.getPosixFilePermissions(f.toPath())
+        val order = listOf(
+            java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+            java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+            java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
+            java.nio.file.attribute.PosixFilePermission.GROUP_READ,
+            java.nio.file.attribute.PosixFilePermission.GROUP_WRITE,
+            java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE,
+            java.nio.file.attribute.PosixFilePermission.OTHERS_READ,
+            java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE,
+            java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE,
+        )
+        order.chunked(3).joinToString("") { (r, w, x) ->
+            val v = (if (perms.contains(r)) 4 else 0) +
+                (if (perms.contains(w)) 2 else 0) +
+                (if (perms.contains(x)) 1 else 0)
+            v.toString()
+        }
+    }.getOrDefault("?")
+
     private fun applyAgentGates(ctx: android.content.Context, root: File) {
         val bindir = File(root, "bin").apply { mkdirs() }
         try {
@@ -1163,7 +1194,7 @@ object EngineConfig {
             // 漏掉了这两个，但种子仍在教 agent 使用 → agent 照着调用得到 command not found
             // （Agent 审计 N8 实测）。它们解决的是真问题：agent 常以 `bash -c '... pkill -f X'`
             // 形式执行，完整命令行含 pattern 会命中自己并自杀，必须按 comm 匹配。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update", "shot", "appshot", "alarm", "record", "native").forEach { name ->
+            AGENT_GATES.forEach { name ->
                 val dst = File(bindir, name)
                 runCatching {
                     val text = ctx.assets.open("gates/$name").use { it.readBytes().toString(Charsets.UTF_8) }
@@ -1174,12 +1205,19 @@ object EngineConfig {
                     // 根因是工作区文件在 .gitattributes 生效前就已以 CRLF 检出；此处
                     // 无条件剥离，作为不依赖构建环境行尾的兜底防线。
                     val normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-                    dst.writeText(
-                        normalized.replace("@DSH_BASH@", bashPath).replace("@DSH_LIBDIR@", libDir),
-                    )
+                        .replace("@DSH_BASH@", bashPath).replace("@DSH_LIBDIR@", libDir)
+                    // ⚠️ v1.3.31 权限事故：$PREFIX/bin 里 bootstrap 留下的同名条目可能是
+                    // 指向 toybox 的符号链接；直接 writeText 会写穿到 toybox 本体（或失败）。
+                    // 必须先删除再写。且 Java 在 Android 上新建文件是 0600 —— 不 chmod 的话
+                    // native/appshot/shot/alarm/record 这些新脚本全都不可执行。
+                    if (runCatching { java.nio.file.Files.isSymbolicLink(dst.toPath()) }.getOrDefault(false) || !dst.isFile) dst.delete()
+                    dst.writeText(normalized)
+                    dst.setReadable(true, false)
+                    dst.setExecutable(true, false)
+                    if (!dst.canExecute()) Log.w(TAG, "agent gate $name is NOT executable after chmod")
                 }.onFailure { Log.w(TAG, "agent gate $name deploy failed: ${it.message}") }
             }
-            Log.i(TAG, "agent gates deployed: _dsh_http notify scr say psx killx loop fast linux dsh-update shot appshot alarm record")
+            Log.i(TAG, "agent gates deployed (${AGENT_GATES.size}): ${AGENT_GATES.joinToString(" ")}")
             // planner-daemon 已于 v1.2.167 移除（用户要求：AI 用自己的工具做无障碍）
 
     // LAN 反向代理脚本（v1.2.160）：与 daemon 同一套部署方式（assets → tools）。
@@ -1210,7 +1248,7 @@ object EngineConfig {
 
             // 部署后自检（v1.2.52）：逐个校验首行不含 \r 且指向存在的解释器。
             // 失败不静默——写进 engine.log 并给出明确原因，避免「看起来像文件丢了」的误判。
-            listOf("_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { name ->
+            AGENT_GATES.forEach { name ->
                 val f = File(bindir, name)
                 val head = runCatching {
                     f.inputStream().use { ins ->
@@ -1221,6 +1259,7 @@ object EngineConfig {
                 }.getOrNull().orEmpty()
                 when {
                     !f.isFile -> broken += "$name (missing)"
+                    !f.canExecute() -> broken += "$name (mode ${octalMode(f)} not executable)"
                     head.contains('\r') -> broken += "$name (CRLF in shebang: ${head.take(30)})"
                     head.startsWith("#!") && !File(head.removePrefix("#!").trim()).isFile ->
                         broken += "$name (interpreter missing: ${head.removePrefix("#!").trim()})"
@@ -1229,7 +1268,7 @@ object EngineConfig {
             if (broken.isNotEmpty()) {
                 Log.w(TAG, "agent gates BROKEN: ${broken.joinToString("; ")}")
             } else {
-                Log.i(TAG, "agent gates: notify/scr/say/_dsh_http.sh deployed (bridge :3083)")
+                Log.i(TAG, "agent gates: ${AGENT_GATES.size} scripts deployed, executable (bridge :3083)")
             }
 
             // ── Android 编译桩 jar 预置（v1.2.107）────────────────────────────

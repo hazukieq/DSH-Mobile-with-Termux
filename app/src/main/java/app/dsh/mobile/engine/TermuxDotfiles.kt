@@ -61,7 +61,7 @@ object TermuxDotfiles {
                     val dir = File(home, PLUGIN_DIR).apply { mkdirs() }
                     val pf = File(dir, PLUGIN_FILE)
                     if (!pf.isFile || !pf.readBytes().contentEquals(plugin)) {
-                        pf.writeBytes(plugin)
+                        writeSafe(pf, plugin)
                         Log.i(TAG, "zsh-autosuggestions deployed at ${pf.absolutePath}")
                     }
                 }
@@ -76,7 +76,7 @@ object TermuxDotfiles {
                         val dst = File(hlDst, name)
                         if (!dst.isFile || !dst.readBytes().contentEquals(bytes)) {
                             hlDst.mkdirs()
-                            dst.writeBytes(bytes)
+                            writeSafe(dst, bytes)
                             Log.i(TAG, "zsh-syntax-highlighting metadata deployed: $name")
                         }
                     }.onFailure { Log.w(TAG, "deploy $name failed: ${it.message}") }
@@ -85,7 +85,7 @@ object TermuxDotfiles {
                 val existing = if (dst.isFile) dst.readText() else null
                 when {
                     existing == null -> {
-                        dst.writeText(body)
+                        writeSafe(dst, body.toByteArray())
                         Log.i(TAG, "zshrc seeded at ${dst.absolutePath}")
                     }
                     !existing.contains(MARKER) -> {
@@ -93,7 +93,7 @@ object TermuxDotfiles {
                     }
                     existing.contains("$MARKER$VERSION)") -> Unit
                     else -> {
-                        dst.writeText(body)
+                        writeSafe(dst, body.toByteArray())
                         Log.i(TAG, "zshrc upgraded to v$VERSION at ${dst.absolutePath}")
                     }
                 }
@@ -103,6 +103,63 @@ object TermuxDotfiles {
         deployTrashCli(ctx)
         deployAppDoc(ctx)
         deployCdpHelper(ctx)
+        repairScriptModes(ctx)
+    }
+
+    /**
+     * 修复 $PREFIX/bin 里由 App 管理的脚本权限（v1.3.31 权限事故）。
+     *
+     * 背景：Java 在 Android 上新建文件是 0600；之前部署门脚本/包装器时没有 chmod，
+     * 且用户升级后「安装运行时」步骤被跳过，导致 native/appshot/shot/alarm/record 等
+     * 新脚本一直不可执行。这里每次启动都幂等地把已知脚本 chmod 0755（存在才改），
+     * 同时把 bootstrap 遗留的 toybox 同名符号链接替换掉（写穿会导致脚本失效）。
+     */
+    private fun repairScriptModes(ctx: Context) {
+        runCatching {
+            val root = EngineConfig.engineRoot(ctx)
+            val bin = File(root, "bin")
+            if (!bin.isDirectory) return
+            // 我们管理的脚本（$PREFIX/bin 与 engine/bin 同目录）
+            val names = listOf(
+                "rm", "trash-cli", "dsh-mobile", "_dsh_http.sh", "notify", "scr", "say",
+                "psx", "killx", "loop", "fast", "linux", "dsh-update",
+                "shot", "appshot", "alarm", "record", "native",
+            )
+            var fixed = 0
+            var removedLinks = 0
+            names.forEach { name ->
+                val f = File(bin, name)
+                if (!f.exists()) return@forEach
+                val isLink = runCatching { java.nio.file.Files.isSymbolicLink(f.toPath()) }.getOrDefault(false)
+                if (isLink) {
+                    // bootstrap 时代留下的 toybox/busybox 同名符号链接（rm 的历史形态）。
+                    // 写文件会穿透到 /system/bin 本体，必须先清掉；真正的 gate 部署随后重建。
+                    val target = runCatching {
+                        java.nio.file.Files.readSymbolicLink(f.toPath()).toString()
+                    }.getOrDefault("")
+                    val toyboxish = target.contains("/system/bin/") || target.contains("/system/xbin/") ||
+                        target.contains("toybox") || target.contains("busybox")
+                    if (toyboxish) {
+                        runCatching { f.delete() }.onSuccess {
+                            removedLinks++
+                            Log.w(TAG, "removed toybox symlink: bin/$name -> $target")
+                        }
+                    } else {
+                        Log.w(TAG, "bin/$name is a symlink to $target (not toybox); leaving it alone")
+                    }
+                    return@forEach
+                }
+                if (!f.isFile) return@forEach
+                if (!f.canExecute()) {
+                    f.setReadable(true, false)
+                    f.setExecutable(true, false)
+                    fixed++
+                    Log.i(TAG, "script mode repaired: $name -> executable")
+                }
+            }
+            if (fixed > 0) Log.i(TAG, "script modes repaired: $fixed file(s) in ${bin.absolutePath}")
+            if (removedLinks > 0) Log.w(TAG, "removed $removedLinks toybox symlink(s) from ${bin.absolutePath}")
+        }.onFailure { Log.w(TAG, "repairScriptModes failed: ${it.message}") }
     }
 
     /**
@@ -122,7 +179,7 @@ object TermuxDotfiles {
                 // 同一版本已部署 → 不动（避免每次启动重写）
                 if (existing.contains("<!-- " + APP_DOC_MARKER_VERSION)) return
             }
-            dst.writeText(body)
+            writeSafe(dst, body.toByteArray())
             Log.i(TAG, "app doc deployed at ${dst.absolutePath}")
         }.onFailure { Log.w(TAG, "deploy app doc failed: ${it.message}") }
     }
@@ -143,14 +200,12 @@ object TermuxDotfiles {
             val scriptBytes = ctx.assets.open(CDP_HELPER_ASSET).use { it.readBytes() }
             val script = File(libDir, "webview-cdp.mjs")
             if (!script.isFile || !script.readBytes().contentEquals(scriptBytes)) {
-                script.writeBytes(scriptBytes)
-                script.setReadable(true, false)
+                writeSafe(script, scriptBytes)
             }
             val wrapperBytes = ctx.assets.open(CDP_WRAPPER_ASSET).use { it.readBytes() }
             val wrapper = File(root, "bin/dsh-mobile")
             if (!wrapper.isFile || !wrapper.readBytes().contentEquals(wrapperBytes)) {
-                wrapper.writeBytes(wrapperBytes)
-                wrapper.setExecutable(true, false)
+                writeSafe(wrapper, wrapperBytes, executable = true)
             }
             Log.i(TAG, "cdp helper deployed (dsh-mobile + webview-cdp.mjs)")
         }.onFailure { Log.w(TAG, "deploy cdp helper failed: ${it.message}") }
@@ -177,8 +232,7 @@ object TermuxDotfiles {
             }
             if (dst.exists() || isLink) dst.delete()
             dst.parentFile?.mkdirs()
-            dst.writeBytes(script)
-            dst.setExecutable(true, false)
+            writeSafe(dst, script, executable = true)
             Log.i(TAG, "trash-cli deployed at ${dst.absolutePath}")
         }.onFailure { Log.w(TAG, "deploy trash-cli failed: ${it.message}") }
     }
@@ -213,10 +267,25 @@ object TermuxDotfiles {
             }
             if (dst.exists() || isLink) dst.delete()
             dst.parentFile?.mkdirs()
-            dst.writeBytes(script)
-            dst.setExecutable(true, false)
+            writeSafe(dst, script, executable = true)
             Log.i(TAG, "rm wrapper deployed at ${dst.absolutePath}")
         }.onFailure { Log.w(TAG, "deploy rm wrapper failed: ${it.message}") }
+    }
+
+    /**
+     * 符号链接安全的写入（v1.3.31 审计）：$PREFIX 里存在 bootstrap 遗留的 toybox 符号链接，
+     * 直接 write 会穿透到 /system/bin 本体。这里先删链接再写，并按需 chmod 0755。
+     */
+    private fun writeSafe(file: File, bytes: ByteArray, executable: Boolean = false) {
+        val isLink = runCatching { java.nio.file.Files.isSymbolicLink(file.toPath()) }.getOrDefault(false)
+        if (isLink) {
+            Log.w(TAG, "replacing symlink with real file: ${file.absolutePath}")
+            file.delete()
+        }
+        file.parentFile?.mkdirs()
+        file.writeBytes(bytes)
+        file.setReadable(true, false)
+        if (executable) file.setExecutable(true, false)
     }
 
     /** 把 assets 里的一棵目录树同步到 dst（内容一致则跳过；目录较浅，成本可忽略）。 */
@@ -231,7 +300,7 @@ object TermuxDotfiles {
                 val bytes = runCatching { ctx.assets.open(childAsset).use { it.readBytes() } }.getOrNull()
                 if (bytes != null) {
                     val dst = File(dstDir, child)
-                    if (!dst.isFile || !dst.readBytes().contentEquals(bytes)) dst.writeBytes(bytes)
+                    if (!dst.isFile || !dst.readBytes().contentEquals(bytes)) writeSafe(dst, bytes)
                 }
             } else {
                 deployAssetTree(ctx, childAsset, File(dstDir, child))

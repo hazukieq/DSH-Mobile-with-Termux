@@ -13,6 +13,7 @@ fi
 #   native set key=value [key=value…] 写入原生设置（数字/布尔自动识别）
 #   native open settings|terminal|main  打开 App 自己的页面（回执含 resumed_activity）
 #   native net                       只取联网状态（status 的子集，原始 JSON）
+#   native files                     检查 $PREFIX/bin 里 App 管理的脚本：真实文件/可执行/符号链接
 #   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带）
 #
 # 例：native open settings && native set page_scale=100 orientation=auto
@@ -56,6 +57,20 @@ case "${1:-}" in
       pairs="$pairs\"$k\":$jv"
     done
     json_or_die POST /settings "{\"set\":{$pairs}}"
+    ;;
+  files|perms|doctor)
+    # 检查 App 管理的脚本是否真实文件且可执行（v1.3.34，排查「command not found / Permission denied」）
+    PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
+    BIN="$PREFIX/bin"
+    bad=0
+    for n in _dsh_http.sh notify scr say psx killx loop fast linux dsh-update shot appshot alarm record native dsh-mobile rm trash-cli; do
+      f="$BIN/$n"
+      if [ ! -e "$f" ]; then echo "MISSING   $n"; bad=$((bad+1)); continue; fi
+      if [ -L "$f" ]; then echo "SYMLINK   $n -> $(readlink "$f")"; bad=$((bad+1)); continue; fi
+      if [ ! -x "$f" ]; then echo "NOT-EXEC  $n ($(ls -l "$f" | awk '{print $1}'))"; bad=$((bad+1)); continue; fi
+      echo "ok        $n"
+    done
+    [ "$bad" = 0 ] && echo "--- all managed scripts are real files and executable" || echo "--- $bad problem(s); the app repairs modes/symlinks on next start"
     ;;
   json)
     m="${2:-}"; p="${3:-}"; b="${4:-}"
