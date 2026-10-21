@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗内容不完整：两层截断 + 卡片抢手势（2026-10-22 第一百一十轮，v145）**：用户反馈完成后浮窗只显示回复前几行、工具参数半截。
+  根因：① `StatusOverlay.setStatus` 把正文 `take(1200)`；`ProgressHub` 4000；插件单项 700 → 长回复只剩开头；② 展开态 `bindHandle` 给**整张卡片**装了拖动手势，手指上滑被当成拖窗口，ScrollView 永远不滚 → 只能看到首屏几行。
+  修法：插件总量 16000、思考 1400、工具 420、回复取**末尾 4000**（结论在尾部）；ProgressHub/StatusOverlay 上限同步 16000；展开态只给 `overlayAction` 与状态点/正文文字绑手势（点收/循环展开），正文区域交给 ScrollView 自由滚动。实测：setStatus len=2005 完整进入；卡片内上滑后窗口 frame 不变（[1193,526][1840,944]），内容滚动到中段（截图）。版本 1.6.8 / 368；doc v45、dotfiles VERSION 52。
 - **文档写明「agent 如何重启引擎」（2026-10-22 第一百零九轮，v142）**：用户要求把重启策略写进环境文档。
   `AGENTS.md` 新增 "Restarting the engine (read before restarting anything)" 小节：首选 `dsh-update restart`（等 guardian + 健康检查）、`POST /engine/restart`（等价设置页按钮，202 异步）；明确禁止 killx/pkill 受管引擎、禁止用插件市场的「立即重启」（detach spawn 的 dsh web 会抢 3080）；重启会终止当前回合、事后回复通常发不出去，要先告诉用户。`DSH-MOBILE.md` 的 bridge 路由说明处同步加同一条政策。SEED_VERSION 77→78、doc v44。
   版本 1.6.5 / 365；dotfiles VERSION 51。

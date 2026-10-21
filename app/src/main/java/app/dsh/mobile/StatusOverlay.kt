@@ -277,8 +277,19 @@ object StatusOverlay {
         }
         val expanded = expandLevel > 0 && statusTv != null && statusTv.visibility == View.VISIBLE
         if (expanded) {
-            // 面板空白处（含状态点）：点一下 = 收起回球
-            attachGesture(view, p, ctx, onClick = { collapseToBall() })
+            // v1.6.7：展开态**不能**把整张卡片都装上拖动手势 —— 那会把手指滑动
+            // 抢去拖窗口，ScrollView 收不到事件，长回复就只能看到前几行（用户实测）。
+            // 现在只有「动作行/状态点」可以点收/拖动，正文区域完全交给 ScrollView 滚动。
+            actionText?.let { tv ->
+                attachGesture(
+                    tv, p, ctx,
+                    onClick = { collapseToBall() },
+                    onLongPress = { hide(DshAccessibilityService.instance) },
+                )
+            }
+            statusDot?.let { d ->
+                attachGesture(d, p, ctx, onClick = { collapseToBall() })
+            }
             // 状态文字：点一下 = 继续展开（循环）；长按 = 隐藏
             statusTv?.let { tv ->
                 attachGesture(
@@ -929,8 +940,9 @@ object StatusOverlay {
             working = true
             // v1.3.75：内容实时滚动 —— 保留换行、折行显示，每次更新后滚到最新一行。
             // 用户要求「点击后再展开」，所以这里**不**自动升档（折叠球由用户点开）。
-            val body = text.trim().take(1200)
+            val body = text.trim().take(16000)
             statusText?.text = body
+            Log.i(TAG, "setStatus len=${body.length}")
             statusDot?.background?.setTint(COLOR_WORKING)
             statusScroll?.post {
                 capScrollHeight()

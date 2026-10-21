@@ -152,7 +152,7 @@ object ProgressHub {
             else -> "working"
         }
         val sess = session.trim().ifBlank { title.trim() }
-        val s = Snapshot(k, title.trim().take(80), detail.trim().take(4000), sess, elapsed, System.currentTimeMillis())
+        val s = Snapshot(k, title.trim().take(80), detail.trim().take(16000), sess, elapsed, System.currentTimeMillis())
         val prev = last
         // done/error 永远发布：会话结束时内容可能与上一帧相同，但状态必须切到「完成」
         if (k != "done" && k != "error" && prev != null && prev.kind == s.kind &&

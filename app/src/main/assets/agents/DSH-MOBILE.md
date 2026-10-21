@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v44 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v45 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -480,3 +480,9 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   plugin-health.mjs is disposal-safe: the loader lookup is fully guarded (no bare ctx.loader),
   every probe body runs in try/catch, and the poll timer is stopped from both the disposer and a
   Cordis effect, so a disposed context can no longer crash the engine.
+* Overlay content completeness (v1.6.8): the chain text was silently capped at 1200 chars in
+  StatusOverlay and the expanded card had a drag gesture on the whole card, so finger swipes moved
+  the window instead of scrolling the body - long replies looked cut after a few lines. Caps are
+  now: 16000 chars end-to-end (plugin/hub/overlay), reasoning 1400, tool line 420, reply keeps its
+  last 4000 chars (the conclusion). In the expanded state only the action line and the status dot
+  are draggable/tappable; the body scrolls freely.

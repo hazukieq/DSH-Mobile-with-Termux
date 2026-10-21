@@ -17,7 +17,7 @@ const inject = ['agents', 'sessions']
 
 const BRIDGE_URL = 'http://127.0.0.1:3083/overlay'
 const THROTTLE_MS = 250
-const MAX_CHARS = 4000
+const MAX_CHARS = 16000
 
 function token() {
   return process.env.DSH_BRIDGE_TOKEN || ''
@@ -90,15 +90,16 @@ export function apply(ctx) {
     for (const it of s.items) {
       if (it.t === 'think') {
         const t = clean(it.text)
-        if (t) lines.push('[思考] ' + clip(t, 700))
+        if (t) lines.push('[思考] ' + clip(t, 1400))
       } else if (it.t === 'tool') {
         const args = clean(it.args)
         const head = clean(it.name) || '工具调用'
-        lines.push('[工具] ' + clip(head + (args ? ': ' + args : ''), 260))
+        lines.push('[工具] ' + clip(head + (args ? ': ' + args : ''), 420))
         if (it.status) lines.push('[结果] ' + head + ' → ' + it.status)
       } else if (it.t === 'reply') {
         const t = clean(it.text)
-        if (t) lines.push('[回复] ' + clip(t, 700))
+        // 回复用尾部：模型最后几行通常才是结论；只截前 N 字会出现「只有前几行」
+        if (t) lines.push('[回复] ' + clip(t.length > 4000 ? t.slice(-4000) : t, 4000))
       }
     }
     return tailJoin(lines)
