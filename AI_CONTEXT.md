@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗长文本高度收敛（2026-10-22 第九十七轮，v115）**：用户截图指出「字太多了」——回传整轮链路后卡片被撑到近半屏。根因：Android 的 ScrollView **不认 `android:maxHeight`**，`wrap_content` 直接按全文高度测。
+  修法：`StatusOverlay.capScrollHeight()` 在 `setStatus` 与展开后按子 View 实测高度夹到 **132dp**（超了固定高度、内部滚动），宽 216dp；布局同步改 maxWidth/maxHeight 注释。实测：长链路卡片约 135dp 高、可滚动、自动滚到最新行（截图确认）；同屏还能看到固定会话（dshmarket 排查会话）在实时更新。
+  版本 1.3.85 / 325。
 - **浮窗实时思考链路 + 固定会话（2026-10-22 第九十六轮，v112）**：用户要求「思考链路都回传到浮窗，实时性要有」「活动会话多个时默认固定显示第一个」。
   实现：① `mobile-progress` 插件重写：250ms 轮询，`buildChain()` 取 `.EvIC1a_column` 里**最后一个 userRow 之后**的所有 `details[class*=_think]` 正文 + `O_Ebla_label` 工具步骤，按 DOM 顺序拼接（上限 4000 字）；payload 增加 `session`（`#dshm-title`/活动会话行）；运行中文本变化即上报，心跳 1.5s；② `ProgressHub` 增加 `pinnedSession`：首个带 session 的活动会固定，其它会话在它仍处于 thinking/tool/working 时被忽略；该会话 done/error 后解绑并接受下一个；③ 节流按模式区分：浮窗 120ms、通知 600ms；detail 上限提升到 4000。
   实测平板（悬浮窗模式）：A 会话连续增长 → 显示 A；B 会话插入被忽略；A done 后 B 自动接上（截图确认卡片显示「B 思考…」+ 会话B）。版本 1.3.83 / 323；doc v30、dotfiles VERSION 37。

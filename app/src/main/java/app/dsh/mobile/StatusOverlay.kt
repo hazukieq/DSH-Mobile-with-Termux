@@ -399,6 +399,7 @@ object StatusOverlay {
         // 离开详情档就停掉周期刷新（档位 2 期间由 refreshSessionList 自己续期）
         if (expandLevel != 2) stopListRefresh()
         sessionsBox?.visibility = if (expandLevel >= 2) View.VISIBLE else View.GONE
+        statusScroll?.post { capScrollHeight() }
 
         r?.let { v ->
             val pad = if (collapsed) dp(ctx, 4) else dp(ctx, 8)
@@ -743,6 +744,24 @@ object StatusOverlay {
         return if (one.length <= max) one else one.take(max - 1).trimEnd() + "…"
     }
 
+    /**
+     * v1.3.84：ScrollView 不认 android:maxHeight，长思考会把卡片撑到半屏。
+     * 这里按内容实测高度夹到 176dp（不够就不动），超出则固定高度并内部滚动。
+     */
+    private fun capScrollHeight() {
+        val sc = statusScroll ?: return
+        val ctx = appCtx ?: return
+        val maxPx = dp(ctx, 132)
+        val child = sc.getChildAt(0)
+        val desired = child?.measuredHeight ?: return
+        val target = if (desired > maxPx) maxPx else desired
+        val lp = sc.layoutParams ?: return
+        if (lp.height != target) {
+            lp.height = target
+            sc.layoutParams = lp
+        }
+    }
+
     fun setStatus(text: String) {
         main {
             cancelIdleReset()   // 新状态来了 → 作废"回空闲"定时器（否则会把这里覆盖掉）
@@ -752,7 +771,10 @@ object StatusOverlay {
             val body = text.trim().take(1200)
             statusText?.text = body
             statusDot?.background?.setTint(COLOR_WORKING)
-            statusScroll?.post { statusScroll?.fullScroll(View.FOCUS_DOWN) }
+            statusScroll?.post {
+                capScrollHeight()
+                statusScroll?.fullScroll(View.FOCUS_DOWN)
+            }
             refreshActionVisibility()
         }
     }
