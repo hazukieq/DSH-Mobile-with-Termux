@@ -52,3 +52,6 @@ app/src/main/assets/engine-dsh-*.zip
 # 发布签名凭据（keystore 路径/密码），绝不入库
 keystore.properties
 *.keystore
+
+# 本地开发记录（含设备信息/调试日志），不入公开仓库
+AI_CONTEXT.md
