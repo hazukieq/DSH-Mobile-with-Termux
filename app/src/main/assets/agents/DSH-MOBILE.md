@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v30 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v31 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -416,3 +416,8 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   250ms while running, so the floating window updates in near real time instead of stepping.
   A session is pinned: when several sessions are active, the first one shown stays pinned until
   it reports done/error; other sessions' updates are ignored until then.
+* Overlay follow/liveness (v1.3.89): the overlay now follows whichever session the WebUI is
+  currently showing (the earlier "first active session" pinning was removed after it froze on a
+  stale background session). While a turn runs, the payload carries elapsed milliseconds and the
+  title line shows `· Ns`, so the card visibly ticks even when the reasoning text is momentarily
+  unchanged. Body height stays capped (132dp, internal scroll).

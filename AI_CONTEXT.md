@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗不再「卡住」：跟随当前会话 + 计时心跳（2026-10-22 第九十八轮，v117）**：用户反馈「点开正在运行的会话但浮窗没有实时更新」。根因两层：① 3.86 引入的「固定最先活动会话」把更新锁在了一个早已切走/结束的后台会话上；② 当思考文本暂时不变（模型在输出答案或思考停顿）时，payload 内容相同被 `update()` 去重，看起来停滞。
+  修法：① 移除 pinnedSession/pin TTL，浮窗改为**跟随 WebUI 当前显示的会话**（插件本来就只读当前 DOM）；② 插件新增 `elapsed`（本轮开始毫秒数），ProgressHub Snapshot 带 elapsed、去重比较加入 `elapsed/1000`，浮窗动作行显示 `会话标题 · Ns`，运行中每秒可见跳动；③ 高度仍 132dp 内滚，卡片不再撑半屏。
+  实测平板：浮窗跟随当前会话「查询 deepseek 和 dsh」实时更新，标题行显示 `· 26s` 并在递增（截图确认）；长文本卡片保持约 132dp 可滚动。版本 1.3.89 / 329；doc v31、dotfiles VERSION 38。
 - **浮窗长文本高度收敛（2026-10-22 第九十七轮，v115）**：用户截图指出「字太多了」——回传整轮链路后卡片被撑到近半屏。根因：Android 的 ScrollView **不认 `android:maxHeight`**，`wrap_content` 直接按全文高度测。
   修法：`StatusOverlay.capScrollHeight()` 在 `setStatus` 与展开后按子 View 实测高度夹到 **132dp**（超了固定高度、内部滚动），宽 216dp；布局同步改 maxWidth/maxHeight 注释。实测：长链路卡片约 135dp 高、可滚动、自动滚到最新行（截图确认）；同屏还能看到固定会话（dshmarket 排查会话）在实时更新。
   版本 1.3.85 / 325。

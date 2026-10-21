@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
     var lastKey = ''
     var lastPostAt = 0
     var prevRunning = null
+    var turnStart = 0
 
     function txt(el) {
       return ((el && el.textContent) || '').replace(/\s+/g, ' ').trim()
@@ -77,7 +78,7 @@ window.__ModuleLoader__.load({
       return !!btn
     }
 
-    function post(kind, detail) {
+    function post(kind, detail, elapsed) {
       try {
         if (!window.DshNative || !window.DshNative.progress) return
         window.DshNative.progress(JSON.stringify({
@@ -85,12 +86,15 @@ window.__ModuleLoader__.load({
           title: sessionKey(),
           session: sessionKey(),
           detail: detail || '',
+          elapsed: elapsed || 0,
         }))
       } catch (e) { /* bridge absent or page detached */ }
     }
 
     function tick(force) {
       var running = isRunning()
+      if (running && prevRunning !== true) turnStart = Date.now()
+      var elapsed = running ? Date.now() - turnStart : 0
       var chain = buildChain()
       var kind
       if (running) {
@@ -109,7 +113,7 @@ window.__ModuleLoader__.load({
       if (force || key !== lastKey || heartbeat) {
         lastKey = key
         lastPostAt = now
-        post(kind, chain)
+        post(kind, chain, elapsed)
       }
       prevRunning = running
     }

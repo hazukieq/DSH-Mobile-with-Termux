@@ -400,6 +400,8 @@ object StatusOverlay {
         if (expandLevel != 2) stopListRefresh()
         sessionsBox?.visibility = if (expandLevel >= 2) View.VISIBLE else View.GONE
         statusScroll?.post { capScrollHeight() }
+        root?.requestLayout()
+        root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
 
         r?.let { v ->
             val pad = if (collapsed) dp(ctx, 4) else dp(ctx, 8)
@@ -759,6 +761,9 @@ object StatusOverlay {
         if (lp.height != target) {
             lp.height = target
             sc.layoutParams = lp
+            sc.requestLayout()
+            root?.requestLayout()
+            root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
         }
     }
 
