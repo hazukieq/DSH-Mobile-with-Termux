@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **genui 思考行颜色对齐（2026-10-22 第八十七轮，v97）**：用户指出「颜色不对」。实测对照：引擎原 ReasoningRow 的 summary 颜色 = `rgb(129,133,140)` = `--dsw-alias-label-tertiary`；genui 的 `.vHCAGq_think` 用 label-primary(`rgb(15,17,21)`) + `opacity:.85`，看起来偏黑。
+  修法（仍在 genui 补丁块内）：`.vHCAGq_think{color:var(--dsw-alias-label-tertiary,#81858c);opacity:1}`；图标 mask 背景明确用 label-tertiary（不用 currentColor，避免个别时机解析成透明）；正文 `p/li/span/strong/em` 颜色 `!important` 设为 label-tertiary（markdown 容器有更高特异性/显式颜色，必须 important 才能盖住）。
+  实测平板：summary/正文 p 颜色 = rgb(129,133,140)，图标可见、正文缩进 22px、13px/20px，与周围原 WebUI 文本一致（截图确认）。版本 1.3.67 / 307。
 - **genui 思考展开正文被放大（2026-10-22 第八十六轮，v94）**：用户指出「思考展开的内容都被影响了，旁边文字都很小，唯独它变大了」。实测：genui 的 `.vHCAGq_think{font-size:.9em}` 在 16px 容器里 = **14.4px**，展开正文 14px/24 行高、无缩进；而引擎原 ReasoningRow 的 summary 是 `--dsh-content-font-size-secondary`（13px/20px），正文 `padding-left:calc(22px + font-delta)` 与图标对齐。
   修法（仍只 patch genui）：补丁从「加图标」升级为完整对齐原 WebUI 的思考行样式：`.vHCAGq_think{font-size:var(--dsh-content-font-size-secondary,13px)}`、summary 13px/20px、正文 `padding:4px 0 4px calc(22px + var(--dsh-content-font-delta,0px))`、正文 p/li 13px/20px；用 `/*dsh-mobile-genui-think:start*/…:end*/` 包裹以便原地升级，并带 legacy marker 迁移逻辑（旧补丁文件自动替换）。
   实测平板：summary 13px/20px、正文 pad-left 22px、正文 p 13px/20px，展开后与周围文字一致（截图确认）。版本 1.3.64 / 304。
