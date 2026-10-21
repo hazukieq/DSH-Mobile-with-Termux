@@ -73,6 +73,8 @@ object StatusOverlay {
     @Volatile private var lastAppliedLevel = -1
     /** 贴边方向：true=右边缘，false=左边缘。展开/折叠后始终贴回这一侧。 */
     @Volatile private var dockRight = true
+    /** 当前窗口由哪种 type 创建：无障碍窗口随服务销毁，应用悬浮窗不随 Activity/服务走。 */
+    @Volatile private var windowTypeUsed = 0
     @Volatile private var appCtx: Context? = null
     @Volatile private var wm: WindowManager? = null
 
@@ -131,11 +133,16 @@ object StatusOverlay {
      */
     fun show(ctx: Context): Boolean {
         if (root != null) return true
-        val appOverlay = runCatching { android.provider.Settings.canDrawOverlays(ctx) }.getOrDefault(false)
+        // v1.5.2：必须用**调用方 context**（通常是 Activity）建窗口。
+        // 实测：applicationContext 建的 TYPE_APPLICATION_OVERLAY 在 App 退到后台后
+        // WMS 会把它标记为 hidden（mLastHidden=true / isVisible=false），切到别的 App 就看不见；
+        // Activity token 建的窗口反而能跨 App 持续显示。
+        val app = ctx
+        val appOverlay = runCatching { android.provider.Settings.canDrawOverlays(app) }.getOrDefault(false)
         val svc = DshAccessibilityService.instance
         if (appOverlay) {
-            val w = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            startOverlay(ctx, w, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+            val w = app.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            startOverlay(app, w, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
             return true
         }
         if (svc != null) {
@@ -152,6 +159,7 @@ object StatusOverlay {
             try {
                 appCtx = ctx
                 wm = w
+                windowTypeUsed = windowType
 
                 val view = LayoutInflater.from(ctx).inflate(R.layout.overlay_status, null)
                 val status = view.findViewById<TextView>(R.id.overlayStatus)
@@ -670,6 +678,47 @@ object StatusOverlay {
      */
     fun hideAuto(ctx: Context?) {
         hideInternal(userHidden = false)
+    }
+
+    /**
+     * v1.4.9：无障碍服务销毁时调用。只有窗口本身是 TYPE_ACCESSIBILITY_OVERLAY 才需要收起；
+     * 应用悬浮窗（SYSTEM_ALERT_WINDOW）必须保留，否则切断无障碍/ROM 重启服务会把浮窗弄没。
+     */
+    /**
+     * v1.5.1：切到别的 App 后某些 ROM 会把应用悬浮窗 surface 置为 hidden
+     *（dumpsys 里 mLastHidden=true / isVisible=false），此时窗口对象还在但看不见。
+     * 重新挂一次窗口即可恢复显示（参数原样复用）。
+     */
+    /** 窗口是否真的还挂在 WindowManager 上（Activity 销毁后 root 字段可能残留）。 */
+    fun isAttached(): Boolean = runCatching { root?.isAttachedToWindow == true }.getOrDefault(false)
+
+    /** 丢弃已失效的 root 引用，让下一次 show() 重建窗口。 */
+    fun dropStaleRoot() {
+        main {
+            val v = root ?: return@main
+            runCatching { wm?.removeView(v) }
+            root = null
+            params = null
+            lastAppliedLevel = -1
+        }
+    }
+
+    fun reassertVisible() {
+        main {
+            val v = root ?: return@main
+            val p = params ?: return@main
+            runCatching {
+                wm?.updateViewLayout(v, p)
+                v.visibility = View.VISIBLE
+                v.requestLayout()
+            }
+        }
+    }
+
+    fun onAccessibilityLost() {
+        if (windowTypeUsed == android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) {
+            hide(null)
+        }
     }
 
     private fun hideInternal(userHidden: Boolean) {

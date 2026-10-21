@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **悬浮窗切到其他 App 后消失 → 定位并修（2026-10-22 第一百零五轮，v134）**：用户反馈「其他应用上会关闭显示」。
+  定位：dumpsys window 里窗口 `com.termux type=2038` 仍存在但 `surface shown=false`、`mLastHidden=true`、`isVisible=false`。根因是 v1.4.9 把建窗 context 改成了 `applicationContext`：实测 applicationContext 建的 APPLICATION_OVERLAY 在 App 非前台时被 WMS 标记 hidden；Activity token 建的窗口才能跨 App 持续显示。
+  修法：`StatusOverlay.show()` 恢复用调用方 context（Activity），去掉 applicationContext 强制；新增 `isAttached()/dropStaleRoot()`，`ensureOverlayVisible` 发现 root 未挂载就先丢弃再重建；后台发布时 `reassertVisible()` 重新 updateViewLayout。实测：切到 Chrome 后浮窗仍可见（surface shown=true, isVisible=true）；系统设置/权限页会隐藏悬浮窗——那是 Android 对受保护页面的安全策略，属正常。
+  版本 1.5.3 / 353；doc v39、dotfiles VERSION 46。
 - **切到悬浮窗后立刻出现（2026-10-22 第一百零四轮，v132）**：用户切到「悬浮窗」返回后仍看不到。原因：`setMode` 只 `maybePublish`，而 `last==null`（进程内还没收到任何进度）时 `maybePublish` 直接 return，所以切换后什么都不显示；另外从设置页切模式时窗口是由 SettingsActivity 的 context 建的（dumpsys 里名字是 SettingsActivity，不是 MainActivity，排查时别只看 MainActivity）。
   修法：新增 `ProgressHub.ensureOverlayVisible(ctx, placeholder)`：模式=悬浮窗且有权限时立即 show，没有快照就显示「空闲 / 悬浮窗已开启」占位；`setMode(MODE_OVERLAY)` 与 `MainActivity.onResume` 都调用它；`preview()` 在悬浮窗模式下真的显示悬浮窗；切通知则 `hideAuto`。
   实测：设置里选「悬浮窗」当帧就出现窗口（frame=[1172,370][1819,788]），返回桌面后仍在，并显示用户正在跑的 23s 会话「查询 deepseek 和 dsh · 已完成 · 22s」的完整链路（截图）。版本 1.4.8 / 348；doc v38、dotfiles VERSION 45。

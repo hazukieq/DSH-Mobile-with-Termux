@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v38 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v39 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -455,3 +455,9 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   mode is active) now creates the window right away with an idle placeholder instead of waiting
   for the next progress event; 预览一次 in overlay mode really shows the overlay. Choosing 通知
   removes it, choosing 关闭 clears everything.
+* Overlay across apps (v1.5.3): the window must be created with the calling Activity token, not
+  applicationContext - with app context WMS marks the TYPE_APPLICATION_OVERLAY window hidden
+  (mLastHidden=true, isVisible=false) as soon as the app is not top, so it vanished over other
+  apps. The overlay also drops a stale root and re-creates the window when the Activity is gone.
+  Note: Android itself hides overlays over protected screens such as system Settings/permission
+  dialogs; that is platform behaviour, not a crash.

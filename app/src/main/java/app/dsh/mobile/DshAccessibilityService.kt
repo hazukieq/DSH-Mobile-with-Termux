@@ -626,7 +626,8 @@ class DshAccessibilityService : AccessibilityService() {
         stopKeepAliveWatchdog()
         runCatching { voicePanel?.dispose() }   // v1.2.188：同步移除，不等 180ms 动画
         voicePanel = null
-        runCatching { StatusOverlay.hide(this) }
+        // v1.4.9：只有在用无障碍窗口时才跟着收；应用悬浮窗保留（否则切 App/服务重启浮窗就消失）
+        runCatching { StatusOverlay.onAccessibilityLost() }
         super.onDestroy()
     }
 

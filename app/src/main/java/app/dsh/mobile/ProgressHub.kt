@@ -86,6 +86,8 @@ object ProgressHub {
     fun ensureOverlayVisible(ctx: Context, placeholder: Boolean = false) {
         if (mode(ctx) != MODE_OVERLAY) return
         if (!android.provider.Settings.canDrawOverlays(ctx)) return
+        // 窗口随 Activity 销毁而消失时，root 字段仍是旧引用 → 先丢掉再重建
+        if (!StatusOverlay.isAttached()) StatusOverlay.dropStaleRoot()
         val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
         if (!shown) return
         val snap = last
@@ -199,6 +201,8 @@ object ProgressHub {
         }
 
         if (m == MODE_OVERLAY) {
+            // 后台时重新挂一次窗口：部分 ROM 会把应用悬浮窗 surface 置 hidden
+            if (!appVisible) runCatching { StatusOverlay.reassertVisible() }
             val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
             if (shown) {
                 runCatching {
