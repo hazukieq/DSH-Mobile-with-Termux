@@ -68,6 +68,8 @@ object StatusOverlay {
     /** 展开档位：0=折叠(仅圆点) / 1=状态+麦克风 / 2=再加动作+会话列表 */
     @Volatile private var expandLevel = 0
     @Volatile private var hidden = false
+    /** v1.3.77：用户手动展开过的档位，重建窗口/下次显示时沿用（保持展开）。 */
+    @Volatile private var rememberedLevel = 0
     @Volatile private var appCtx: Context? = null
     @Volatile private var wm: WindowManager? = null
 
@@ -167,7 +169,14 @@ object StatusOverlay {
                     when (ev.actionMasked) {
                         MotionEvent.ACTION_DOWN -> true
                         MotionEvent.ACTION_UP -> {
-                            onMicClick?.invoke(ctx); true
+                            val cb = onMicClick
+                            if (cb != null) {
+                                cb.invoke(ctx)
+                            } else {
+                                // v1.3.77：没有无障碍服务时麦克风没有录音面板可依附 —— 给出明确反馈而不是点了没反应
+                                flashNotice(ctx.getString(R.string.voice_need_a11y), 4_000L)
+                            }
+                            true
                         }
                         MotionEvent.ACTION_CANCEL -> true
                         else -> true
@@ -204,7 +213,7 @@ object StatusOverlay {
                 w.addView(view, p)
 
                 view.post {
-                    expandLevel = 0
+                    expandLevel = rememberedLevel
                     applyExpandLevel(view)
                 }
 
@@ -393,6 +402,7 @@ object StatusOverlay {
     private fun cycleExpandLevel() {
         autoExpanded = false   // 用户自己动的档位 → 不再自动收回
         expandLevel = (expandLevel + 1) % 3
+        rememberedLevel = expandLevel
         applyExpandLevel()
         if (expandLevel == 2) refreshSessionList()
     }

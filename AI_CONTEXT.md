@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗：保持展开 + 实时刷新 + 立刻出内容；语音说明（2026-10-22 第九十二轮，v107）**：用户三个反馈：①语音用不了；②点开后应保持展开、内容自己滚动刷新；③输入文字退出后浮窗没有立刻显现内容。
+  实现：`StatusOverlay` 新增 `rememberedLevel`（用户展开后，重建窗口/下次后台显示沿用该档位，保持展开；不再每次 show 重置为球）；`setStatus` 每次更新 `fullScroll(FOCUS_DOWN)`；插件新增 `window.__dshMobileProgressPoke()`（强制上报当前快照），`MainActivity.onPause` 在切后台前调用它，避免浮窗先出现空白再等下一轮轮询；无无障碍时点麦克风不再静默无反应，改为 `flashNotice(voice_need_a11y)` 明确提示（语音采集/面板目前由无障碍服务持有）。
+  实测平板：展开卡片后再次推送新文本 → 卡片保持展开并更新内容（截图确认）。版本 1.3.77 / 317；doc v26、dotfiles VERSION 33。
 - **浮窗改版：点击展开圆角卡片 + 实时滚动（2026-10-22 第九十一轮，v106）**：用户反馈「浮窗太长」，要求「点击按钮后展开一个圆矩形卡片，内容实时滚动，太长就折行（或跑马灯）」。
   实现：① `overlay_status.xml` 状态文案改为 `ScrollView(maxWidth 232dp, maxHeight 176dp)` + 可折行 TextView；动作/标题行单行 marquee；root elevation 改 0（8dp 阴影在 vivo 上产生 40px surfaceInsets，把 65px 的折叠球内容区吃掉导致完全不可见）；② `StatusOverlay.setStatus` 不再截断/单行化，保留换行，更新后 `fullScroll(FOCUS_DOWN)` 自动滚到最新；`applyExpandLevel` 折叠时隐藏滚动区；③ 取消 setStatus 自动展开（用户要求点击才展开），只有点球才升档；④ `hideAuto()`：前台自动收起不再置 `hidden` 标记（旧逻辑会导致下次后台永远不显示）；⑤ `COLLAPSED_BALL_DP` 26→48（避免阴影内缩后看不见）；⑥ ProgressHub 传完整 detail。
   实测平板：桌面出现 48dp 折叠球 → 点击展开圆角卡片，长思考文本折行显示（卡片约 232dp 宽、6+ 行，超出可内部滚动并自动滚到底部），标题行 marquee；测试模式已切回「通知」。版本 1.3.76 / 316；doc v25、dotfiles VERSION 32。

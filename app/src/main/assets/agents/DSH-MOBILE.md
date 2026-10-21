@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v25 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v26 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -398,3 +398,9 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   auto-scrolls to the newest line; the card is capped at 232dp wide / 176dp tall). The title
   line uses a marquee when it overflows. Automatic hide (foreground return) does not set the
   user-hidden flag, so the next background update can show the window again.
+* Overlay refinements (v1.3.77): once the user expands the floating window it stays expanded
+  (remembered across hide/show and progress updates) and the body keeps auto-scrolling as new
+  thinking text arrives. Leaving the app pokes the WebUI (`window.__dshMobileProgressPoke`) so the
+  first snapshot appears immediately instead of waiting for the next poll. The overlay microphone
+  is driven by the accessibility service; without it the tap shows an explicit hint instead of
+  doing nothing.

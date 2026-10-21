@@ -245,6 +245,12 @@ class MainActivity : Activity() {
         // 不在前台就不再提供「App 内部截图」窗口
         app.dsh.mobile.engine.AppShot.unregister(this)
         app.dsh.mobile.engine.AppState.onPause(this)
+        // v1.3.77：离开 App 前让 WebUI 立刻上报一次当前思考/步骤，避免浮窗/通知先出现空白再等下一轮。
+        if (::webView.isInitialized) {
+            runCatching {
+                webView.evaluateJavascript("window.__dshMobileProgressPoke&&window.__dshMobileProgressPoke()", null)
+            }
+        }
         // v1.3.68：离开 App 后展示当前进度（通知/悬浮窗）
         runCatching { ProgressHub.onAppVisibility(this, false) }
         // 刻意不调用 super.onPause() 里的 WebView 暂停逻辑；

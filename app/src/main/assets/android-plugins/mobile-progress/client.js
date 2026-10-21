@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
       } catch (e) { /* bridge absent or page detached */ }
     }
 
-    function tick() {
+    function tick(force) {
       var running = isRunning()
       var think = lastThinking()
       var step = lastStep()
@@ -79,7 +79,7 @@ window.__ModuleLoader__.load({
       var key = kind + '|' + detail
       var now = Date.now()
       var heartbeat = running && now - lastPostAt >= HEARTBEAT_MS
-      if (key !== lastKey || heartbeat) {
+      if (force || key !== lastKey || heartbeat) {
         lastKey = key
         lastPostAt = now
         post(kind, detail)
@@ -87,8 +87,15 @@ window.__ModuleLoader__.load({
       prevRunning = running
     }
 
+    /** v1.3.77：App 切后台时原生会调用它，强制立刻上报当前快照（否则要等下一次轮询）。 */
+    function poke() {
+      lastKey = ''
+      tick(true)
+    }
+
     var timer = null
     function apply() {
+      try { window.__dshMobileProgressPoke = poke } catch (e) {}
       if (timer === null) timer = window.setInterval(tick, POLL_MS)
       return function () {
         if (timer !== null) { window.clearInterval(timer); timer = null }

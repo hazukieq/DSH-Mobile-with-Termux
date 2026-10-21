@@ -545,4 +545,5 @@ engine: %6$s</string>
     <string name="progress_keepalive_off">Not allowed</string>
     <string name="progress_vendor_hint">Vendor background limits</string>
     <string name="progress_vendor_help">On vivo/OPPO/Xiaomi, also allow: Settings → Battery → Background power management (iManager → App management → Autostart / Allow high background power). Without it the system may kill the app even with battery optimisation ignored.</string>
+    <string name="voice_need_a11y">Voice input in the floating window needs the accessibility service. Enable it in Settings → Accessibility, or use the voice entry inside the app.</string>
 </resources>
