@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **切到悬浮窗后立刻出现（2026-10-22 第一百零四轮，v132）**：用户切到「悬浮窗」返回后仍看不到。原因：`setMode` 只 `maybePublish`，而 `last==null`（进程内还没收到任何进度）时 `maybePublish` 直接 return，所以切换后什么都不显示；另外从设置页切模式时窗口是由 SettingsActivity 的 context 建的（dumpsys 里名字是 SettingsActivity，不是 MainActivity，排查时别只看 MainActivity）。
+  修法：新增 `ProgressHub.ensureOverlayVisible(ctx, placeholder)`：模式=悬浮窗且有权限时立即 show，没有快照就显示「空闲 / 悬浮窗已开启」占位；`setMode(MODE_OVERLAY)` 与 `MainActivity.onResume` 都调用它；`preview()` 在悬浮窗模式下真的显示悬浮窗；切通知则 `hideAuto`。
+  实测：设置里选「悬浮窗」当帧就出现窗口（frame=[1172,370][1819,788]），返回桌面后仍在，并显示用户正在跑的 23s 会话「查询 deepseek 和 dsh · 已完成 · 22s」的完整链路（截图）。版本 1.4.8 / 348；doc v38、dotfiles VERSION 45。
 - **悬浮窗默认开启 + 未授权提示（2026-10-22 第一百零三轮，v131）**：用户反馈「从头到尾没见到悬浮窗」。原因：显示方式默认是「通知」，没手动切到「悬浮窗」时根本不会创建悬浮窗（此前所有截图都是我在平板测试时切过去的）。
   修法：`ProgressHub.mode()` 默认改 `MODE_OVERLAY`（仅对从未选择过模式的安装；显式选择保留原值）；选悬浮窗但缺 SYSTEM_ALERT_WINDOW 时设置页会拉起系统授权页；若仍无权限，通知标题改为「悬浮窗未授权 · 点此去授权」而不是静默退回。
   实测平板：App 内右边缘常驻卡片显示「第 2 段…」内容（截图），frame=[1173,370][1820,546]。版本 1.4.6 / 346；doc v37、dotfiles VERSION 44。

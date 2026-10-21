@@ -194,6 +194,8 @@ class MainActivity : Activity() {
         }
         // v1.3.68：回到前台收起后台进度提示
         runCatching { ProgressHub.onAppVisibility(this, true) }
+        // v1.4.7：悬浮窗模式下打开 App 就确保它已经在（不再等第一次进度事件）
+        runCatching { ProgressHub.ensureOverlayVisible(this, placeholder = true) }
         // Web 内核版本门禁（v1.2.100，酷安用户反馈引出的需求）：
         // WebView < Chrome 85 时引擎前端必白屏（??= 等解析期语法 polyfill 补不了），
         // 与其让用户看「进程异常退出/白屏」无限循环，不如先检测、给出明确升级指引，

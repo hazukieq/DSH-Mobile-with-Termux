@@ -556,4 +556,5 @@ Engine: %6$s</string>
     <string name="progress_vendor_hint">Hersteller-Hintergrundlimits</string>
     <string name="progress_vendor_help">Bei vivo/OPPO/Xiaomi zusätzlich: Einstellungen → Akku → Hintergrund-Akkuverwaltung; iManager → App-Verwaltung → Autostart / Hintergrund-Akku erlauben. Sonst kann das System die App trotzdem beenden.</string>
     <string name="progress_overlay_denied_title">Schwebefenster braucht Berechtigung – zum Erteilen tippen</string>
+    <string name="progress_overlay_ready">Schwebefenster bereit</string>
 </resources>

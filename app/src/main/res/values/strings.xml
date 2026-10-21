@@ -546,4 +546,5 @@ engine: %6$s</string>
     <string name="progress_vendor_hint">Vendor background limits</string>
     <string name="progress_vendor_help">On vivo/OPPO/Xiaomi, also allow: Settings → Battery → Background power management (iManager → App management → Autostart / Allow high background power). Without it the system may kill the app even with battery optimisation ignored.</string>
     <string name="progress_overlay_denied_title">Floating window needs permission — tap to grant</string>
+    <string name="progress_overlay_ready">Floating window ready</string>
 </resources>

@@ -66,8 +66,39 @@ object ProgressHub {
     fun setMode(ctx: Context, mode: String) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_MODE, mode).apply()
         when (mode) {
-            MODE_OFF -> clearAll(ctx)
-            else -> maybePublish(ctx, force = true)
+            MODE_OFF -> { clearAll(ctx); runCatching { StatusOverlay.hideAuto(ctx) } }
+            MODE_OVERLAY -> {
+                // v1.4.7：切到悬浮窗必须**立刻出现**，不能等下一次进度事件
+                //（用户实测：设置里切完返回，什么都没有）。
+                ensureOverlayVisible(ctx, placeholder = true)
+            }
+            else -> {
+                runCatching { StatusOverlay.hideAuto(ctx) }
+                maybePublish(ctx, force = true)
+            }
+        }
+    }
+
+    /**
+     * 悬浮窗模式下确保窗口已经显示；没有进度快照时放一个「等待任务」占位，
+     * 让用户切完设置/回到 App 就能看到它。
+     */
+    fun ensureOverlayVisible(ctx: Context, placeholder: Boolean = false) {
+        if (mode(ctx) != MODE_OVERLAY) return
+        if (!android.provider.Settings.canDrawOverlays(ctx)) return
+        val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
+        if (!shown) return
+        val snap = last
+        if (snap != null) {
+            maybePublish(ctx, force = true)
+            return
+        }
+        if (placeholder) {
+            runCatching {
+                StatusOverlay.resetHidden()
+                StatusOverlay.setStatus(ctx.getString(R.string.overlay_idle))
+                StatusOverlay.setAction(ctx.getString(R.string.progress_overlay_ready))
+            }
         }
     }
 
@@ -300,6 +331,19 @@ object ProgressHub {
 
     /** 设置页「预览一次」。 */
     fun preview(ctx: Context) {
+        if (mode(ctx) == MODE_OVERLAY && android.provider.Settings.canDrawOverlays(ctx)) {
+            // 悬浮窗模式下预览必须真的显示悬浮窗（旧实现只发通知，用户以为浮窗坏了）
+            val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
+            if (shown) {
+                runCatching {
+                    StatusOverlay.resetHidden()
+                    StatusOverlay.setStatus(ctx.getString(R.string.progress_preview_text))
+                    StatusOverlay.setAction(ctx.getString(R.string.progress_overlay_ready))
+                }
+                clearAll(ctx)
+                return
+            }
+        }
         val s = Snapshot("thinking", ctx.getString(R.string.progress_channel), ctx.getString(R.string.progress_preview_text), "preview", 0, System.currentTimeMillis())
         last = s
         publishNotification(ctx, s)
