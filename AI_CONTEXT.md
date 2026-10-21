@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **无障碍状态改走独立 notice 布局 + 默认贴底边（2026-10-22 第一百零六轮，v138）**：用户明确：「无障碍 post 的内容要在悬浮窗 layout 里用另一个 layout 去接，不是用思考链的布局」；并要求浮窗在底部边显示、不占上方内容。
+  实现：① `overlay_status.xml` 新增 `overlayNoticeBox/overlayNotice`（卡片底部小 pill，8s 自动消失，仅展开态显示）；② `AgentBridge /overlay` 的 status/action 与 `ProgressHub.onAgentProgress` 不再 `setStatus/setAction` 覆盖链路，统一 `StatusOverlay.setNotice()`；③ 移除 v1.5.4 的 120s 忽略 hack（不再需要）；④ `StatusOverlay` 增加 `dockBottom` + `dockY()`：默认贴底边（y=屏高-窗口高-10dp），展开/折叠/拖动松手都贴底，x 仍按左右边吸附；⑤ 无障碍已连接时窗口优先用 TYPE_ACCESSIBILITY_OVERLAY（服务持有，不依赖 Activity）。
+  实测：post 思考链后再发 notice，卡片同时显示链路正文 + 底部独立 notice「点击 设置按钮 · 无障碍自动操作」，链路未被覆盖；窗口 frame=[1680,2660][1820,2800]（底部贴边）。版本 1.5.9 / 359；doc v41、dotfiles VERSION 48。
 - **悬浮窗切到其他 App 后消失 → 定位并修（2026-10-22 第一百零五轮，v134）**：用户反馈「其他应用上会关闭显示」。
   定位：dumpsys window 里窗口 `com.termux type=2038` 仍存在但 `surface shown=false`、`mLastHidden=true`、`isVisible=false`。根因是 v1.4.9 把建窗 context 改成了 `applicationContext`：实测 applicationContext 建的 APPLICATION_OVERLAY 在 App 非前台时被 WMS 标记 hidden；Activity token 建的窗口才能跨 App 持续显示。
   修法：`StatusOverlay.show()` 恢复用调用方 context（Activity），去掉 applicationContext 强制；新增 `isAttached()/dropStaleRoot()`，`ensureOverlayVisible` 发现 root 未挂载就先丢弃再重建；后台发布时 `reassertVisible()` 重新 updateViewLayout。实测：切到 Chrome 后浮窗仍可见（surface shown=true, isVisible=true）；系统设置/权限页会隐藏悬浮窗——那是 Android 对受保护页面的安全策略，属正常。

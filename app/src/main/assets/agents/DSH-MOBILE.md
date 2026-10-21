@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v39 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v41 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -461,3 +461,10 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   apps. The overlay also drops a stale root and re-creates the window when the Activity is gone.
   Note: Android itself hides overlays over protected screens such as system Settings/permission
   dialogs; that is platform behaviour, not a crash.
+* Separate notice area (v1.5.9): accessibility / automation status POSTed to the AgentBridge
+  (/overlay status+action) is no longer written into the reasoning chain. The overlay layout has a
+  dedicated bottom notice pill (@id/overlayNoticeBox) that shows those statuses for 8 seconds and
+  only while the card is expanded; the chain text keeps its own scroll area untouched.
+* The overlay now docks to the bottom edge (right by default, left after dragging past the middle)
+  so it does not cover the upper content; expand/collapse keeps it docked. When the accessibility
+  service is connected the window is hosted in the accessibility window (service-owned).

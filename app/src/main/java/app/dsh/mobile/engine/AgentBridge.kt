@@ -2779,8 +2779,12 @@ document.getElementById('api').textContent = checks.map(function(c){
                 )
                 return 200 to """{"ok":true,"structured":true}"""
             }
-            obj.optString("status").takeIf { it.isNotBlank() }?.let { StatusOverlay.setStatus(it) }
-            obj.optString("action").takeIf { it.isNotBlank() }?.let { StatusOverlay.setAction(it) }
+            // v1.5.7：无障碍/自动化的 status/action 走独立 notice 布局，不覆盖思考链
+            val notice = listOfNotNull(
+                obj.optString("status").takeIf { it.isNotBlank() },
+                obj.optString("action").takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
+            if (notice.isNotBlank()) StatusOverlay.setNotice(notice)
             if (obj.optBoolean("complete", false)) StatusOverlay.flashCompleteDefault()
             // v1.3.68：同一份进度也进入后台提示（通知/悬浮窗），不再依赖无障碍
             ProgressHub.onAgentProgress(

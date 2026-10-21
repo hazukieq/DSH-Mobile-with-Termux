@@ -81,6 +81,34 @@
         android:visibility="gone"
         android:text="" />
 
+    <!-- v1.5.7：无障碍/自动化 POST 的状态单独用这一块布局接，绝不覆盖上面的思考链 -->
+    <LinearLayout
+        android:id="@+id/overlayNoticeBox"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="6dp"
+        android:layout_marginStart="16dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:maxWidth="216dp"
+        android:background="@drawable/bg_overlay_notice"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/overlayNotice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="200dp"
+            android:textSize="11sp"
+            android:textColor="#FFB8C4D0"
+            android:maxLines="3"
+            android:ellipsize="end"
+            android:text="" />
+    </LinearLayout>
+
     <!-- 详情态：活跃会话列表（容器由代码填充） -->
     <LinearLayout
         android:id="@+id/overlaySessions"

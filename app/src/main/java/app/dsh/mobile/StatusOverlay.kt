@@ -64,6 +64,11 @@ object StatusOverlay {
     @Volatile private var statusScroll: android.widget.ScrollView? = null
     @Volatile private var statusDot: View? = null
     @Volatile private var sessionsBox: LinearLayout? = null
+    @Volatile private var noticeBox: android.view.View? = null
+    @Volatile private var noticeText: TextView? = null
+    private val noticeHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var noticeClear: Runnable? = null
+    @Volatile private var noticeUntil = 0L
     /** 展开档位：0=折叠(仅圆点) / 1=状态+麦克风 / 2=再加动作+会话列表 */
     @Volatile private var expandLevel = 0
     @Volatile private var hidden = false
@@ -73,6 +78,8 @@ object StatusOverlay {
     @Volatile private var lastAppliedLevel = -1
     /** 贴边方向：true=右边缘，false=左边缘。展开/折叠后始终贴回这一侧。 */
     @Volatile private var dockRight = true
+    /** v1.5.4：默认贴**底边**，不再占用上方内容布局（用户要求）。 */
+    @Volatile private var dockBottom = true
     /** 当前窗口由哪种 type 创建：无障碍窗口随服务销毁，应用悬浮窗不随 Activity/服务走。 */
     @Volatile private var windowTypeUsed = 0
     @Volatile private var appCtx: Context? = null
@@ -140,6 +147,15 @@ object StatusOverlay {
         val app = ctx
         val appOverlay = runCatching { android.provider.Settings.canDrawOverlays(app) }.getOrDefault(false)
         val svc = DshAccessibilityService.instance
+        // v1.5.5：无障碍已连接时**优先用无障碍窗口**承载悬浮窗。
+        // 无障碍窗口由服务持有、不依赖 Activity 生命周期，切 App/Activity 重建都不会
+        // 被 WMS 置 hidden（用户实测：开了无障碍后思考链路会「断」，就是窗口被隐藏后
+        // 内容其实还在推、只是看不见）。没有无障碍时再用活动 Activity 的应用悬浮窗。
+        if (svc != null) {
+            val w = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            startOverlay(svc.applicationContext, w, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+            return true
+        }
         if (appOverlay) {
             val w = app.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             startOverlay(app, w, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
@@ -196,6 +212,8 @@ object StatusOverlay {
                 action.tag = "marquee"
                 action.isSelected = true
                 sessionsBox = sessions
+                noticeBox = view.findViewById(R.id.overlayNoticeBox)
+                noticeText = view.findViewById(R.id.overlayNotice)
                 root = view; params = p
 
                 w.addView(view, p)
@@ -215,6 +233,7 @@ object StatusOverlay {
                     val vw = if (view.width > 0) view.width else dp(ctx, 120)
                     p.x = (ctx.resources.displayMetrics.widthPixels - vw - margin)
                         .coerceAtLeast(margin)
+                    if (dockBottom) p.y = dockY(view, p, ctx)
                     runCatching { w.updateViewLayout(view, p) }
                     Log.i(TAG, "overlay shown at ${p.x},${p.y} (${view.width}x${view.height})")
                 }
@@ -348,6 +367,18 @@ object StatusOverlay {
         }
     }
 
+    /** 计算贴底后的 y（按当前窗口高度与边距）。 */
+    private fun dockY(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
+        val screenH = ctx.resources.displayMetrics.heightPixels
+        val margin = dp(ctx, 10)
+        val vh = when {
+            v.height > 0 -> v.height
+            p.height > 0 -> p.height
+            else -> dp(ctx, 100)
+        }
+        return (screenH - vh - margin).coerceAtLeast(margin)
+    }
+
     /** 计算贴边后的 x（按当前窗口宽度与 dockRight 侧）。 */
     private fun dockX(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
         val screenW = ctx.resources.displayMetrics.widthPixels
@@ -369,6 +400,12 @@ object StatusOverlay {
         val vw = if (view.width > 0) view.width else dp(ctx, 120)
         dockRight = !(p.x + vw / 2 < screenW / 2)
         val target = if (dockRight) screenW - vw - margin else margin
+        if (dockBottom) {
+            val screenH = ctx.resources.displayMetrics.heightPixels
+            val vh = if (view.height > 0) view.height else dp(ctx, 100)
+            p.y = (screenH - vh - dp(ctx, 10)).coerceAtLeast(dp(ctx, 10))
+            runCatching { wm?.updateViewLayout(view, p) }
+        }
         animateX(p, target)
     }
 
@@ -424,6 +461,10 @@ object StatusOverlay {
         // 离开详情档就停掉周期刷新（档位 2 期间由 refreshSessionList 自己续期）
         if (expandLevel != 2) stopListRefresh()
         sessionsBox?.visibility = if (expandLevel >= 2) View.VISIBLE else View.GONE
+        // v1.5.8：notice 只在展开态显示；折叠成球时不占地方
+        noticeBox?.visibility = if (expandLevel > 0 && noticeUntil > System.currentTimeMillis() &&
+            noticeText?.text?.isNotBlank() == true
+        ) View.VISIBLE else View.GONE
         statusScroll?.post { capScrollHeight() }
         root?.requestLayout()
         root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
@@ -859,6 +900,32 @@ object StatusOverlay {
             sc.requestLayout()
             root?.requestLayout()
             root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
+        }
+    }
+
+    /**
+     * v1.5.7：无障碍/自动化 POST 的状态走**独立布局**（卡片底部的小条），
+     * 不再调用 setStatus/setAction 覆盖思考链。
+     */
+    fun setNotice(text: String) {
+        val ctx = appCtx ?: return
+        val box = noticeBox ?: return
+        val tv = noticeText ?: return
+        val t = text.trim()
+        main {
+            if (t.isEmpty()) {
+                box.visibility = View.GONE
+                return@main
+            }
+            tv.text = t
+            noticeUntil = System.currentTimeMillis() + 8_000L
+            box.visibility = if (expandLevel > 0) View.VISIBLE else View.GONE
+            noticeClear?.let { noticeHandler.removeCallbacks(it) }
+            val r = Runnable { runCatching { box.visibility = View.GONE; noticeUntil = 0L } }
+            noticeClear = r
+            noticeHandler.postDelayed(r, 8_000L)
+            root?.requestLayout()
+            root?.let { rv -> params?.let { pr -> wm?.updateViewLayout(rv, pr) } }
         }
     }
 

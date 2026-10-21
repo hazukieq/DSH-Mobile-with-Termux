@@ -128,6 +128,15 @@ object ProgressHub {
 
     /** Agent 的 POST /overlay 兼容入口。 */
     fun onAgentProgress(ctx: Context, status: String?, action: String?, complete: Boolean) {
+        // v1.5.7：无障碍/自动化的 POST（status/action）走悬浮窗底部独立 notice，
+        // 不再写进思考链（之前会把链路覆盖成「点击/滑动」）。
+        if (!complete) {
+            val notice = listOfNotNull(status, action).filter { it.isNotBlank() }.joinToString(" · ")
+            if (notice.isNotBlank() && mode(ctx) == MODE_OVERLAY) {
+                runCatching { StatusOverlay.setNotice(notice) }
+                return
+            }
+        }
         if (complete) {
             update(ctx, "done", "", status ?: ctx.getString(R.string.progress_state_done), "", 0)
             return

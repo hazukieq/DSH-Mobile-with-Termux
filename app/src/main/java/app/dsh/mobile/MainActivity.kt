@@ -1914,6 +1914,12 @@ class MainActivity : Activity() {
             runCatching { ProgressHub.onJsProgress(ctx, payload) }
         }
 
+        /** v1.5.7：把无障碍/自动化状态写进悬浮窗的独立 notice 区（与思考链分离）。 */
+        @android.webkit.JavascriptInterface
+        fun notice(text: String) {
+            runCatching { StatusOverlay.setNotice(text) }
+        }
+
         /** 打开原生设置页（v1.3.70）：WebUI 侧可用来直达后台进度等设置。 */
         @android.webkit.JavascriptInterface
         fun openSettings() {
