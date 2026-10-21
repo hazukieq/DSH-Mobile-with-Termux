@@ -1,5 +1,10 @@
-<!-- dsh-mobile app doc v45 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v46 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
+
+> This build is **DSH Mobile with Termux**, a fork of
+> [Soodok/Deepseek-Harness-Local-Android](https://github.com/Soodok/Deepseek-Harness-Local-Android)
+> (MIT) on top of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+> Fork source: <https://github.com/hazukieq/DSH-Mobile-with-Termux>.
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
 official DeepSeek Harness engine plus a Termux userland. Package name `com.termux`, app data

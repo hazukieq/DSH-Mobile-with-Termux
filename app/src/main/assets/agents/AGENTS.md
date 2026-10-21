@@ -4,6 +4,12 @@ You run inside the DSH Mobile app on Android. This file is a verified map of you
 Start from these documented facts instead of doing broad environment sweeps; run a targeted
 check only when the task or an actual error makes the current state relevant.
 
+Source: this app is **DSH Mobile with Termux**, a fork of
+[Soodok/Deepseek-Harness-Local-Android](https://github.com/Soodok/Deepseek-Harness-Local-Android)
+(MIT), built on the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) engine.
+Fork repository: <https://github.com/hazukieq/DSH-Mobile-with-Termux>. Reports, patches and
+build instructions belong there; upstream App issues belong to Soodok's repository.
+
 ## Platform
 
 - The app's package name is `com.termux`, so the Termux prefix is **genuine**:
