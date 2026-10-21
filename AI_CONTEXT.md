@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗麦克风「没有就不显示」+ 无障碍说明（2026-10-22 第九十三轮，v109）**：用户要求「没有就不显示，同时在无障碍服务那里注明即可」。
+  实现：新增 `VoiceReady.canUse(ctx)` = 无障碍服务已连接 && RECORD_AUDIO 已授权 &&（系统识别或云端 ASR 可用）；`StatusOverlay` 的麦克风只在（展开 && VoiceReady && onMicClick != null）时可见，`applyExpandLevel` 统一判定；无障碍 onServiceConnected 后调用 `refreshMicVisibility()`，onDestroy 清空回调并刷新。无障碍服务文案改为「可选辅助」：en/zh/de 说明「仅用于语音输入与按需读取当前屏幕，不开启也能聊天/用文件/后台引擎」。
+  实测平板：无无障碍时展开卡片**没有麦克风**（截图确认）；开启无障碍但设备无识别通道时仍不显示（符合「没有就不显示」）。版本 1.3.79 / 319；doc v27、dotfiles VERSION 34。
 - **浮窗：保持展开 + 实时刷新 + 立刻出内容；语音说明（2026-10-22 第九十二轮，v107）**：用户三个反馈：①语音用不了；②点开后应保持展开、内容自己滚动刷新；③输入文字退出后浮窗没有立刻显现内容。
   实现：`StatusOverlay` 新增 `rememberedLevel`（用户展开后，重建窗口/下次后台显示沿用该档位，保持展开；不再每次 show 重置为球）；`setStatus` 每次更新 `fullScroll(FOCUS_DOWN)`；插件新增 `window.__dshMobileProgressPoke()`（强制上报当前快照），`MainActivity.onPause` 在切后台前调用它，避免浮窗先出现空白再等下一轮轮询；无无障碍时点麦克风不再静默无反应，改为 `flashNotice(voice_need_a11y)` 明确提示（语音采集/面板目前由无障碍服务持有）。
   实测平板：展开卡片后再次推送新文本 → 卡片保持展开并更新内容（截图确认）。版本 1.3.77 / 317；doc v26、dotfiles VERSION 33。

@@ -36,8 +36,8 @@
     <string name="notif_action_exit">Beenden</string>
 
     <!-- Bedienungshilfen-Dienst (simulierte Bildschirmtippen) -->
-    <string name="accessibility_label">DSH Bildschirmtippen</string>
-    <string name="accessibility_desc">Ermöglicht DSH, Bildschirmtippen und Wischgesten zu simulieren (z. B. Automatisierung). Dieser Dienst deklariert ausschließlich die Fähigkeit zur Gesten-Injektion und liest keine Bildschirminhalte.</string>
+    <string name="accessibility_label">DSH Mobile Helfer (optional)</string>
+    <string name="accessibility_desc">Optionale Hilfe für DSH Mobile: ermöglicht Spracheingabe und lässt die KI auf Anfrage den aktuellen Bildschirm lesen. Chat, Dateien und der Hintergrund-Motor funktionieren auch ohne diesen Dienst.</string>
     <string name="accessibility_hint">Der Bedienungshilfen-Dienst ist aus — "Bildschirmtippen" ist nicht verfügbar</string>
 
     <!-- Erster Start: Onboarding -->

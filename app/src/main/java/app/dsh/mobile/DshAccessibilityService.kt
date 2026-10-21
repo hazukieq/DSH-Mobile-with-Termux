@@ -72,6 +72,7 @@ class DshAccessibilityService : AccessibilityService() {
         // 主界面没活着时点麦克风完全无响应（且面板因窗口 token 不合法从未显示过）。
         runCatching { StatusOverlay.onMicClick = { startVoiceInput() } }
             .onFailure { android.util.Log.w("DshA11y", "mic wiring failed: ${it.message}") }
+        runCatching { StatusOverlay.refreshMicVisibility() }
 
         // 保活看门狗（v1.2.91，主人要求「利用无障碍/悬浮窗机制保活」）
         //
@@ -620,6 +621,9 @@ class DshAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        // v1.3.78：无障碍断开 → 麦克风回调失效，浮窗里不再显示麦克风
+        runCatching { StatusOverlay.onMicClick = null }
+        runCatching { StatusOverlay.refreshMicVisibility() }
         ticker?.stopPolling()
         if (instance === this) instance = null
         // 释放麦克风：服务被销毁（无障碍被关闭/系统回收）时若还在识别，

@@ -33,8 +33,8 @@
     <string name="notif_action_exit">退出</string>
 
     <!-- 无障碍服务（模拟屏幕点击） -->
-    <string name="accessibility_label">DSH 屏幕点击</string>
-    <string name="accessibility_desc">允许 DSH 模拟屏幕点击与滑动（如自动操作）。本服务仅声明手势注入能力，不读取屏幕内容。</string>
+    <string name="accessibility_label">DSH Mobile 辅助（可选）</string>
+    <string name="accessibility_desc">DSH Mobile 的可选辅助：用于语音输入，以及在你要求时读取当前屏幕内容。不开启也能正常聊天、用文件和后台引擎。</string>
     <string name="accessibility_hint">尚未开启无障碍服务——「模拟屏幕点击」不可用</string>
 
     <!-- 首次启动引导 Onboarding -->

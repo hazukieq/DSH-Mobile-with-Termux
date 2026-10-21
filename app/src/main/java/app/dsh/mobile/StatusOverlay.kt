@@ -418,7 +418,9 @@ object StatusOverlay {
         val collapsed = expandLevel == 0
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
         statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
-        micView?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        val voiceOk = runCatching { appCtx?.let { VoiceReady.canUse(it) } == true && onMicClick != null }
+            .getOrDefault(false)
+        micView?.visibility = if (collapsed || !voiceOk) View.GONE else View.VISIBLE
         // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
         refreshActionVisibility()
         // 离开详情档就停掉周期刷新（档位 2 期间由 refreshSessionList 自己续期）
@@ -683,6 +685,11 @@ object StatusOverlay {
             hide(svc)
             Log.i(TAG, "overlay torn down (engine exited)")
         }
+    }
+
+    /** v1.3.78：无障碍/录音/识别状态变化后刷新麦克风可见性（没有就不显示）。 */
+    fun refreshMicVisibility() {
+        main { applyExpandLevel() }
     }
 
     /** 用户隐藏后重新允许显示（引擎重启等场景调用） */
