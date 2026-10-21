@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v27 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v28 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -404,8 +404,8 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   first snapshot appears immediately instead of waiting for the next poll. The overlay microphone
   is driven by the accessibility service; without it the tap shows an explicit hint instead of
   doing nothing.
-* Voice in the floating window is hidden unless it can actually work (v1.3.78): the mic appears
-  only when accessibility is enabled, RECORD_AUDIO is granted and an ASR channel is available
-  (system recognizer or configured cloud ASR). Otherwise the button is not shown at all.
+* Voice in the floating window (v1.3.80): the mic is shown whenever the accessibility service is
+  connected - missing RECORD_AUDIO or an ASR channel is reported after tapping (with guidance),
+  not hidden, so the user always has an entry point. Without accessibility the button is hidden.
   The accessibility service entry is labelled "optional" and its description now states it is
   only used for voice input and reading the current screen on request.

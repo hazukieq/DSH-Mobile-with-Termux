@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **麦克风显隐条件修正（2026-10-22 第九十四轮，v110）**：用户反馈「开了无障碍也没见到语音按钮」。原因是 v109 的 `VoiceReady.canUse` 把「录音权限 + 识别通道」也纳入显隐条件，用户开了无障碍但没给录音权限/没配 ASR → 按钮被藏，且没有入口去发现缺什么。
+  修正：显隐只以**无障碍服务是否连接**为准（`canUse = DshAccessibilityService.isEnabled()`）；录音权限/识别通道缺失时按钮仍显示，点击后由 `startVoiceInput` 给出「去授权 / 去配语音服务」的提示（`fullyReady()` 仅保留为诊断用）。
+  排查提示：平板实测发现 `settings put secure enabled_accessibility_services` 在该 vivo 上**并未真正连上**（设置页无障碍行仍显示未授权），所以复现时麦克风不出现是合理的；用户手机上应确认系统无障碍里该服务是「已开启」状态。
+  版本 1.3.80 / 320；doc v28、dotfiles VERSION 35。
 - **浮窗麦克风「没有就不显示」+ 无障碍说明（2026-10-22 第九十三轮，v109）**：用户要求「没有就不显示，同时在无障碍服务那里注明即可」。
   实现：新增 `VoiceReady.canUse(ctx)` = 无障碍服务已连接 && RECORD_AUDIO 已授权 &&（系统识别或云端 ASR 可用）；`StatusOverlay` 的麦克风只在（展开 && VoiceReady && onMicClick != null）时可见，`applyExpandLevel` 统一判定；无障碍 onServiceConnected 后调用 `refreshMicVisibility()`，onDestroy 清空回调并刷新。无障碍服务文案改为「可选辅助」：en/zh/de 说明「仅用于语音输入与按需读取当前屏幕，不开启也能聊天/用文件/后台引擎」。
   实测平板：无无障碍时展开卡片**没有麦克风**（截图确认）；开启无障碍但设备无识别通道时仍不显示（符合「没有就不显示」）。版本 1.3.79 / 319；doc v27、dotfiles VERSION 34。
