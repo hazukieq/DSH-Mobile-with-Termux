@@ -1,7 +1,11 @@
-# 竖屏 UI 修复：三个客户端插件
+# 竖屏与平板 UI 适配：客户端插件
 
-> 面向 Android 手机竖屏（约 386 CSS px 宽）的布局修复。全部以**客户端插件**实现：
+> 面向 Android 手机竖屏（约 386 CSS px 宽）与平板竖屏的布局适配。全部以**客户端插件**实现：
 > 不修改引擎源码、不抢占 DOM 事件、不与其他 UI 插件冲突，引擎升级也不会覆盖。
+>
+> 插件清单：`narrow-sidebar`（侧栏全宽）、`narrow-settings`（设置竖排）、
+> `narrow-rightbar`（右侧面板全屏）、`narrow-welcome`（首启欢迎页断点）、
+> `mobile-ui`（平板方向门控：平板只在竖屏启用移动布局，横屏回落桌面 UI）。
 
 ## 1. 问题：不是「挤」，是「宽度算成 0」
 
@@ -44,7 +48,7 @@ DSH 的 WebUI 本身支持**客户端插件**（`dsh.client` 机制）：
 - **天然隔离**：每个插件只给自己定位到的元素打属性、只在自己的 `<style>` 里写规则；
 - **可卸载**：移除插件文件即可完全恢复引擎原样。
 
-三个插件都在 APK 的 `assets/android-plugins/` 下，安装后由 app 部署到引擎目录，并在
+这些插件都在 APK 的 `assets/android-plugins/` 下，安装后由 app 部署到引擎目录，并在
 `android-overlay.yml` 里插入对应 entry。
 
 ## 3. 插件一：`narrow-sidebar`（侧栏全宽）
@@ -86,7 +90,24 @@ DSH 的 WebUI 本身支持**客户端插件**（`dsh.client` 机制）：
   同时把 `--dsh-sidebar-width` 归零、对 `[data-dockkit-host=dock]` 强制
   `visibility: visible; transform: none` —— 抵消引擎在窄屏全屏模式下把 dock 平移出屏幕的位移。
 
-## 6. 调试与验证
+## 6. 插件四：`narrow-welcome`（首启欢迎页断点）
+
+**行为**：WebUI 的「欢迎使用 / 新建会话」首启对话框在平板宽度下不再被当成窄屏全屏铺满；
+断点从 720px 提高到 **1100px**，仅在真正窄屏时走移动布局。
+
+- 平板（≥600 CSS px）下把 `[role="dialog"]` 包成居中卡片（640px 宽、20 圆角、阴影），
+  工作区选择器对话框固定 `height: min(72dvh, 760px)`，避免文件树被压成 0 高。
+- 只作用于首启对话框，不碰主界面与设置。
+
+## 7. 插件五：`mobile-ui`（平板方向门控）
+
+**行为**：平板（`isTabletScreen` ≥ 600 CSS px）只在**竖屏**启用 `mobile-ui`；
+旋转到横屏时回落到原生桌面 UI 并重载页面。
+
+- 依据：平板横屏有足够宽度，套移动布局反而浪费空间；手机不受影响。
+- 监听 `resize`/`orientationchange`，跨过宽度阈值时 reload 一次（加防抖，避免抖动重载）。
+
+## 8. 调试与验证
 
 **运行时日志**：插件的关键判定会用 `[dsh-android]` 前缀写入 WebView 控制台，
 app 会把它转发到引擎日志（`$DSH_HOME/../engine/engine.log`）。例如：
@@ -95,9 +116,11 @@ app 会把它转发到引擎日志（`$DSH_HOME/../engine/engine.log`）。例�
 [dsh-android] narrow-sidebar: 已接管（侧栏全宽，隐藏 2 个对话列；视口 386x777）
 [dsh-android] narrow-settings: 已接管设置面板（视口 386x777）
 [dsh-android] narrow-rightbar: 已接管右侧面板（视口 386x777）
+[dsh-android] narrow-welcome: welcome dialog centred (viewport 1280x800)
+[dsh-android] mobile-ui: tablet landscape -> desktop UI
 ```
 
-**测试**：仓库内四套测试覆盖判定逻辑与 DOM 结构变化（`node scripts/probes/_test_narrow_*.mjs`）：
+**测试**：仓库内测试覆盖判定逻辑与 DOM 结构变化（`node scripts/probes/_test_narrow_*.mjs`；welcome / mobile-ui 另有独立探针）：
 
 | 测试 | 覆盖 |
 |---|---|
