@@ -35,6 +35,8 @@ function createMobileUi() {
   var BAR_HEIGHT = 52
   /** Phone breakpoint: above this the shipped desktop layout is left alone. */
   var MOBILE_MAX_WIDTH = 900
+  /** v1.3.51：平板只在竖屏启用 mobile-ui，横屏回退原版 WebUI（首次判定后才启动方向门）。 */
+  var orientationGateInstalled = false
   /** How long the drawer is protected from reconcile right after a request. */
   var DRAWER_GRACE_MS = 900
   /** Modal surfaces worth reporting: the settings shell sets both. */
@@ -349,10 +351,24 @@ function createMobileUi() {
 
   /* ────────────────────────────── helpers ────────────────────────────── */
 
+  /** Tablet-sized screen (shortest side >= 600 CSS px). */
+  function isTabletScreen() {
+    try {
+      var sw = (window.screen && window.screen.width) || 0
+      var sh = (window.screen && window.screen.height) || 0
+      return Math.min(sw, sh) >= 600
+    } catch (e) {
+      return false
+    }
+  }
+
   /** True when this page should get the phone chrome. */
   function isMobile() {
     if (window.__DSH_MOBILE_UI_FORCE__ === true) return true
     var w = window.innerWidth || document.documentElement.clientWidth || 0
+    var h = window.innerHeight || document.documentElement.clientHeight || 0
+    // v1.3.51 用户要求：平板竖屏用 mobile-ui，横屏回退原版 WebUI。
+    if (isTabletScreen()) return h >= w
     if (w > 0 && w <= MOBILE_MAX_WIDTH) return true
     var ua = navigator.userAgent || ''
     if (/Android|iPhone|iPod|Mobile/i.test(ua)) return true
@@ -1470,8 +1486,32 @@ function createMobileUi() {
     attempt()
   }
 
+  /**
+   * 平板旋转时在「mobile-ui / 原版 WebUI」之间切换：方向变化后 reload 一次，
+   * 让 isMobile() 在全新文档里重新判定（避免运行时半套样式残留）。
+   */
+  function installOrientationGate() {
+    if (orientationGateInstalled) return
+    orientationGateInstalled = true
+    var lastMobile = null
+    function onChange() {
+      if (!isTabletScreen()) return
+      var mobile = isMobile()
+      if (lastMobile === null) { lastMobile = mobile; return }
+      if (mobile === lastMobile) return
+      lastMobile = mobile
+      try { window.location.reload() } catch (e) {}
+    }
+    try {
+      window.addEventListener('resize', onChange, { passive: true })
+      window.addEventListener('orientationchange', function () { window.setTimeout(onChange, 250) })
+      lastMobile = isMobile()
+    } catch (e) {}
+  }
+
   /** Plugin entry: install the mobile layer. */
   function apply(ctx, css, diag) {
+    installOrientationGate()
     if (handleUrlSwitch()) return
     if (skinDisabled()) {
       try {

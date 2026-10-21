@@ -524,4 +524,9 @@ Engine: %6$s</string>
     <string name="share_empty">Geteilter Inhalt ist leer</string>
     <string name="share_no_composer">Freigabe empfangen, aber kein Eingabefeld verfügbar. Dateien liegen in %1$s — öffne eine Unterhaltung, um sie zu referenzieren.</string>
     <string name="share_files_header">Diese Dateien wurden geteilt (auf diesem Gerät gespeichert):</string>
+    <string name="ob_all_files_title">Dateizugriff erlauben</string>
+    <string name="ob_all_files_message">DSH Mobile funktioniert am besten mit „Zugriff auf alle Dateien“, damit der Agent den gemeinsamen Speicher (/sdcard) lesen/schreiben, Dateien in anderen Apps öffnen und Ordner im Dateimanager anzeigen kann. Später unter Einstellungen → Berechtigungen änderbar.</string>
+    <string name="ob_all_files_allow">Zugriff erlauben</string>
+    <string name="ob_all_files_skip">Später</string>
+    <string name="ob_all_files_not_granted">Dateizugriff nicht erteilt — später unter Einstellungen → Berechtigungen möglich</string>
 </resources>

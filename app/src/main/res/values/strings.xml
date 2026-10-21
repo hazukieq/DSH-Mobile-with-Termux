@@ -514,4 +514,9 @@ engine: %6$s</string>
     <string name="share_empty">Shared content is empty</string>
     <string name="share_no_composer">Received share, but no conversation input box is available. Files are saved in %1$s — open a conversation to reference them.</string>
     <string name="share_files_header">I shared these files (saved on this device):</string>
+    <string name="ob_all_files_title">Allow file access</string>
+    <string name="ob_all_files_message">DSH Mobile works best with "All files access" so the agent can read and write shared storage (/sdcard), open files in other apps and show folders in the file manager. You can change this later in Settings → Permissions.</string>
+    <string name="ob_all_files_allow">Grant access</string>
+    <string name="ob_all_files_skip">Not now</string>
+    <string name="ob_all_files_not_granted">File access not granted — you can enable it later in Settings → Permissions</string>
 </resources>

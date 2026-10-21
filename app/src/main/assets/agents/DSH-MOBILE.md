@@ -305,7 +305,12 @@ Rules for reliable WebUI automation:
 - **Native Settings page** (gear): display (orientation, page zoom), permission centre (privilege
   mode, root, Shizuku, accessibility, all-files access, TTS), plugin centre, terminal font size,
   engine restart, and the mobile-UI rollback switch.
-- **Web UI mobile layer** (`dsh-mobile-ui` v0.1.17): app bar with ☰ drawer, conversation title,
+- **Onboarding asks for file access**: on Android 11+ the first-run flow requests "All files
+  access" (`MANAGE_EXTERNAL_STORAGE`) before entering the app (skippable; later in Settings →
+  权限中心). Android 10 and below gets the legacy READ/WRITE_EXTERNAL_STORAGE runtime prompt.
+- **Web UI mobile layer** (`dsh-mobile-ui`): on tablets it is enabled **only in portrait**;
+  rotating to landscape reloads the page into the stock desktop WebUI (and back). Phones keep
+  the mobile layer in both orientations. The layer has an app bar with ☰ drawer, conversation title,
   right-pane toggle and ⓘ info button; drawer lists new session, plugins, automations, memory and
   workspace sessions; the right pane opens full-screen with its own tab strip.
 - **Right pane** (engine dock): tabs for document preview / terminal / guide, `+` to add a tab,

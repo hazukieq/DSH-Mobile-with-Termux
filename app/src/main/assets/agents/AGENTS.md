@@ -264,7 +264,8 @@ before deep app work. Quick map:
   accessibility service. Do not use CDP screenshots: they can be blank/stale.
 - The UI map (top toolbar, the capsule handle that restores it, native Settings, mobile drawer,
   right pane, native terminal tabs/keys) is documented in `$DSH_HOME/DSH-MOBILE.md`, section
-  "App UI map". Read it before explaining the app to the user or automating it.
+  "App UI map". On tablets the mobile UI layer is portrait-only - in landscape the stock desktop
+  WebUI is used, so the mobile app bar/drawer will be absent there. Read it before explaining the app to the user or automating it.
 - The rest of the native API (60+ endpoints: screen, screenshot, gesture, key, input, launch,
   launch-intent, ocr, vision, memory, notif, plugin list/install, diag, pty, runtime) lives on
   `127.0.0.1:3083` and is reachable as

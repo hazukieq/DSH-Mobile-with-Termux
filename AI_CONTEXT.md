@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **初始化申请文件权限 + 平板 mobile-ui 仅竖屏（2026-10-22 第七十八轮，v82）**：
+  ① 引导页新增文件管理权限步骤：`OnboardingActivity.finishOnboarding` 在进入主界面前，Android 11+ 若未授予 `MANAGE_EXTERNAL_STORAGE` 弹说明框（去授权 → `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`；暂不 → 跳过），`onActivityResult`/`onResume` 兜底继续，不阻塞引导；Android 10 及以下弹 READ/WRITE_EXTERNAL_STORAGE 运行时权限（manifest 补两条权限；targetSdk=28）。新增 5 条 strings ×3 语言；
+  ② `mobile-ui` client：新增 `isTabletScreen()`（screen 最短边 ≥600 CSS px），`isMobile()` 平板只返回竖屏（h≥w）；新增 `installOrientationGate()`（在 apply 入口安装 resize/orientationchange 监听，横竖屏切换时 reload 一次让判定重新生效）。手机行为不变（横竖屏都用 mobile-ui）。宿主验证判定逻辑：tablet portrait=true / tablet landscape=false / phone portrait=true / phone landscape=true。
+  说明：平板默认方向偏好是竖屏（锁竖屏），要在平板上真正看到「横屏回原版 WebUI」，需把 App 的显示方向设为「自动/横屏」；已把测试期间改过的系统旋转设置恢复。版本 1.3.51 / 291；doc v19、AGENTS seed 73、dotfiles VERSION 26。
 - **平板无法「显示文件位置」修复：私有目录 DocumentsProvider（2026-10-21 第七十七轮，v81）**：平板（vivo PA2353, Android 14, app 1.3.48）点「显示文件位置」失败。logcat 显示请求的是 App 私有路径 `$DSH_HOME/.answer-me-with-html/pages` —— v79 对私有目录直接返回 ok:false（系统文件管理器不能浏览私有存储）。
   修复：新增 `DshDocumentsProvider`（SAF DocumentsProvider，authority `<pkg>.docs`，exported + MANAGE_DOCUMENTS + DOCUMENTS_PROVIDER intent-filter），把 `$DSH_HOME` 作为 root「DSH Mobile」暴露给系统文件管理器；`OpenWith` 对 dsh-home 路径构造 document URI 并显式用 DocumentsUI 定位；文件打开/分享仍用原 `.dshfiles` FileProvider（兼容性）。
   踩坑：① `findDocumentPath` 基类抛 UnsupportedOperationException → 自己实现（root→目标 docId 链），否则 DocumentsUI 退回「下载」；② `row()` 必须按 cursor 的 projection 逐列填值（findDocumentPath/queryDocument 传入的 projection 顺序不同，固定顺序会错位抛错）；③ 目录定位的 intent **不能带 GRANT/ClipData**：带授权的 document URI 会被 DocumentsUI 当成「打开文档」并退回 provider 根目录；纯 data+type+component 才能按路径定位。

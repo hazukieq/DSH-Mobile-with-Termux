@@ -514,4 +514,9 @@ dsh：%2$s
     <string name="share_empty">分享内容为空</string>
     <string name="share_no_composer">已接收分享，但当前没有可写入的会话输入框。文件保存在 %1$s，打开会话后可从中引用。</string>
     <string name="share_files_header">我分享了这些文件（已保存到本机）：</string>
+    <string name="ob_all_files_title">文件管理权限</string>
+    <string name="ob_all_files_message">授予「所有文件访问」后，Agent 才能读写共享存储（/sdcard）、用其它 App 打开文件、在文件管理器中定位目录。之后可在「设置 → 权限中心」随时修改。</string>
+    <string name="ob_all_files_allow">去授权</string>
+    <string name="ob_all_files_skip">暂不</string>
+    <string name="ob_all_files_not_granted">未授予文件访问权限，可稍后在「设置 → 权限中心」开启</string>
 </resources>

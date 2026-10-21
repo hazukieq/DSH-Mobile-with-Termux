@@ -21,6 +21,9 @@
     <!-- 所有文件访问：普通模式下授权 AI 在共享存储（/sdcard）建目录与读写 ——
          权限中心跳系统设置授予（isExternalStorageManager），引擎进程与 App 同 uid 继承 -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- Android 10 及以下：targetSdk=28，共享存储仍需旧版运行时权限（引导页一并申请） -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <!-- ⚠️ Android 11+ 的 package visibility（v1.2.83，调研发现的关键坑）：
          不声明 <queries> 时，App **看不到**用户后来安装的语音识别服务，

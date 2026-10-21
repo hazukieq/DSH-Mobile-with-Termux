@@ -3,12 +3,15 @@ package app.dsh.mobile
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
+import android.widget.Toast
 import app.dsh.mobile.engine.PrivMode
 import app.dsh.mobile.engine.Privilege
 
@@ -25,6 +28,12 @@ import app.dsh.mobile.engine.Privilege
  * 不做任何危险动作。
  */
 class OnboardingActivity : Activity() {
+
+    /** v1.3.51：引导阶段一并申请文件管理权限（所有文件访问）。 */
+    private var pendingAllFiles = false
+    private var allFilesAsked = false
+
+
 
     private var selectedOrientation: OrientationMode = OrientationMode.PORTRAIT
     private var selectedPriv = PrivMode.NORMAL
@@ -186,6 +195,7 @@ class OnboardingActivity : Activity() {
 
     private companion object {
         const val SHIZUKU_REQ = 4201
+        const val REQ_ALL_FILES = 2001
     }
 
     /**
@@ -235,10 +245,83 @@ class OnboardingActivity : Activity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 从系统「所有文件访问」页返回时，有些 ROM 不回调 onActivityResult；
+        // 这里兜底：仍待授权就从 onResume 继续收尾（不阻塞，仅提示）。
+        if (pendingAllFiles) {
+            pendingAllFiles = false
+            val granted = Build.VERSION.SDK_INT < 30 ||
+                runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
+            if (!granted) Toast.makeText(this, R.string.ob_all_files_not_granted, Toast.LENGTH_LONG).show()
+            proceedAfterPermissions()
+        }
+    }
+
     /** 用户点「开始使用」：Root 需双警告，其余直接落库并进主界面。
      *  关键：即使 Root 双警告被取消，也照常 markOnboarded 并进主界面——
      *  避免用户陷入「取消→永远停在引导」的死循环（此前每次进应用都弹的根因）。 */
     private fun finishOnboarding() {
+        // 先确保文件管理权限：Android 11+ 是「所有文件访问」，Android 10 及以下是
+        // READ/WRITE_EXTERNAL_STORAGE 运行时权限。用户拒绝也不阻塞引导（可稍后在设置页开启）。
+        if (Build.VERSION.SDK_INT >= 30) {
+            val granted = runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
+            if (!granted && !allFilesAsked) {
+                allFilesAsked = true
+                AlertDialog.Builder(this)
+                    .setTitle(getString(R.string.ob_all_files_title))
+                    .setMessage(getString(R.string.ob_all_files_message))
+                    .setCancelable(false)
+                    .setPositiveButton(getString(R.string.ob_all_files_allow)) { _, _ ->
+                        pendingAllFiles = true
+                        val intent = Intent(
+                            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            Uri.parse("package:$packageName"),
+                        )
+                        runCatching { startActivityForResult(intent, REQ_ALL_FILES) }
+                            .onFailure { pendingAllFiles = false; proceedAfterPermissions() }
+                    }
+                    .setNegativeButton(getString(R.string.ob_all_files_skip)) { _, _ ->
+                        proceedAfterPermissions()
+                    }
+                    .show()
+                return
+            }
+        } else if (!hasLegacyStorage()) {
+            requestPermissions(
+                arrayOf(
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                ),
+                REQ_ALL_FILES,
+            )
+            return
+        }
+        proceedAfterPermissions()
+    }
+
+    private fun hasLegacyStorage(): Boolean =
+        checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_ALL_FILES) {
+            pendingAllFiles = false
+            val granted = Build.VERSION.SDK_INT < 30 ||
+                runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
+            if (!granted) Toast.makeText(this, R.string.ob_all_files_not_granted, Toast.LENGTH_LONG).show()
+            proceedAfterPermissions()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_ALL_FILES) proceedAfterPermissions()
+    }
+
+    /** 权限询问结束后继续原来的引导收尾（Root 警告 → commit）。 */
+    private fun proceedAfterPermissions() {
         if (selectedPriv == PrivMode.ROOT) {
             warnRoot {
                 warnRootAgain {
