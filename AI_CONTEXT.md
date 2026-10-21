@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗实时思考链路 + 固定会话（2026-10-22 第九十六轮，v112）**：用户要求「思考链路都回传到浮窗，实时性要有」「活动会话多个时默认固定显示第一个」。
+  实现：① `mobile-progress` 插件重写：250ms 轮询，`buildChain()` 取 `.EvIC1a_column` 里**最后一个 userRow 之后**的所有 `details[class*=_think]` 正文 + `O_Ebla_label` 工具步骤，按 DOM 顺序拼接（上限 4000 字）；payload 增加 `session`（`#dshm-title`/活动会话行）；运行中文本变化即上报，心跳 1.5s；② `ProgressHub` 增加 `pinnedSession`：首个带 session 的活动会固定，其它会话在它仍处于 thinking/tool/working 时被忽略；该会话 done/error 后解绑并接受下一个；③ 节流按模式区分：浮窗 120ms、通知 600ms；detail 上限提升到 4000。
+  实测平板（悬浮窗模式）：A 会话连续增长 → 显示 A；B 会话插入被忽略；A done 后 B 自动接上（截图确认卡片显示「B 思考…」+ 会话B）。版本 1.3.83 / 323；doc v30、dotfiles VERSION 37。
 - **浮窗去掉语音按钮（2026-10-22 第九十五轮，v111）**：用户决定「语音按钮从悬浮窗去掉，太复杂」。
   实现：`overlay_status.xml` 删除 `overlayMic`；`StatusOverlay` 移除 `micView`/`onMicClick`/麦克风触摸、可见性与 `refreshMicVisibility`；`DshAccessibilityService` 不再注册浮窗麦克风回调；删除 `VoiceReady.kt` 与 `voice_need_a11y` 字符串；无障碍服务描述改为「可选：按需读取屏幕与点击/滑动」，不再提语音。
   保留：App 内语音栈（无障碍服务持有 VoicePanel + AsrManager 系统识别 / CloudAsr 云端识别，最终经 VoiceBridge → MainActivity 注入 WebUI 输入框并提交）；引擎自带实验性语音输入 bundle 仍在插件市场可选（默认关闭）。

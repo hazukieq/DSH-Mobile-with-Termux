@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v29 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v30 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -411,3 +411,8 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   it is not enabled by default.
   The accessibility service entry is labelled "optional" and its description now states it is
   only used for voice input and reading the current screen on request.
+* Live reasoning chain (v1.3.83): the mobile-progress plugin now posts the whole current-turn
+  reasoning chain (all 思考 blocks plus tool steps from the last user message onward) every
+  250ms while running, so the floating window updates in near real time instead of stepping.
+  A session is pinned: when several sessions are active, the first one shown stays pinned until
+  it reports done/error; other sessions' updates are ignored until then.

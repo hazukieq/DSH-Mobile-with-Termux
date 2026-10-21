@@ -40,12 +40,14 @@ object ProgressHub {
 
     private val main = Handler(Looper.getMainLooper())
 
-    private data class Snapshot(val kind: String, val title: String, val detail: String, val at: Long)
+    private data class Snapshot(val kind: String, val title: String, val detail: String, val session: String, val at: Long)
 
     @Volatile private var last: Snapshot? = null
     @Volatile private var appVisible = false
     @Volatile private var lastPublishAt = 0L
     @Volatile private var doneClearRunnable: Runnable? = null
+    /** v1.3.83：固定会话 —— 多个会话同时活动时默认只显示第一个，直到它结束。 */
+    @Volatile private var pinnedSession: String? = null
     /** 后台有任务在跑时抓一个 PARTIAL_WAKE_LOCK，减少 Doze/省电策略把引擎冻死的概率。 */
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
@@ -79,33 +81,49 @@ object ProgressHub {
     fun onJsProgress(ctx: Context, payload: String) {
         runCatching {
             val o = JSONObject(payload)
-            update(ctx, o.optString("kind"), o.optString("title"), o.optString("detail"))
+            update(ctx, o.optString("kind"), o.optString("title"), o.optString("detail"), o.optString("session"))
         }.onFailure { Log.w(TAG, "bad progress payload: ${it.message}") }
     }
 
     /** Agent 的 POST /overlay 兼容入口。 */
     fun onAgentProgress(ctx: Context, status: String?, action: String?, complete: Boolean) {
         if (complete) {
-            update(ctx, "done", "", status ?: ctx.getString(R.string.progress_state_done))
+            update(ctx, "done", "", status ?: ctx.getString(R.string.progress_state_done), "")
             return
         }
         val detail = listOfNotNull(status, action).filter { it.isNotBlank() }.joinToString(" · ")
         if (detail.isBlank()) return
-        update(ctx, "working", "", detail)
+        update(ctx, "working", "", detail, "")
     }
 
-    fun update(ctx: Context, kind: String, title: String, detail: String) {
+    fun update(ctx: Context, kind: String, title: String, detail: String, session: String) {
         val k = when (kind) {
             "thinking", "tool", "done", "error", "idle", "working" -> kind
             else -> "working"
         }
-        val s = Snapshot(k, title.trim().take(80), detail.trim().take(240), System.currentTimeMillis())
+        val sess = session.trim().ifBlank { title.trim() }
+        val pin = pinnedSession
+        if (pin.isNullOrBlank()) {
+            if (sess.isNotBlank()) pinnedSession = sess
+        } else if (sess.isNotBlank() && sess != pin) {
+            val pinnedStillActive = last?.kind in setOf("thinking", "tool", "working")
+            if (pinnedStillActive) {
+                // 固定会话优先：其它会话的进度先忽略
+                return
+            }
+            pinnedSession = sess
+        }
+        val s = Snapshot(k, title.trim().take(80), detail.trim().take(4000), sess, System.currentTimeMillis())
         val prev = last
         if (prev != null && prev.kind == s.kind && prev.detail == s.detail && prev.title == s.title) {
             return
         }
         last = s
         maybePublish(ctx, force = (k == "done" || k == "error"))
+        if (k == "done" || k == "error") {
+            Log.i(TAG, "session finished: ${s.session.take(40)} (len=${s.detail.length})")
+            pinnedSession = null
+        }
     }
 
     private fun maybePublish(ctx: Context, force: Boolean) {
@@ -113,7 +131,8 @@ object ProgressHub {
         if (m == MODE_OFF) { clearAll(ctx); return }
         val snap = last
         if (snap == null) return
-        if (!force && System.currentTimeMillis() - lastPublishAt < 600L) return
+        val gap = if (m == MODE_OVERLAY) 120L else 600L
+        if (!force && System.currentTimeMillis() - lastPublishAt < gap) return
         lastPublishAt = System.currentTimeMillis()
 
         // 后台有任务在跑：保持一个短暂的 partial wakelock（屏幕熄灭/Doze 时引擎仍能继续跑）
@@ -192,7 +211,7 @@ object ProgressHub {
             doneClearRunnable = r
             main.postDelayed(r, 120_000L)
         }
-        Log.i(TAG, "progress notification: kind=${snap.kind} len=${text.length}")
+        Log.i(TAG, "progress notification: kind=${snap.kind} session=${snap.session.take(30)} len=${text.length}")
     }
 
     private fun ensureChannel(nm: NotificationManager, ctx: Context) {
@@ -236,7 +255,7 @@ object ProgressHub {
 
     /** 设置页「预览一次」。 */
     fun preview(ctx: Context) {
-        val s = Snapshot("thinking", ctx.getString(R.string.progress_channel), ctx.getString(R.string.progress_preview_text), System.currentTimeMillis())
+        val s = Snapshot("thinking", ctx.getString(R.string.progress_channel), ctx.getString(R.string.progress_preview_text), "preview", System.currentTimeMillis())
         last = s
         publishNotification(ctx, s)
     }
