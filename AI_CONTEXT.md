@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **工作区选择器文件树不可见（2026-10-22 第八十二轮，v90）**：用户反馈「选择工作区疑似错误，没有见到文件树」。DOM 取证：对话框 `_dialog_o6lrb_33 ZuhsRW_dialog` 卡片化后 `height:auto` → 内部 `ZuhsRW_content`（flex:1 0 0）与 `ZuhsRW_millerRow`（flex:1 1 0）算得高度 0，文件树被压成 0 高（DOM 里有 profiles/sessions… 但不可见）。
+  修法：在平板断点内给该选择器固定高度 `html body div[role=dialog][aria-modal=true][class*="ZuhsRW_dialog"] { height: min(72dvh, 760px) !important; }`。
+  实测平板：对话框 640×760，millerRow 575 高，profiles/profiles.last-good/sessions/storages/tools/workspaces 列表与「新建文件夹/显示隐藏文件/取消/打开」全部可见（截图确认）。版本 1.3.60 / 300。
 - **首启「开始使用 / 添加 API Key」对话框平板适配（2026-10-22 第八十一轮，v89）**：用户指出「填写密钥这里」也别扭。DOM 取证：该对话框类 `_dialog_o6lrb_33 _76YFJG_dialog`（点添加后变 `jLrgrW_dialog`），同样被上游渲染成整屏 sheet（818×1213、内容顶到左上）。上一轮只选了 `jLrgrW_dialog`，没覆盖 `_76YFJG_dialog`。
   修法：把 tablet 断点内的选择器改为两套 modal 共用的基类 `html body div[role=dialog][aria-modal=true][class*="_dialog_"]`（含 `> * max-width:100%`），一次性覆盖「预览版说明 / 开始使用 / 添加 API Key」等所有文档型 modal；桌面 >1100px 与手机 <600px 不受影响。
   实测平板：开始使用 640×165 居中；点「添加 API Key」后弹窗 640×256 居中，标题/说明/输入框/按钮排版正常（截图确认）。版本 1.3.59 / 299。

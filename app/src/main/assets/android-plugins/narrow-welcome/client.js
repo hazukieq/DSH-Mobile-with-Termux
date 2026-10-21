@@ -110,6 +110,11 @@ window.__ModuleLoader__.load({
       "    max-width: 100% !important;",
       "    box-sizing: border-box !important;",
       "  }",
+      "  /* v1.3.60：工作区选择器（miller 文件树）依赖对话框有确定高度；卡片改成 height:auto 后",
+      "     内部 flex 列表算出 0 高，文件树整个看不见。给它固定可用高度。 */",
+      "  html body div[role=\"dialog\"][aria-modal=\"true\"][class*=\"ZuhsRW_dialog\"] {",
+      "    height: min(72dvh, 760px) !important;",
+      "  }",
       "}",
     ].join("\n");
 
