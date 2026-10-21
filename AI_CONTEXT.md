@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **贴边理解纠错：窗口只贴左右边（2026-10-22 第一百零七轮，v140）**：主人指出我之前把「notice 在思考链底部」误解成「窗口贴屏幕底」，导致浮窗固定底部、不能移动。
+  修法：`dockBottom` 默认 false 并删除该逻辑；保留 `dockX()` 左右贴边；拖动松手 `snapToEdge` 只把 x 吸到最近边、y 保持用户拖动位置（仅屏幕内 clamp）；展开/折叠后 x 重新贴回同一边、y clamp；notice 仍用独立布局在卡片底部（这条需求不变）。
+  实测：默认右边缘 frame=[1680,243][1820,383]；拖到屏幕中部松手 → 仍吸回右边 frame=[1680,1145][1820,1285]（y 保留拖动位置）；截图确认。版本 1.6.2 / 362；doc v42、dotfiles VERSION 49。
 - **无障碍状态改走独立 notice 布局 + 默认贴底边（2026-10-22 第一百零六轮，v138）**：用户明确：「无障碍 post 的内容要在悬浮窗 layout 里用另一个 layout 去接，不是用思考链的布局」；并要求浮窗在底部边显示、不占上方内容。
   实现：① `overlay_status.xml` 新增 `overlayNoticeBox/overlayNotice`（卡片底部小 pill，8s 自动消失，仅展开态显示）；② `AgentBridge /overlay` 的 status/action 与 `ProgressHub.onAgentProgress` 不再 `setStatus/setAction` 覆盖链路，统一 `StatusOverlay.setNotice()`；③ 移除 v1.5.4 的 120s 忽略 hack（不再需要）；④ `StatusOverlay` 增加 `dockBottom` + `dockY()`：默认贴底边（y=屏高-窗口高-10dp），展开/折叠/拖动松手都贴底，x 仍按左右边吸附；⑤ 无障碍已连接时窗口优先用 TYPE_ACCESSIBILITY_OVERLAY（服务持有，不依赖 Activity）。
   实测：post 思考链后再发 notice，卡片同时显示链路正文 + 底部独立 notice「点击 设置按钮 · 无障碍自动操作」，链路未被覆盖；窗口 frame=[1680,2660][1820,2800]（底部贴边）。版本 1.5.9 / 359；doc v41、dotfiles VERSION 48。

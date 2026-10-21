@@ -78,8 +78,6 @@ object StatusOverlay {
     @Volatile private var lastAppliedLevel = -1
     /** 贴边方向：true=右边缘，false=左边缘。展开/折叠后始终贴回这一侧。 */
     @Volatile private var dockRight = true
-    /** v1.5.4：默认贴**底边**，不再占用上方内容布局（用户要求）。 */
-    @Volatile private var dockBottom = true
     /** 当前窗口由哪种 type 创建：无障碍窗口随服务销毁，应用悬浮窗不随 Activity/服务走。 */
     @Volatile private var windowTypeUsed = 0
     @Volatile private var appCtx: Context? = null
@@ -233,7 +231,7 @@ object StatusOverlay {
                     val vw = if (view.width > 0) view.width else dp(ctx, 120)
                     p.x = (ctx.resources.displayMetrics.widthPixels - vw - margin)
                         .coerceAtLeast(margin)
-                    if (dockBottom) p.y = dockY(view, p, ctx)
+                    p.y = clampY(view, p, ctx)
                     runCatching { w.updateViewLayout(view, p) }
                     Log.i(TAG, "overlay shown at ${p.x},${p.y} (${view.width}x${view.height})")
                 }
@@ -351,6 +349,7 @@ object StatusOverlay {
                 MotionEvent.ACTION_UP -> {
                     dragging = false
                     if (moved) {
+                        // v1.6.1：拖到哪里都重新贴到最近的左右边（用户要求：移动后也贴边）
                         snapToEdge(p, ctx)
                     } else {
                         onClick()
@@ -367,16 +366,15 @@ object StatusOverlay {
         }
     }
 
-    /** 计算贴底后的 y（按当前窗口高度与边距）。 */
-    private fun dockY(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
+    /** 垂直位置只做屏幕内约束（默认 y 由调用方给）。 */
+    private fun clampY(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
         val screenH = ctx.resources.displayMetrics.heightPixels
-        val margin = dp(ctx, 10)
         val vh = when {
             v.height > 0 -> v.height
             p.height > 0 -> p.height
             else -> dp(ctx, 100)
         }
-        return (screenH - vh - margin).coerceAtLeast(margin)
+        return p.y.coerceIn(dp(ctx, 10), (screenH - vh - dp(ctx, 10)).coerceAtLeast(dp(ctx, 10)))
     }
 
     /** 计算贴边后的 x（按当前窗口宽度与 dockRight 侧）。 */
@@ -400,12 +398,8 @@ object StatusOverlay {
         val vw = if (view.width > 0) view.width else dp(ctx, 120)
         dockRight = !(p.x + vw / 2 < screenW / 2)
         val target = if (dockRight) screenW - vw - margin else margin
-        if (dockBottom) {
-            val screenH = ctx.resources.displayMetrics.heightPixels
-            val vh = if (view.height > 0) view.height else dp(ctx, 100)
-            p.y = (screenH - vh - dp(ctx, 10)).coerceAtLeast(dp(ctx, 10))
-            runCatching { wm?.updateViewLayout(view, p) }
-        }
+        p.y = clampY(view, p, ctx)
+        runCatching { wm?.updateViewLayout(view, p) }
         animateX(p, target)
     }
 
