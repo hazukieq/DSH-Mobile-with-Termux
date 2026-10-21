@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v23 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v24 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -387,3 +387,9 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   per update) so Doze is less likely to freeze the engine; it is released on foreground/done.
   If the WebView sandbox is reclaimed by the system, onRenderProcessGone rebuilds the WebView and
   reloads the engine URL without restarting the engine.
+* Never auto-start after a normal exit (v1.3.73, hard requirement): a persisted `user_exited`
+  flag is set by the notification's 退出 action and by removing the app from recents
+  (`onTaskRemoved`); while it is set, `EngineService.start()` and the accessibility keepalive
+  watchdog skip starting the engine. Only a fresh user launch of MainActivity (onCreate without
+  saved state) clears the flag and starts the engine again. If you (the agent) need to start it,
+  ask the user to open the app instead of calling the service.

@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **正常退出后绝不自动启动（2026-10-22 第九十轮，v104）**：用户硬性要求「app 正常退出后绝对不能自己启动」。原行为：`onTaskRemoved` 自动重启服务 + 无障碍看门狗每 60s 拉起 + `EngineService.start()` 只挡「通知栏退出」标记，所以从最近任务划掉后会被拉回。
+  实现：`EngineService` 增加持久化 `user_exited` 标记（prefs `dsh_exit`）：通知「退出」、`onTaskRemoved`（划掉任务）都置位；`EngineService.start()` 与无障碍保活看门狗在置位期间一律跳过；`onStartCommand` 对自动拉起也二次拦截（`stopSelf`）。只有用户主动打开 MainActivity（`onCreate` 且 `savedInstanceState == null`）才清除标记 + `supervisor.clearUserStop()`，随后 onResume 正常启动。新增 `EngineSupervisor.clearUserStop()`。
+  实测平板（开启无障碍）：从最近任务划掉 → 进程/引擎立即消失，90s 内无任何自动拉起；再点图标打开 → 引擎正常启动（node pid 出现、3080 返回 401）。版本 1.3.74 / 314；doc v24、AGENTS seed 77、dotfiles VERSION 31。
 - **后台被杀/引擎重启排查与保活（2026-10-22 第八十九轮，v102）**：用户反馈手机上切后台再回来「引擎重新加载」。排查结论：平板上 pid/engine 60s 后台、45s 锁屏均存活，`dumpsys activity exit-info` 里 com.termux 的退出全部来自安装/手停，**没有后台被杀记录**；但 WebView sandbox 多次被系统回收（reason=13 ISOLATED NOT NEEDED），手机内存小更容易发生。真正的引擎重启只可能来自 app 进程被杀（node 是 app 子进程）。
   缓解：① `EngineService` manifest 加 `stopWithTask=false`（原本已 START_STICKY + onTaskRemoved 自启）；② 新增 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 权限与设置页「后台保活」行（未允许时弹系统请求，已允许时跳电池优化列表）；③ 设置页新增「厂商后台限制」说明（vivo/OPPO/小米：电池→后台耗电管理、i管家自启动/允许后台高耗电）；④ ProgressHub 在「后台+任务运行中」持有 15 分钟 PARTIAL_WAKE_LOCK（每次更新续期，前台/完成释放），减少 Doze 冻结；⑤ WebView sandbox 被回收时仍只重建 WebView（onRenderProcessGone → recoverWebView），不重启引擎。
   实测平板：日志 `ProgressHub: wakelock acquired`；设置页「后台保活=未允许 / 厂商后台限制 / 预览一次」正常显示。版本 1.3.72 / 312；doc v23、AGENTS seed 76、dotfiles VERSION 30。

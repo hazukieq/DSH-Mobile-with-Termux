@@ -109,6 +109,15 @@ class MainActivity : Activity() {
             return
         }
         setContentView(R.layout.activity_main)
+        // v1.3.73：只有「用户主动打开 App」才清除正常退出标记并允许启动引擎；
+        // 旋转/系统重建（savedInstanceState != null）不算。
+        if (savedInstanceState == null) {
+            runCatching {
+                app.dsh.mobile.service.EngineService.setUserExited(this, false)
+                (application as DshApp).supervisor.clearUserStop("user opened the app")
+            }
+        }
+
 
         // 记录本页生效的语言（onResume 里比对，设置页改过就重建本页）
         appliedLocale = LocaleHelper.get(this)

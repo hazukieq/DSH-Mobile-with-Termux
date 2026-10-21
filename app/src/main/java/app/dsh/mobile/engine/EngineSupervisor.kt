@@ -151,6 +151,14 @@ class EngineSupervisor(private val ctx: Context) {
      */
     fun isUserStopped(): Boolean = userStop && (loopJob?.isActive != true)
 
+    /** v1.3.73：用户主动打开 App 时清除「显式退出」标记，允许正常启动引擎。 */
+    fun clearUserStop(reason: String) {
+        if (userStop) {
+            userStop = false
+            Log.i(TAG, "user-stop flag cleared: $reason")
+        }
+    }
+
     /**
      * 用户**从通知栏点「退出」**时的回调（v1.2.187，v1.2.188 审查后改为回调式）。
      *

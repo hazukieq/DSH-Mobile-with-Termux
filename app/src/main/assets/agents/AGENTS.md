@@ -307,6 +307,9 @@ Settings → 后台保活 requests battery-optimisation exemption and explains v
 task runs in the background ProgressHub holds a PARTIAL_WAKE_LOCK (15 min, renewed) to reduce
 Doze freezes - released on foreground/done. WebView renderer reclaim is recovered by rebuilding
 the WebView only (the engine keeps running).
+Normal exit is final: 退出 from the notification or swiping the app away sets a persisted
+`user_exited` flag; `EngineService.start()` and the accessibility keepalive skip while it is set.
+Only the user opening the app again clears it - never try to auto-start the engine after an exit.
 
 Node/pnpm on device: `dsh` is not on PATH - run
 `node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ...`; pnpm is not on PATH either,

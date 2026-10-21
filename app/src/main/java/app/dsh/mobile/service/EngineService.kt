@@ -45,7 +45,14 @@ class EngineService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 通知栏「退出」按钮：用户显式要求彻底停止（Termux 同款交互）
         if (intent?.action == ACTION_EXIT) {
+            setUserExited(this, true)
             exitCompletely()
+            return START_NOT_STICKY
+        }
+        // 自动拉起的兜底：正常退出后任何路径都不得再启动引擎
+        if (userExited(this)) {
+            Log.i(TAG, "skip service start: user exited normally (no auto-start)")
+            stopSelf(startId)
             return START_NOT_STICKY
         }
 
@@ -109,11 +116,10 @@ class EngineService : Service() {
             Log.i(TAG, "task removed but user explicitly exited, not restarting")
             return
         }
-        Log.i(TAG, "task removed, restarting engine service")
-        runCatching {
-            val i = Intent(this, EngineService::class.java)
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i) else startService(i)
-        }.onFailure { Log.w(TAG, "restart after task removal failed: ${it.message}") }
+        // v1.3.73 用户硬性要求：从最近任务划掉 = 正常退出，**绝不自动拉起**。
+        // 只有用户再次主动打开 App（MainActivity.onCreate）才会清除该标记。
+        Log.i(TAG, "task removed: marking user-exited, no auto-start")
+        setUserExited(this, true)
     }
 
     override fun onDestroy() {
@@ -305,6 +311,25 @@ class EngineService : Service() {
             }.getOrDefault(false)
         } ?: false
 
+        private const val PREFS_EXIT = "dsh_exit"
+        private const val KEY_USER_EXITED = "user_exited"
+
+        /**
+         * v1.3.73（用户硬性要求）：**正常退出后绝不自动启动**。
+         *
+         * 置位时机：通知栏「退出」、从最近任务划掉 App（onTaskRemoved）。
+         * 清除时机：用户主动打开 MainActivity（onCreate 且非重建）。
+         * 读取时机：start() 与无障碍保活看门狗 —— 置位期间一律跳过。
+         */
+        fun userExited(ctx: Context): Boolean =
+            ctx.getSharedPreferences(PREFS_EXIT, Context.MODE_PRIVATE)
+                .getBoolean(KEY_USER_EXITED, false)
+
+        fun setUserExited(ctx: Context, exited: Boolean) {
+            ctx.getSharedPreferences(PREFS_EXIT, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_USER_EXITED, exited).apply()
+        }
+
         /** 通知「退出」按钮触发动作 */
         const val ACTION_EXIT = "app.dsh.mobile.service.action.EXIT"
 
@@ -322,6 +347,11 @@ class EngineService : Service() {
          *  · 版本不足且用户未知情 → 不启动（让 MainActivity 去弹说明对话框）
          */
         fun start(context: Context) {
+            // v1.3.73：正常退出后（含划掉任务）任何自动路径都不得启动
+            if (userExited(context)) {
+                android.util.Log.i("EngineService", "skip start: user exited normally")
+                return
+            }
             val app = context.applicationContext as? app.dsh.mobile.DshApp
             // 用户刚从通知栏显式退出 → 跳过生命周期自动拉起（否则「退出不了」，
             // MainActivity.onResume 会立刻把服务拉回来 ✗）。想再开：主界面点「启动」。
