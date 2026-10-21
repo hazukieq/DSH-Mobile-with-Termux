@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **CDP 默认开启 + 真机 pnpm/node 经验入档（2026-10-22 第八十三轮，v91）**：
+  ① 用户要求「默认开启 cdp 方便 agent 调试」：`DshApp` 改为默认 `WebView.setWebContentsDebuggingEnabled(true)`，仅当外部文件目录存在 `webview-debug-off` 才关闭；`/process`、`/status` 的 `webview_debug`/`devtools_socket` 统一走 `webViewDebugEnabled()`；`dsh-mobile cdp on/off` 语义改为「删除/创建 opt-out」，doctor 文案同步。平板实测：无任何 flag，`adh forward` 后 `curl /json/version` 可达，日志 `WebView remote debugging enabled (default; opt out: webview-debug-off)`。
+  ② 用户提供真机回传 zip（`DSH-plugins-report-20261022.zip`，含 `dsh-plugin-install-and-experimental-plugins.md` 712 行）：把 pnpm/node 经验写进 DSH-MOBILE.md 新章节 "Node, pnpm and plugin tooling on the device" 与 AGENTS.md：`dsh` 不在 PATH → `node $PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js`；pnpm 不在 PATH 且 Corepack shim 依赖不存在的同级 node → 直接 `node $PREFIX/lib/node_modules/corepack/dist/pnpm.js`，或建 `$HOME/bin/pnpm` wrapper 并把 `$HOME/bin` 前置到 PATH；插件装进 `$DSH_HOME/profiles/<profile>/package.json` + `dsh.profile.bundles`，HMR 生效无需重启；实验性 bundle 走 WebUI `pluginManager` RPC（token 从 `$PREFIX/engine.log` 的 `dsh web: ... token=` 取，换 cookie 后 POST `/api/pluginManager/*`，`applied` 表示已热应用，`restart-required` 需重启）。Doc v21、AGENTS seed 74、dotfiles VERSION 28；版本 1.3.61 / 301。
 - **工作区选择器文件树不可见（2026-10-22 第八十二轮，v90）**：用户反馈「选择工作区疑似错误，没有见到文件树」。DOM 取证：对话框 `_dialog_o6lrb_33 ZuhsRW_dialog` 卡片化后 `height:auto` → 内部 `ZuhsRW_content`（flex:1 0 0）与 `ZuhsRW_millerRow`（flex:1 1 0）算得高度 0，文件树被压成 0 高（DOM 里有 profiles/sessions… 但不可见）。
   修法：在平板断点内给该选择器固定高度 `html body div[role=dialog][aria-modal=true][class*="ZuhsRW_dialog"] { height: min(72dvh, 760px) !important; }`。
   实测平板：对话框 640×760，millerRow 575 高，profiles/profiles.last-good/sessions/storages/tools/workspaces 列表与「新建文件夹/显示隐藏文件/取消/打开」全部可见（截图确认）。版本 1.3.60 / 300。

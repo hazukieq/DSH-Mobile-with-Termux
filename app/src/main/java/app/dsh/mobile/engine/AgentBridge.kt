@@ -1892,7 +1892,7 @@ document.getElementById('api').textContent = checks.map(function(c){
             val engine = JSONObject()
                 .put("port", 3080)
                 .put("priv_mode", Privilege.getMode(ctx).name.lowercase())
-                .put("webview_debug", ctx.getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug") }?.isFile == true)
+                .put("webview_debug", webViewDebugEnabled(ctx))
 
             val net = JSONObject()
             runCatching {
@@ -2277,10 +2277,16 @@ document.getElementById('api').textContent = checks.map(function(c){
 
 
 
+    /** v1.3.61：WebView 远程调试默认开启；放 `webview-debug-off` 可关闭。 */
+    private fun webViewDebugEnabled(ctx: android.content.Context): Boolean =
+        runCatching {
+            ctx.getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug-off") }?.isFile != true
+        }.getOrDefault(true)
+
     private fun processInfo(): Pair<Int, String> {
         val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
         val pid = android.os.Process.myPid()
-        val flag = ctx.getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug") }?.isFile == true
+        val flag = webViewDebugEnabled(ctx)
         val ver = runCatching {
             ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
         }.getOrNull().orEmpty()

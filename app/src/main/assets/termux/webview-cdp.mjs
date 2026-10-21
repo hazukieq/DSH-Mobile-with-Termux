@@ -12,6 +12,8 @@ const PREFIX = process.env.PREFIX || '/data/data/com.termux/files/usr';
 const FILES = path.resolve(PREFIX, '..');
 const DSH_HOME = process.env.DSH_HOME || path.join(FILES, 'dsh-home');
 const FLAG = process.env.DSH_WEBVIEW_DEBUG_FLAG || '/sdcard/Android/data/com.termux/files/webview-debug';
+/** v1.3.61：CDP 默认开启；这个文件用于**关闭**。 */
+const OFF_FLAG = process.env.DSH_WEBVIEW_DEBUG_OFF_FLAG || '/sdcard/Android/data/com.termux/files/webview-debug-off';
 const BRIDGE_PORT = Number(process.env.DSH_BRIDGE_PORT || 3083);
 const DOC = path.join(DSH_HOME, 'DSH-MOBILE.md');
 
@@ -356,7 +358,7 @@ async function cmdStatus() {
   if (br.ok) {
     const i = br.info || {};
     console.log('app        : pid ' + i.app_pid + ' uid ' + i.app_uid + ' v' + (i.version_name || '?') + ' sdk ' + i.sdk + ' (' + (i.model || '?') + ')');
-    console.log('webview_dbg: ' + (i.webview_debug ? 'enabled (flag read at process start)' : 'disabled'));
+    console.log('webview_dbg: ' + (i.webview_debug ? 'enabled (default since v1.3.61)' : 'disabled (webview-debug-off present)'));
   } else {
     console.log('app        : bridge unavailable (' + br.error + ') — cannot ask the app for its pid');
   }
@@ -384,7 +386,7 @@ async function cmdDoctor() {
   console.log(ok(br.ok) + ' 2. bridge /process ' + (br.ok ? JSON.stringify(br.info) : '(' + br.error + ')'));
   if (br.ok && br.info) {
     console.log(ok(!!br.info.webview_debug) + '    app sees webview_debug=' + br.info.webview_debug +
-      (br.info.webview_debug ? '' : ' → flag was created after the process started; restart the app'));
+      (br.info.webview_debug ? '' : ' → webview-debug-off is present; delete it and restart the app'));
   }
 
   const proc = readProcSockets();
@@ -421,16 +423,17 @@ async function cmdDoctor() {
 }
 
 function cmdOn() {
-  fs.mkdirSync(path.dirname(FLAG), { recursive: true });
-  fs.writeFileSync(FLAG, '');
-  console.log('webview-debug flag created: ' + FLAG);
-  console.log('Now restart the app so `WebView.setWebContentsDebuggingEnabled(true)` runs.');
-  console.log('Ask the user to reopen the app (force-stopping it also kills the engine you are running in).');
-  console.log('After the restart: dsh-mobile cdp status');
+  try { fs.unlinkSync(OFF_FLAG); console.log('opt-out removed: ' + OFF_FLAG); } catch { /* not present */ }
+  try { fs.unlinkSync(FLAG); } catch { /* legacy flag no longer needed */ }
+  console.log('WebView debugging is ON by default since v1.3.61 - no flag needed.');
+  console.log('If you removed the opt-out just now, restart the app so the devtools socket exists.');
+  console.log('Then: dsh-mobile cdp status   /   dsh-mobile cdp serve 9222');
 }
 
 function cmdOff() {
-  try { fs.unlinkSync(FLAG); console.log('flag removed: ' + FLAG); } catch { console.log('flag was already absent'); }
+  fs.mkdirSync(path.dirname(OFF_FLAG), { recursive: true });
+  fs.writeFileSync(OFF_FLAG, '');
+  console.log('opt-out created: ' + OFF_FLAG);
   console.log('Restart the app to close the devtools socket.');
 }
 

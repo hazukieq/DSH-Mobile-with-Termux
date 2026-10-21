@@ -278,13 +278,14 @@ before deep app work. Quick map:
 
 ## Debugging the Web UI over CDP - mandatory
 
-Never guess WebUI DOM/CSS from screenshots. The WebView is debuggable only while the flag
-file exists; drive the real page:
+Never guess WebUI DOM/CSS from screenshots; drive the real page. **WebView debugging is ON by
+default since v1.3.61** (`GET /process` → `webview_debug:true` + `devtools_socket`), so no
+flag/restart is needed; `dsh-mobile cdp off` (opt-out file) + restart disables it.
 
-0. `dsh-mobile cdp doctor` first when anything looks off: it prints OK/FAIL for the flag,
+0. `dsh-mobile cdp doctor` first when anything looks off: it prints OK/FAIL for the process,
    the bridge `/process` answer, socket discovery, devtools HTTP and a test `Runtime.evaluate`.
-1. `dsh-mobile cdp on` - then ask the user to reopen the app (the flag is read at process
-   start; force-stopping also kills the engine you are running in).
+1. `dsh-mobile cdp on` only removes the opt-out and legacy flag; a restart is needed only if
+   the opt-out had been active.
 2. `nohup dsh-mobile cdp serve 9222 >/tmp/cdp.log 2>&1 &` - bridges the WebView's abstract
    devtools socket to `127.0.0.1:9222`; `dsh-mobile cdp status` shows the socket and targets.
    Socket discovery is automatic: bridge `/process` → `/proc/net/unix` → abstract-socket scan,
@@ -296,6 +297,13 @@ file exists; drive the real page:
 4. `dsh-mobile cdp off` when finished (restart to close the socket).
 
 Renderer console errors also appear in logcat under the `chromium` tag.
+
+Node/pnpm on device: `dsh` is not on PATH - run
+`node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ...`; pnpm is not on PATH either,
+so use Corepack's entry `node "$PREFIX/lib/node_modules/corepack/dist/pnpm.js"` (or a
+`$HOME/bin/pnpm` wrapper) and prepend `$HOME/bin` to PATH for plugin installs. Never replace the
+bundled `$PREFIX/bin/node`; experimental bundles go through the WebUI `pluginManager` RPC, not
+pnpm.
 
 ## Three UI layers — disambiguate "settings / plugins / terminal" first
 

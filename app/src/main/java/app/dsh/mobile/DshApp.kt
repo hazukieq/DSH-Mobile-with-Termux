@@ -39,16 +39,17 @@ class DshApp : Application() {
             }
             prev?.uncaughtException(thread, throwable)
         }
-        // WebView 远程调试（窄屏 UI 排查用）：仅当**外部**文件目录存在开关文件
-        // `webview-debug` 时启用，发布默认不暴露 CDP：
-        //   adb shell touch /sdcard/Android/data/com.termux/files/webview-debug
-        // 然后 adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>，
+        // WebView 远程调试（v1.3.61 起**默认开启**，用户要求方便 agent 调试）：
+        // adb forward tcp:9222 localabstract:webview_devtools_remote_<pid> 后，
         // Chrome/Playwright 连 127.0.0.1:9222 就能量 DOM 与注入 CSS。
+        // 需要关闭时在外部文件目录放 `webview-debug-off`：
+        //   adb shell touch /sdcard/Android/data/com.termux/files/webview-debug-off
+        // （旧的 `webview-debug` 开关文件仍被识别，只是不再必需。）
         runCatching {
-            val flag = getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug") }
-            if (flag?.isFile == true) {
+            val optOut = getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug-off") }
+            if (optOut?.isFile != true) {
                 android.webkit.WebView.setWebContentsDebuggingEnabled(true)
-                android.util.Log.i("DshApp", "WebView remote debugging enabled")
+                android.util.Log.i("DshApp", "WebView remote debugging enabled (default; opt out: webview-debug-off)")
             }
         }
         // 每次启动都复查 Agent 侧产物（v1.3.24）：不是首次安装也要补齐缺失的门脚本、

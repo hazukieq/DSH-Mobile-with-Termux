@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v20 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v21 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -70,11 +70,12 @@ Groups (see the actual handlers for params):
 The WebView can be debugged over the Chrome DevTools Protocol. Never guess the DOM from
 screenshots; drive the real page.
 
-0. Diagnose first (recommended): `dsh-mobile cdp doctor` runs the whole chain — flag file,
+0. Diagnose first (recommended): `dsh-mobile cdp doctor` runs the whole chain — process info,
    bridge `/process`, socket discovery, devtools HTTP, a test `Runtime.evaluate` — and prints
    OK/FAIL per layer.
-1. Enable (flag file + app restart):
-   `dsh-mobile cdp on` → asks you to reopen the app (the flag is read at process start).
+1. **WebView debugging is ON by default since v1.3.61** (no flag, no restart needed). To opt out
+   on a device: `dsh-mobile cdp off` (creates `webview-debug-off` next to the app's external
+   files) and restart the app; `dsh-mobile cdp on` removes the opt-out.
 2. On-device bridge (no adb needed): `dsh-mobile cdp serve 9222` — connects the WebView's
    abstract devtools socket to `127.0.0.1:9222` and prints the socket it picked. Run it in the
    background (`nohup dsh-mobile cdp serve 9222 >/tmp/cdp.log 2>&1 &`).
@@ -82,7 +83,7 @@ screenshots; drive the real page.
    `dsh-mobile cdp eval 'document.title'`; reload with `dsh-mobile cdp reload`.
 4. From a host with adb: `adb forward tcp:9222 localabstract:webview_devtools_remote_<app pid>`
    and point Playwright/Chrome at `http://127.0.0.1:9222` (`connect_over_cdp`).
-5. Turn it off when finished: `dsh-mobile cdp off` (flag removed; restart the app to apply).
+5. `GET /process` reports `webview_debug: true` and the exact `devtools_socket` name.
 
 Socket discovery is automatic and does not need `/proc`: the helper asks the app over the
 bridge (`GET /process` → `app_pid` + `devtools_socket`), then falls back to `/proc/net/unix`
@@ -330,3 +331,38 @@ Rules for reliable WebUI automation:
   `DSH 屏幕点击` in system settings (and allow restricted settings on Android 13+).
 - The engine survives in a foreground service; the WebView is an activity that may be
   recycled. For UI work, treat the WebView as the target and the engine as the backend.
+
+## Node, pnpm and plugin tooling on the device
+
+The bundled runtime has Node, but `dsh` and `pnpm` are **not on PATH** (verified on a real
+device, 2026-10-22). Use these forms instead of trying to install another Node:
+
+```bash
+PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
+# dsh CLI (not on PATH):
+node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" plugin --profile web list
+
+# pnpm: the app ships Corepack, but its shims assume a sibling `node` that does not exist.
+# Run Corepack's pnpm entry directly, or create a thin wrapper once:
+mkdir -p "$HOME/bin"
+printf '#!/data/data/com.termux/files/usr/bin/sh\nexec node "$PREFIX/lib/node_modules/corepack/dist/pnpm.js" "$@"\n' > "$HOME/bin/pnpm"
+chmod 755 "$HOME/bin/pnpm"
+
+# then any pnpm-based flow works (plugin manager spawns `pnpm`):
+PATH="$HOME/bin:$PATH" node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+  plugin --profile web add <package>
+```
+
+Notes:
+
+- Installed plugins land in `$DSH_HOME/profiles/<profile>/package.json` (+ `node_modules`), and
+  the profile's `dsh.profile.bundles` is updated; with HMR on, no engine restart is needed.
+- Never overwrite `$PREFIX/bin/node` and do not install a second Node — Corepack's
+  `dist/pnpm.js` downloads an `android-arm64` pnpm on first use.
+- Experimental bundles are toggled through the WebUI's `pluginManager` Remote, not pnpm. The
+  WebUI token can be read from the last `dsh web: ... token=` line in `$PREFIX/engine.log`;
+  exchange it for a cookie (`curl -c cj.txt "http://127.0.0.1:3080/?token=$T"`), then POST
+  `pluginManager/listBundles` / `pluginManager/setBundleEnabled` to
+  `http://127.0.0.1:3080/api/...` with `content-type: application/json` and
+  `origin: http://127.0.0.1:3080`. An `application:"applied"` result means HMR took it;
+  `restart-required` means the engine must be restarted.
