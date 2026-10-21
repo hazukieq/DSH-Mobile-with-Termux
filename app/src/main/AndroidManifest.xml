@@ -61,6 +61,19 @@
             </intent-filter>
         </receiver>
 
+        <!-- v1.3.49：把 App 私有目录（dsh-home）暴露成 SAF DocumentsProvider，
+             让系统文件管理器能浏览/定位私有路径；DocumentsUI 通过 document URI 打开。 -->
+        <provider
+            android:name=".engine.DshDocumentsProvider"
+            android:authorities="${applicationId}.docs"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
         <!-- v1.3.41：把本机文件交给其它 App 打开（WebUI「open in app / 在文件夹中显示」） -->
         <provider
             android:name=".engine.DshFileProvider"

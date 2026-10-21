@@ -138,6 +138,13 @@ may be mid-animation or the user may have moved on. To verify a result: settle (
 
 ### Opening files with system apps (no desktop needed)
 
+App-private files (`$DSH_HOME/...`) are exposed to the system file manager through the app's own
+SAF **DocumentsProvider** (root "DSH Mobile"): `native open-folder <dir>` / the UI's
+"显示文件位置" deep-links DocumentsUI to the exact folder (breadcrumb shows
+`DSH Mobile > …`), so private paths are browsable/locatable too. The provider is read-only for
+other apps and only exposes `$DSH_HOME` (never all of /data).
+
+
 The WebUI "open in app" / "reveal in folder" works on Android now: the engine patch makes
 `dsh-native-command` hand the path to the app instead of failing with "this host has no
 desktop". From the shell/bridge:

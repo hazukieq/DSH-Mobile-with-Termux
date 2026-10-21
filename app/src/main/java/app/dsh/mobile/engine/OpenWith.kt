@@ -221,12 +221,30 @@ object OpenWith {
         // 也不行）→ SecurityException「you could obtain access using ACTION_OPEN_DOCUMENT」。
         // 所以：系统文档 URI 走「不带 grant」的纯 VIEW；我们自己的 provider URI 才带 grant。
         val externalDoc = if (effectiveKind == "folder") storageDocumentUri(file.absolutePath) else null
-        if (effectiveKind == "folder" && externalDoc == null) {
-            return JSONObject().put("ok", false)
-                .put("error", "folder is in app-private storage (${file.absolutePath}); the system file manager cannot browse it - copy it to /sdcard first")
-                .put("private_storage", true)
+        // App 私有目录（dsh-home）：v1.3.49 起有自己的 DocumentsProvider，
+        // 系统文件管理器可以浏览/定位（document URI 由我们的 provider 提供）。
+        val homeDir = EngineConfig.dshHome(ctx).canonicalFile
+        val canonical = file.canonicalFile
+        val inHome = canonical.path == homeDir.path ||
+            canonical.path.startsWith(homeDir.path + File.separator)
+        val homeDocId = if (inHome) {
+            if (canonical.path == homeDir.path) DshDocumentsProvider.ROOT_ID
+            else canonical.path.removePrefix(homeDir.path + File.separator)
+        } else null
+        val homeDoc = homeDocId?.let {
+            DocumentsContract.buildDocumentUri(DshDocumentsProvider.authority(ctx.packageName), it)
         }
-        val uri = externalDoc ?: providerUri(ctx, file)
+        if (effectiveKind == "folder" && externalDoc == null && homeDoc == null) {
+            return JSONObject().put("ok", false)
+                .put("error", "folder is outside shared storage and outside DSH_HOME; cannot be shown by the file manager: ${file.absolutePath}")
+        }
+        // 目录定位用 document URI（App 私有目录走我们自己的 DocumentsProvider）；
+        // 文件打开/分享仍用 .dshfiles FileProvider（微信/QQ 等对该形态兼容性最好）。
+        val uri = externalDoc ?: (if (effectiveKind == "folder") homeDoc else null) ?: providerUri(ctx, file)
+        // ⚠️ 目录定位（show in folder）不能带 GRANT/ClipData：DocumentsUI 收到带授权的
+        // document URI 会按「打开文档」处理并退回 provider 根目录（平板实测），
+        // 纯 data+type+direction 才会按路径定位。文件分享/打开才需要授权。
+        val documentFolder = effectiveKind == "folder" && (externalDoc != null || homeDoc != null)
         val action = if (effectiveKind == "share") Intent.ACTION_SEND else Intent.ACTION_VIEW
         val type = when (effectiveKind) {
             "folder" -> "vnd.android.document/directory"
@@ -234,8 +252,8 @@ object OpenWith {
         }
         val intent = Intent(action).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (externalDoc == null) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            if (effectiveKind == "folder" && externalDoc != null) {
+            if (!documentFolder) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (effectiveKind == "folder" && (externalDoc != null || homeDoc != null)) {
                 documentsUiComponent(ctx)?.let { component = it }
             }
             if (effectiveKind == "share") {
@@ -248,7 +266,7 @@ object OpenWith {
             } else {
                 setDataAndType(uri, type)
             }
-            if (externalDoc == null && effectiveKind != "share") {
+            if (!documentFolder && effectiveKind != "share") {
                 clipData = android.content.ClipData.newRawUri(file.name, uri)
             }
         }

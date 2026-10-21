@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **平板无法「显示文件位置」修复：私有目录 DocumentsProvider（2026-10-21 第七十七轮，v81）**：平板（vivo PA2353, Android 14, app 1.3.48）点「显示文件位置」失败。logcat 显示请求的是 App 私有路径 `$DSH_HOME/.answer-me-with-html/pages` —— v79 对私有目录直接返回 ok:false（系统文件管理器不能浏览私有存储）。
+  修复：新增 `DshDocumentsProvider`（SAF DocumentsProvider，authority `<pkg>.docs`，exported + MANAGE_DOCUMENTS + DOCUMENTS_PROVIDER intent-filter），把 `$DSH_HOME` 作为 root「DSH Mobile」暴露给系统文件管理器；`OpenWith` 对 dsh-home 路径构造 document URI 并显式用 DocumentsUI 定位；文件打开/分享仍用原 `.dshfiles` FileProvider（兼容性）。
+  踩坑：① `findDocumentPath` 基类抛 UnsupportedOperationException → 自己实现（root→目标 docId 链），否则 DocumentsUI 退回「下载」；② `row()` 必须按 cursor 的 projection 逐列填值（findDocumentPath/queryDocument 传入的 projection 顺序不同，固定顺序会错位抛错）；③ 目录定位的 intent **不能带 GRANT/ClipData**：带授权的 document URI 会被 DocumentsUI 当成「打开文档」并退回 provider 根目录；纯 data+type+component 才能按路径定位。
+  实测平板：点「显示文件位置」→ DocumentsUI 打开 `DSH Mobile > .answer-me-with-html > pages` 并列出 HTML 文件（截图确认）；系统「文件」App 侧边栏也出现「DSH Mobile」可浏览。版本 1.3.50 / 290；doc v18、AGENTS seed 72、dotfiles VERSION 25。
 - **指定 App 打开/分享（听歌/看视频/阅读/分享给某 App）（2026-10-20 第七十六轮，v80）**：用户要求「用户说调用系统阅读/听歌/播放视频时弹出对应 App；分享给 xxx 时直接跳转 xxx 去分享」。实现：
   ① `OpenWith` 增加目标 App 解析：`Handler(label,package)`、`queryIntentActivities` 去重列表、`pickHandler` 按 **label 或包名片段** 匹配（精确包名优先；多匹配返回 candidates、零匹配返回 available），`listHandlers` 输出 `{package,label,default}`；
   ② `/open/file`、`/open/share`、`/share/text` 支持 `app`（或 `to`）参数 → 命中即 `intent.setPackage(pkg)` 直接 `startActivity`（不弹选择器）；未指定仍走 chooser；

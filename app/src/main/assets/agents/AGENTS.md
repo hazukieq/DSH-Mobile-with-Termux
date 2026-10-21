@@ -247,7 +247,9 @@ before deep app work. Quick map:
   shares from other apps (ACTION_SEND) are copied to `$DSH_HOME/inbox/` and prefilled into the
   open conversation's composer; no automatic send.
 - Opening files with other apps: `native open-file <path>` / `native open-folder <path>` /
-  `native share <path>` (or `POST /open/file|folder|share`). The WebUI's own "open in app" and
+  `native share <path>` (or `POST /open/file|folder|share`). Reveal works for `$DSH_HOME` paths
+  too: the app ships a SAF DocumentsProvider (root "DSH Mobile") that the system file manager
+  can browse, so private folders are deep-linked in DocumentsUI instead of failing. The WebUI's own "open in app" and
   "reveal in folder" buttons use the same path now, so Android no longer reports "no desktop".
   Receipts are hand-offs (`opened` means the app actually left the foreground); no screenshot
   verification.
