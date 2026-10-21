@@ -12,8 +12,12 @@
  * 窄屏（约 393 CSS px）下 520px 的绝对定位文案块必然溢出，右侧被裁。
  *
  * 修法：窄屏断点内把欢迎页改成**正常文档流的居中列**——文案不再绝对定位、
- * 宽度自适应、插画隐藏；宽屏（平板/桌面模式）完全不动。类名带构建哈希，
+ * 宽度自适应、插画隐藏；宽屏（>1100px 桌面）完全不动。类名带构建哈希，
  * 这里用「后缀属性选择器」（[class*="_welcome"] 等）跨版本匹配。
+ *
+ * v1.3.55：断点从 720px 提到 1100px。平板竖屏可视宽约 817 CSS px，按 720 断点走
+ * 的是桌面排版（copy 绝对定位 520px + 1247px 插画），第一次初始化的欢迎/填密钥
+ * 对话框在平板上因此显得别扭、被裁；817px 与桌面 1200px+ 之间没有「真桌面」布局。
  *
  * 注册约定同 narrow-settings：经典 script 加载 + __ModuleLoader__.load，id 必须
  * 等于 package.json 的 name。
@@ -30,7 +34,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = "dsh-android-narrow-welcome-style";
 
     const STYLE_TEXT = [
-      "@media (max-width: 720px) {",
+      "@media (max-width: 1100px) {",
       "  /* 欢迎页容器：变成可滚动的居中列，禁止横向溢出 */",
       "  [class*=\"_welcome\"]:not([class*=\"_welcomeIllustration\"]) {",
       "    box-sizing: border-box !important;",

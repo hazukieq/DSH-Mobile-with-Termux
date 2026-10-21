@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v1 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v20 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the

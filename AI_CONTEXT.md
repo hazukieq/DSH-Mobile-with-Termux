@@ -1,6 +1,12 @@
 # AI_CONTEXT
 
 ## Current progress
+- **纠正：只修 WebUI 首次初始化对话框（2026-10-22 第七十九轮，v86）**：我上一轮误把「第一次初始化的对话框别扭」理解成 WebUI 全局布局，改了 mobile-ui 的对话框/欢迎页/输入框 CSS 并被用户要求回退。处理：
+  ① 已 `git checkout` 回退 `mobile-ui/client.js`，只保留用户此前要求的「平板竖屏才启用 mobile-ui / 横屏回原版」的方向门（isTabletScreen/isMobile/installOrientationGate），没有其它样式改动；也撤掉了误加的 `OnboardingActivity` 平板布局调整（该改动实际未落盘）。
+  ② 真正的病灶：`narrow-welcome` 插件（WebUI 首次初始化的「开始使用 / 登录账号 / 填写 API Key」欢迎页与弹窗）的响应式断点是 `max-width: 720px`；平板竖屏 CSS 视口约 **817px**，落在桌面排版分支 —— 欢迎页 copy 块仍绝对定位 520px、1247px 插画不隐藏、dialog 描述仍 nowrap，所以显得别扭/裁切。改为 `max-width: 1100px`（桌面 >1100px 完全不受影响），平板竖屏即走原有的「居中列 + 隐藏插画 + dialog 文本换行」适配。
+  ③ 平板实测：`matchMedia('(max-width: 1100px)').matches === true`、样式节点已注入；720 断点已不再匹配（证明旧分支失效）。
+  ④ 顺带修正 app 自述文档 marker 长期停在 v1 的问题（实际内容早已更新，导致每次启动都重写 DSH-MOBILE.md）：资产 marker 改为 v20，与 `APP_DOC_MARKER_VERSION` 一致。
+  版本 1.3.56 / 296；仅 `narrow-welcome/client.js`、版本号与 dotfiles 常量有差异，UI 其余部分与 v82 一致。
 - **初始化申请文件权限 + 平板 mobile-ui 仅竖屏（2026-10-22 第七十八轮，v82）**：
   ① 引导页新增文件管理权限步骤：`OnboardingActivity.finishOnboarding` 在进入主界面前，Android 11+ 若未授予 `MANAGE_EXTERNAL_STORAGE` 弹说明框（去授权 → `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`；暂不 → 跳过），`onActivityResult`/`onResume` 兜底继续，不阻塞引导；Android 10 及以下弹 READ/WRITE_EXTERNAL_STORAGE 运行时权限（manifest 补两条权限；targetSdk=28）。新增 5 条 strings ×3 语言；
   ② `mobile-ui` client：新增 `isTabletScreen()`（screen 最短边 ≥600 CSS px），`isMobile()` 平板只返回竖屏（h≥w）；新增 `installOrientationGate()`（在 apply 入口安装 resize/orientationchange 监听，横竖屏切换时 reload 一次让判定重新生效）。手机行为不变（横竖屏都用 mobile-ui）。宿主验证判定逻辑：tablet portrait=true / tablet landscape=false / phone portrait=true / phone landscape=true。
