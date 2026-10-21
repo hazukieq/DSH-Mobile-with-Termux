@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **「思考」缺图标（2026-10-22 第八十四轮，v92）**：平板截图里每个「思考」行只有 UA 默认 `▶`。DOM 取证：`details.vHCAGq_think > summary`（dsh-genui 插件渲染），类名来自 `dsh-genui/src/client/genui-assistant.module.css`，其 CSS 只有 `.vHCAGq_think{opacity:.85;font-size:.9em}`，没有图标/折叠样式 → 落到浏览器默认 marker。引擎自身 ReasoningRow 用的是 `IconThinkOutlineRegular`（16×16 outline，stroke-width 1），在同一页面 DOM 中能抓到已渲染的 svg 实例。
+  修法：mobile-ui CSS（仅 `html[data-dsh-mobile]` 生效，桌面不动）给 `details[class*='_think'] > summary`：隐藏 marker、`display:flex`、`::before` 用引擎同款 think 图标做 mask（`-webkit-mask/mask` data URI，14×14，颜色取 label-tertiary）、`::after` 画一个旋转 chevron（`details[open]` 时旋转 90°）。
+  实测平板：思考行左侧出现 outline 思考图标 + 右侧 chevron（截图确认），`::before` computed 14×14、mask URL 生效。版本 1.3.62 / 302。
 - **CDP 默认开启 + 真机 pnpm/node 经验入档（2026-10-22 第八十三轮，v91）**：
   ① 用户要求「默认开启 cdp 方便 agent 调试」：`DshApp` 改为默认 `WebView.setWebContentsDebuggingEnabled(true)`，仅当外部文件目录存在 `webview-debug-off` 才关闭；`/process`、`/status` 的 `webview_debug`/`devtools_socket` 统一走 `webViewDebugEnabled()`；`dsh-mobile cdp on/off` 语义改为「删除/创建 opt-out」，doctor 文案同步。平板实测：无任何 flag，`adh forward` 后 `curl /json/version` 可达，日志 `WebView remote debugging enabled (default; opt out: webview-debug-off)`。
   ② 用户提供真机回传 zip（`DSH-plugins-report-20261022.zip`，含 `dsh-plugin-install-and-experimental-plugins.md` 712 行）：把 pnpm/node 经验写进 DSH-MOBILE.md 新章节 "Node, pnpm and plugin tooling on the device" 与 AGENTS.md：`dsh` 不在 PATH → `node $PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js`；pnpm 不在 PATH 且 Corepack shim 依赖不存在的同级 node → 直接 `node $PREFIX/lib/node_modules/corepack/dist/pnpm.js`，或建 `$HOME/bin/pnpm` wrapper 并把 `$HOME/bin` 前置到 PATH；插件装进 `$DSH_HOME/profiles/<profile>/package.json` + `dsh.profile.bundles`，HMR 生效无需重启；实验性 bundle 走 WebUI `pluginManager` RPC（token 从 `$PREFIX/engine.log` 的 `dsh web: ... token=` 取，换 cookie 后 POST `/api/pluginManager/*`，`applied` 表示已热应用，`restart-required` 需重启）。Doc v21、AGENTS seed 74、dotfiles VERSION 28；版本 1.3.61 / 301。
