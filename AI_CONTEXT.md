@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **后台被杀/引擎重启排查与保活（2026-10-22 第八十九轮，v102）**：用户反馈手机上切后台再回来「引擎重新加载」。排查结论：平板上 pid/engine 60s 后台、45s 锁屏均存活，`dumpsys activity exit-info` 里 com.termux 的退出全部来自安装/手停，**没有后台被杀记录**；但 WebView sandbox 多次被系统回收（reason=13 ISOLATED NOT NEEDED），手机内存小更容易发生。真正的引擎重启只可能来自 app 进程被杀（node 是 app 子进程）。
+  缓解：① `EngineService` manifest 加 `stopWithTask=false`（原本已 START_STICKY + onTaskRemoved 自启）；② 新增 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 权限与设置页「后台保活」行（未允许时弹系统请求，已允许时跳电池优化列表）；③ 设置页新增「厂商后台限制」说明（vivo/OPPO/小米：电池→后台耗电管理、i管家自启动/允许后台高耗电）；④ ProgressHub 在「后台+任务运行中」持有 15 分钟 PARTIAL_WAKE_LOCK（每次更新续期，前台/完成释放），减少 Doze 冻结；⑤ WebView sandbox 被回收时仍只重建 WebView（onRenderProcessGone → recoverWebView），不重启引擎。
+  实测平板：日志 `ProgressHub: wakelock acquired`；设置页「后台保活=未允许 / 厂商后台限制 / 预览一次」正常显示。版本 1.3.72 / 312；doc v23、AGENTS seed 76、dotfiles VERSION 30。
 - **后台进度提示：通知/悬浮窗，不再依赖无障碍（2026-10-22 第八十八轮，v100）**：按用户确认的方案实现（默认通知、锁屏隐藏正文、通知只放「打开」、悬浮窗改用应用悬浮窗替代纯无障碍窗口）。
   ① 新增 `ProgressHub.kt`：状态机（thinking/tool/done/error）+ 600ms 节流 + 前台抑制（回后台补发）+ 通知（渠道 dsh_progress、IMPORTANCE_LOW、VISIBILITY_PRIVATE、单一「打开」action、完成后 2 分钟自动清除）+ 悬浮窗分发（无权限时回退通知）+ 与 AgentBridge `/overlay` 合流；
   ② 新增注入插件 `assets/android-plugins/mobile-progress/`（宿主 no-op + client 端 800ms 轮询 DOM：会话标题、最新「思考」正文、最新工具 label、停止按钮判断 running；通过 `DshNative.progress(json)` 上报）；EngineConfig overlay + 部署清单同步（package.json 必须带 type/main/exports，否则引擎启动失败——本次踩到并修复）；

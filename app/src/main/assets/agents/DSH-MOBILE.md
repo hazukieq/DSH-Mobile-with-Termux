@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v22 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v23 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -381,3 +381,9 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   `TYPE_APPLICATION_OVERLAY` (SYSTEM_ALERT_WINDOW); it falls back to the accessibility window when
   that permission is missing, and to the notification when neither is available;
 * `DshNative.openSettings()` opens the native settings page from the WebUI.
+* Background survival: settings → 后台保活 asks for battery-optimisation exemption, and the
+  后台进度提示 section also links to the vendor guidance (vivo/OPPO/Xiaomi background limits).
+  While a task runs in the background, ProgressHub holds a 15-minute PARTIAL_WAKE_LOCK (renewed
+  per update) so Doze is less likely to freeze the engine; it is released on foreground/done.
+  If the WebView sandbox is reclaimed by the system, onRenderProcessGone rebuilds the WebView and
+  reloads the engine URL without restarting the engine.

@@ -40,6 +40,7 @@ class SettingsActivity : Activity() {
     private var progressNotifyValue: TextView? = null
     private var progressOverlayValue: TextView? = null
     private var progressA11yValue: TextView? = null
+    private var progressKeepaliveValue: TextView? = null
 
 
     /** 屏幕朝向偏好（v1.2.120 三态） */
@@ -849,6 +850,31 @@ class SettingsActivity : Activity() {
             runCatching { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         })
 
+        val keepVal = valueView().also { progressKeepaliveValue = it }
+        card.addView(row(getString(R.string.progress_keepalive), keepVal) {
+            val pm = getSystemService(android.os.PowerManager::class.java)
+            if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                runCatching {
+                    startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+            } else {
+                runCatching {
+                    startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:$packageName")))
+                }.onFailure {
+                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                }
+            }
+        })
+
+        card.addView(row(getString(R.string.progress_vendor_hint), valueView()) {
+            AlertDialog.Builder(this)
+                .setTitle(getString(R.string.progress_vendor_hint))
+                .setMessage(getString(R.string.progress_vendor_help))
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        })
+
         card.addView(row(getString(R.string.progress_preview), valueView()) {
             ProgressHub.preview(this)
             Toast.makeText(this, getString(R.string.progress_preview_text), Toast.LENGTH_SHORT).show()
@@ -905,6 +931,14 @@ class SettingsActivity : Activity() {
         progressOverlayValue?.text =
             if (android.provider.Settings.canDrawOverlays(this)) granted else denied
         progressA11yValue?.text = if (DshAccessibilityService.isEnabled()) granted else denied
+        progressKeepaliveValue?.text = runCatching {
+            val pm = getSystemService(android.os.PowerManager::class.java)
+            if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                getString(R.string.progress_keepalive_on)
+            } else {
+                getString(R.string.progress_keepalive_off)
+            }
+        }.getOrDefault(denied)
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()

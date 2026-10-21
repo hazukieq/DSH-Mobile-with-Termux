@@ -539,4 +539,10 @@ dsh：%2$s
     <string name="progress_not_granted">未授权</string>
     <string name="progress_preview_text">示例进度：正在读取文件、执行命令…</string>
     <string name="progress_enabled_hint">离开 App 后仍能看到当前思考/执行到哪一步。</string>
+    <string name="progress_keepalive">后台保活</string>
+    <string name="progress_keepalive_hint">忽略电池优化，减少离开 App 后引擎被系统清理的概率。</string>
+    <string name="progress_keepalive_on">已允许</string>
+    <string name="progress_keepalive_off">未允许</string>
+    <string name="progress_vendor_hint">厂商后台限制</string>
+    <string name="progress_vendor_help">vivo/OPPO/小米还需要额外设置：设置 → 电池 → 后台耗电管理；或 i管家 → 应用管理 → 自启动 / 允许后台高耗电。否则即使忽略电池优化，系统仍可能清理 App。</string>
 </resources>

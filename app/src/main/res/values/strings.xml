@@ -539,4 +539,10 @@ engine: %6$s</string>
     <string name="progress_not_granted">Not granted</string>
     <string name="progress_preview_text">Sample progress: reading files, running a command…</string>
     <string name="progress_enabled_hint">Keeps the current thinking / step visible after you leave the app.</string>
+    <string name="progress_keepalive">Background survival</string>
+    <string name="progress_keepalive_hint">Ignore battery optimisations so the engine is less likely to be killed while you are away.</string>
+    <string name="progress_keepalive_on">Allowed</string>
+    <string name="progress_keepalive_off">Not allowed</string>
+    <string name="progress_vendor_hint">Vendor background limits</string>
+    <string name="progress_vendor_help">On vivo/OPPO/Xiaomi, also allow: Settings → Battery → Background power management (iManager → App management → Autostart / Allow high background power). Without it the system may kill the app even with battery optimisation ignored.</string>
 </resources>

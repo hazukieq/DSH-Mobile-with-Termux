@@ -46,6 +46,8 @@ object ProgressHub {
     @Volatile private var appVisible = false
     @Volatile private var lastPublishAt = 0L
     @Volatile private var doneClearRunnable: Runnable? = null
+    /** 后台有任务在跑时抓一个 PARTIAL_WAKE_LOCK，减少 Doze/省电策略把引擎冻死的概率。 */
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     fun mode(ctx: Context): String =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_MODE, MODE_NOTIFY)
@@ -114,6 +116,9 @@ object ProgressHub {
         if (!force && System.currentTimeMillis() - lastPublishAt < 600L) return
         lastPublishAt = System.currentTimeMillis()
 
+        // 后台有任务在跑：保持一个短暂的 partial wakelock（屏幕熄灭/Doze 时引擎仍能继续跑）
+        updateWakeLock(ctx, snap)
+
         // App 在前台且不是完成/错误：不打扰（回后台时 onAppVisibility 会补一次 force）
         if (appVisible && snap.kind != "done" && snap.kind != "error") {
             cancelNotification(ctx)
@@ -136,6 +141,25 @@ object ProgressHub {
             // 没有悬浮窗权限且没有无障碍 → 回退通知
         }
         publishNotification(ctx, snap)
+    }
+
+    private fun updateWakeLock(ctx: Context, snap: Snapshot) {
+        val running = !appVisible && (snap.kind == "thinking" || snap.kind == "tool" || snap.kind == "working")
+        runCatching {
+            if (running) {
+                if (wakeLock?.isHeld != true) {
+                    val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                    wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "dsh:background-task").apply {
+                        setReferenceCounted(false)
+                        acquire(15 * 60 * 1000L)
+                    }
+                    Log.i(TAG, "wakelock acquired (background task running)")
+                }
+            } else {
+                wakeLock?.let { if (it.isHeld) { it.release(); Log.i(TAG, "wakelock released") } }
+                wakeLock = null
+            }
+        }
     }
 
     private fun publishNotification(ctx: Context, snap: Snapshot) {
@@ -204,6 +228,7 @@ object ProgressHub {
     }
 
     fun clearAll(ctx: Context) {
+        runCatching { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
         cancelNotification(ctx)
         runCatching { StatusOverlay.hide(ctx) }
         last = null

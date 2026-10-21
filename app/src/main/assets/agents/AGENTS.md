@@ -303,6 +303,10 @@ tool step through `DshNative.progress(json)`; native `ProgressHub` shows it as a
 notification or floating window (settings → 后台进度提示). The layer works without accessibility -
 overlay uses SYSTEM_ALERT_WINDOW first and only falls back to the accessibility window. Never use
 `POST /overlay` as the only progress channel any more; it is merged into the same hub.
+Settings → 后台保活 requests battery-optimisation exemption and explains vendor limits; while a
+task runs in the background ProgressHub holds a PARTIAL_WAKE_LOCK (15 min, renewed) to reduce
+Doze freezes - released on foreground/done. WebView renderer reclaim is recovered by rebuilding
+the WebView only (the engine keeps running).
 
 Node/pnpm on device: `dsh` is not on PATH - run
 `node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ...`; pnpm is not on PATH either,
