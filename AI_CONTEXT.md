@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **改为给 genui 打补丁（2026-10-22 第八十五轮，v93）**：用户要求「给 genui 打 patch 或看最新版，不能影响 WebUI 原本的」。查 npm：`dsh-genui` 最新仍是 0.3.1（与设备一致），无新版可升。
+  做法：新增 `DshPluginPatches.kt`，在 `EngineConfig.ensureAgentArtifacts` 每轮启动时对 `$DSH_HOME/profiles/*/node_modules/dsh-genui/lib/client.js` 做内容锚定补丁：锚点 `.vHCAGq_think{opacity:.85;font-size:.9em}` → 追加思考图标（引擎同款 IconThinkOutlineRegular path 作 mask，14px）+ 折叠 chevron 的 CSS，带 `/*dsh-mobile-genui-think*/` marker 幂等；锚点不存在（上游修了/升级改名）则自动跳过。**同时撤掉 mobile-ui 里 v92 加的全局思考 CSS**，App 层不再覆盖任何渲染。
+  验证平板：日志 `DshPluginPatches: genui thinking patch applied: .../dsh-genui/lib/client.js`；DOM 中 `details.vHCAGq_think > summary::before` 14×14 mask 生效；截图思考行显示图标+chevron；genui 重新启用（对照实验时曾临时关闭）。版本 1.3.63 / 303。
 - **「思考」缺图标（2026-10-22 第八十四轮，v92）**：平板截图里每个「思考」行只有 UA 默认 `▶`。DOM 取证：`details.vHCAGq_think > summary`（dsh-genui 插件渲染），类名来自 `dsh-genui/src/client/genui-assistant.module.css`，其 CSS 只有 `.vHCAGq_think{opacity:.85;font-size:.9em}`，没有图标/折叠样式 → 落到浏览器默认 marker。引擎自身 ReasoningRow 用的是 `IconThinkOutlineRegular`（16×16 outline，stroke-width 1），在同一页面 DOM 中能抓到已渲染的 svg 实例。
   修法：mobile-ui CSS（仅 `html[data-dsh-mobile]` 生效，桌面不动）给 `details[class*='_think'] > summary`：隐藏 marker、`display:flex`、`::before` 用引擎同款 think 图标做 mask（`-webkit-mask/mask` data URI，14×14，颜色取 label-tertiary）、`::after` 画一个旋转 chevron（`details[open]` 时旋转 90°）。
   实测平板：思考行左侧出现 outline 思考图标 + 右侧 chevron（截图确认），`::before` computed 14×14、mask URL 生效。版本 1.3.62 / 302。

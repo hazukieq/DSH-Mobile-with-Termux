@@ -1226,6 +1226,8 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
     fun ensureAgentArtifacts(ctx: android.content.Context) {
         runCatching { applyAgentGates(ctx, engineRoot(ctx)) }
             .onFailure { Log.w(TAG, "ensureAgentArtifacts failed: ${it.message}") }
+        // v1.3.63：给已安装的第三方插件打内容锚定补丁（genui 的思考行缺图标）。
+        DshPluginPatches.ensure(ctx)
     }
 
     /**
