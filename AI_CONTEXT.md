@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **首次初始化「预览版说明」对话框平板适配（2026-10-22 第八十轮，v88）**：用户在平板上实测首启，截图确认「预览版说明」弹窗被渲染成整页白板（内容顶到左上、按钮贴右上、下方大片空白）。DOM 取证：`[role=dialog][aria-modal=true]` 类 `_dialog_o6lrb_33 jLrgrW_dialog`，宽高 = 整屏 818x1213，内容 762 宽从 x=28 开始。
+  修法（只动这个文档型 modal，不改全局）：`narrow-welcome` 插件新增平板断点 `(min-width:600px) and (max-width:1100px)`，把 `jLrgrW_dialog` 变成居中卡片（宽度 min(92vw,640px)、高度自适应、圆角 20、阴影、内部滚动），`jLrgrW_content` 宽 100%。**踩坑**：普通 `[class*=...]` 选择器被上游高特异性 `!important` 规则压住（只有 transform 生效，width/top/left/radius 不生效）→ 改用 `html body div[role=dialog][aria-modal=true][class*=jLrgrW_dialog]` 提高特异性后才全生效。
+  实测平板：对话框 640x320 居中（x=89,y=447），圆角 20、阴影正常，截图确认。版本 1.3.58 / 298。
 - **纠正：只修 WebUI 首次初始化对话框（2026-10-22 第七十九轮，v86）**：我上一轮误把「第一次初始化的对话框别扭」理解成 WebUI 全局布局，改了 mobile-ui 的对话框/欢迎页/输入框 CSS 并被用户要求回退。处理：
   ① 已 `git checkout` 回退 `mobile-ui/client.js`，只保留用户此前要求的「平板竖屏才启用 mobile-ui / 横屏回原版」的方向门（isTabletScreen/isMobile/installOrientationGate），没有其它样式改动；也撤掉了误加的 `OnboardingActivity` 平板布局调整（该改动实际未落盘）。
   ② 真正的病灶：`narrow-welcome` 插件（WebUI 首次初始化的「开始使用 / 登录账号 / 填写 API Key」欢迎页与弹窗）的响应式断点是 `max-width: 720px`；平板竖屏 CSS 视口约 **817px**，落在桌面排版分支 —— 欢迎页 copy 块仍绝对定位 520px、1247px 插画不隐藏、dialog 描述仍 nowrap，所以显得别扭/裁切。改为 `max-width: 1100px`（桌面 >1100px 完全不受影响），平板竖屏即走原有的「居中列 + 隐藏插画 + dialog 文本换行」适配。
