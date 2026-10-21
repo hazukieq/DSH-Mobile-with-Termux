@@ -70,6 +70,8 @@ export function apply(ctx) {
         timer: null,
         finished: false,
         turn: -1,
+        status: 'idle',
+        lastPost: 0,
       }
       live.set(agent.id, s)
     }
@@ -105,6 +107,7 @@ export function apply(ctx) {
   const flush = (s, kind) => {
     const detail = render(s)
     if (!detail) return
+    s.lastPost = Date.now()
     post({
       kind: kind || 'thinking',
       session: s.id,
@@ -173,6 +176,32 @@ export function apply(ctx) {
       // 插件永远不能影响引擎主循环
     }
   })
+
+  // Agent 状态：running→idle 是「会话真的结束了」的最可靠信号。
+  // 之前只靠 assistant-stream 的 end 帧，遇到长工具/多 attempt 时可能漏掉，
+  // 导致浮窗卡在 thinking（用户实测：23s 完成但状态没变、内容卡一半）。
+  ctx.on('agent/status', ({ agent, status }) => {
+    try {
+      const s = stateOf(agent)
+      s.status = status
+      if (status === 'idle') {
+        if (s.timer) { clearTimeout(s.timer); s.timer = null }
+        flush(s, 'done')
+      } else {
+        schedule(s)
+      }
+    } catch (e) { /* ignore */ }
+  })
+
+  // 心跳：长时间工具调用期间没有 reasoning 增量时，也让浮窗有更新（避免看起来停滞）
+  setInterval(() => {
+    try {
+      const now = Date.now()
+      for (const s of live.values()) {
+        if (s.status === 'running' && !s.timer && now - s.lastPost > 2500) flush(s, 'thinking')
+      }
+    } catch (e) { /* ignore */ }
+  }, 1000).unref?.()
 
   // 持久事实：tool/call 补齐工具名与参数，tool/result 标记成功/失败
   ctx.on('session/event', (session, event) => {

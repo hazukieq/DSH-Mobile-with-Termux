@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v34 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v35 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -437,3 +437,9 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   (X-DSH-Token from DSH_BRIDGE_TOKEN). Multiple attempts in one turn are merged; the chain is kept
   after done; session titles are resolved natively from the engine projection cache. DOM scraping
   in the browser half is now a placeholder only.
+* Completion reliability (v1.4.2): the overlay used to stall mid-chain when a turn ended,
+  because only the assistant-stream `end` frame triggered a final flush and an identical payload
+  could be deduplicated. The host plugin now also listens to `agent/status` and flushes a final
+  `done` state on `idle`, sends a 2.5s heartbeat while running (so long tool calls do not look
+  frozen), and the Android side never deduplicates done/error snapshots - the card keeps the full
+  chain and switches to 已完成 with elapsed time.

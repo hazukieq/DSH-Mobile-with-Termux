@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **会话结束浮窗卡半截/状态不变 → 修（2026-10-22 第一百零一轮，v129）**：用户实测 23s 会话结束后浮窗停在 thinking、内容卡一半。
+  根因两层：① 收尾只靠 `assistant-stream` 的 `end` 帧，长工具/多 attempt 场景可能漏掉最后一次 flush；② 原生 `ProgressHub.update` 对相同 kind/detail/elapsed 去重，最后一次 done 与上一帧内容相同时被丢弃。
+  修法：host 插件同时监听 `ctx.on('agent/status')`，状态变 `idle` 时强制 flush `done`；运行中每 2.5s 心跳 flush（长工具期间不显得停滞）；原生对 `done/error` 快照**永不去重**，保证状态一定切到「已完成」。
+  实测：多命令回合（pwd/ls/uname，约 6s）结束后浮窗标题显示「查询 deepseek 和 dsh · 已完成 · 6s」，链路完整保留（截图）。logcat 末尾连续 `kind=done ... len=1292`。版本 1.4.2 / 342；doc v35、dotfiles VERSION 42。
 - **改用 DSH 官方插件 API 推链路（2026-10-22 第一百轮，v128）**：主人指出 DSH 是开源的。查 GitHub（deepseek-ai/deepseek-harness）确认官方文档：
   `docs/cookbook/extension-cookbook.md` 的 UI 插件范式 = `ctx.on('agent/assistant-stream', ({agent, frame}) => …)` + `ctx.on('session/event', ...)`；`docs/subsystems/core.md` 给出 `AssistantStreamFrame`（start/chunk/end）；`docs/subsystems/llm-streaming.md` 给出 `StreamChunk`（block-start / text-delta / reasoning-delta / tool-call-delta / block-end / usage / finish）；`session.md` 给出 `tool/call` / `tool/result`。
   实现：`mobile-progress/index.js`（host 侧）改为订阅上述事件，把 reasoning / tool-call / tool-result / answer 组织成带标签链路，节流 250ms POST 到 AgentBridge `POST /overlay`（`X-DSH-Token: $DSH_BRIDGE_TOKEN`，engine env 已注入）；`AgentBridge.overlay` 增加结构化分支（kind/session/detail/elapsed → `ProgressHub.update`）；浏览器侧 client.js 退化为 `__ModuleLoader__` 占位（不再抓 DOM，之前 ESM 写法导致 import failed）。附加：同一 turn 多 attempt 合并（只在新 turn 重置链路）、done 后保留链路不闪「对话完成」、会话标题由原生 `SessionReader` 解析（插件只带 session id）。
