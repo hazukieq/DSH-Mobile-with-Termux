@@ -102,6 +102,31 @@ _feed_manifest() {
 
 # ── 引擎层操作 ───────────────────────────────────────────────────────────────
 _restart_engine() {
+  local delay_ms="${1:-400}"
+  # v1.7.1：优先调用 **App 提供的受控重启**（AgentBridge POST /engine/restart
+  # → EngineSupervisor.restart()）。旧实现直接 pkill，属于非受控重启：token/WebView
+  # 重载时序不可控，也容易和外部进程抢端口。
+  #
+  # 关键：重启会杀掉**调用方自己**（门脚本跑在引擎进程里），所以这里让 App
+  # 延迟执行重启（默认 8s），命令先把结果打印出来、agent 先回复，再真正停引擎。
+  local helper="$DIR/_dsh_http.sh"
+  if [ -r "$helper" ]; then
+    # shellcheck disable=SC1090
+    . "$helper"
+    local body="{\"delayMs\":$delay_ms}"
+    if dsh_http POST /engine/restart "$body" >/dev/null 2>&1; then
+      if [ "$delay_ms" -gt 0 ]; then
+        echo "restart: scheduled via app supervisor in $((delay_ms / 1000))s (current turn will be interrupted)"
+        echo "restart: the engine will stop/start by itself; do not run another restart"
+      else
+        echo "restart: requested via app supervisor (POST /engine/restart)"
+      fi
+      return 0
+    fi
+    echo "restart: bridge restart failed; falling back to supervisor-less kill" >&2
+  else
+    echo "restart: http helper missing ($helper)" >&2
+  fi
   pkill -f "$P/bin/node" 2>/dev/null || true
   echo "restart: engine killed; waiting for the app guardian"
 }
@@ -276,7 +301,7 @@ case "${1:-status}" in
   stage)  shift; _cmd_stage "$@" ;;
   apply)  _cmd_apply ;;
   rollback) _cmd_rollback ;;
-  restart) _restart_engine; _wait_healthy 120; exit 0 ;;
+  restart) _restart_engine 8000; exit 0 ;;
   help|-h|--help) _usage ;;
   *) _die "unknown command: $1 (try dsh-update help)" 2 ;;
 esac

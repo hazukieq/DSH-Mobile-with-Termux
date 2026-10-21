@@ -74,7 +74,9 @@ build instructions belong there; upstream App issues belong to Soodok's reposito
 
 Use a controlled restart only; never kill the engine process yourself.
 
-- `dsh-update restart` — preferred. Waits for the app guardian and performs a health check.
+- `dsh-update restart` — preferred. It asks the app supervisor to restart and **schedules the
+  restart ~8 seconds later**, so the command can print its result and you can reply before the
+  engine stops. The current turn is still interrupted; tell the user first.
 - `POST /engine/restart` — Android bridge equivalent of Settings → 重启引擎 (202, asynchronous).
 - Do **not** `killx`/`pkill` the managed engine, and do **not** use the plugin market's
   "立即重启" button: that helper SIGTERMs the host and spawns its own detached `dsh web`, which

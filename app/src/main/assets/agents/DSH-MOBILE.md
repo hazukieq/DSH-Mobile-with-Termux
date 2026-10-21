@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v46 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v47 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -64,7 +64,8 @@ Groups (see the actual handlers for params):
   `/memory/confirm`, `/memory/clear`.
 - App/plugins: `GET /plugin/list`, `POST /plugin/install`, `GET /notif`, `GET /diag`,
   `POST /notify`, `GET|POST /say`, `POST /engine/restart`.
-  Restart policy: prefer `dsh-update restart` (waits for the guardian + health check) or
+  Restart policy: prefer `dsh-update restart` (it schedules the restart via the app supervisor
+  ~8s later so the command output and your reply survive; the turn is still interrupted) or
   `POST /engine/restart` (202, same as Settings → 重启引擎). Never kill the managed engine or
   use the plugin market's "立即重启" button - that spawns a detached `dsh web` that races the
   managed engine for port 3080. A restart ends the current turn, so warn the user first.

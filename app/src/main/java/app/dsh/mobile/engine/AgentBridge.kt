@@ -536,7 +536,7 @@ object AgentBridge {
             method == "POST" && path == "/runtime/stage" -> runtimeStage(ctx, body)
             method == "POST" && path == "/runtime/apply" -> runtimeApply(ctx)
             method == "POST" && path == "/runtime/rollback" -> runtimeRollback(ctx)
-            method == "POST" && path == "/engine/restart" -> engineRestart(ctx)
+            method == "POST" && path == "/engine/restart" -> engineRestart(ctx, body)
             else -> 404 to """{"ok":false,"error":"unknown route"}"""
         }
     }
@@ -738,10 +738,26 @@ object AgentBridge {
         return acceptedOrRejected("rollback", err)
     }
 
-    /** POST /engine/restart → 202（等价设置页「重启引擎」） */
-    private fun engineRestart(ctx: Context): Pair<Int, String> {
-        val err = RuntimeUpdater.restart(ctx)
-        return acceptedOrRejected("restart", err)
+    /**
+     * POST /engine/restart → 202（等价设置页「重启引擎」）。
+     *
+     * v1.7.0：延迟 ~500ms 再真正重启。调用方常是引擎子进程里的门脚本（dsh-update），
+     * HTTP 202 必须先写回、脚本先打印，再停引擎；立刻 stop 会把请求方一起带走，
+     * 表现为「命令没反应」。设置页按钮同样走这里，500ms 无感。
+     */
+    private fun engineRestart(ctx: Context, body: String = ""): Pair<Int, String> {
+        // v1.7.1：支持 body {"delayMs":N}（0..30000，默认 500）。dsh-update 用 8000ms，
+        // 让门脚本先打印结果、agent 先回复，再真正停引擎——否则调用方随引擎一起被杀，
+        // 用户看到的就是「命令没反应」。
+        val delayMs = runCatching {
+            org.json.JSONObject(body.ifBlank { "{}" }).optLong("delayMs", 500L)
+        }.getOrDefault(500L).coerceIn(0L, 30_000L)
+        Thread({
+            if (delayMs > 0) Thread.sleep(delayMs)
+            runCatching { RuntimeUpdater.restart(ctx) }
+                .onFailure { Log.w(TAG, "delayed engine restart failed: ${it.message}") }
+        }, "engine-restart-delay").apply { isDaemon = true; start() }
+        return acceptedOrRejected("restart", null)
     }
 
     /** 202 = 已受理；409 = 被拒绝（忙 / 无暂存 / 无旧版 …），错误文本原样给调用方 */

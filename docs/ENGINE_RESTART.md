@@ -8,8 +8,8 @@
 | 路径 | 行为 | 备注 |
 |---|---|---|
 | 设置页「重启引擎」 | `EngineSupervisor.restart()`：停旧引擎 → 重新 spawn → 健康检查 → WebView 换新 token 重载 | 当前回合会被中断 |
-| `POST /engine/restart`（AgentBridge） | 等价设置页，返回 202 异步执行 | agent 工具链自动带 token |
-| `dsh-update restart`（agent 文档推荐） | 等 App guardian 执行重启并做健康检查 | 适合 agent 主动重启 |
+| `POST /engine/restart`（AgentBridge） | 等价设置页，返回 202 异步执行；body 可带 `{"delayMs":N}` | agent 工具链自动带 token |
+| `dsh-update restart`（agent 文档推荐） | 调 `POST /engine/restart`（delayMs=8000）→ 先打印结果、agent 先回复，8 秒后引擎才真正重启 | 适合 agent 主动重启；不会「命令没反应」 |
 | 通知栏「退出」 | 停止引擎/代理/推理子进程，写 `user_exited` 标记 | 之后**不会**自动拉起，直到用户再次打开 App |
 
 不要用 `killx`/`pkill` 杀受管引擎：supervisor 会自愈重启，但属于非受控路径，容易与外来进程抢端口。
@@ -50,6 +50,20 @@ dsh: fatal uncaught exception: Error: cannot get required service "loader" in in
 - `loaderOf(ctx)`：`ctx.get('loader')` 与 `ctx.loader` 两条路径都 try/catch，并先检查 scope 已 disposed；
 - `check()` 全程 try/catch，异常只停表；
 - `ctx.effect(() => stop)` + 返回 disposer 双保险，disposal 后不再有 timer 回调。
+
+## 3.5 为什么重启要延迟 8 秒（v1.7.2）
+
+`dsh-update` 是引擎的子进程：若立刻停引擎，调用它的 agent 会随引擎一起被杀，用户看到的就是
+「命令没响应、任务已停止」。现在门脚本请求 App 延迟重启：
+
+```
+restart: scheduled via app supervisor in 8s (current turn will be interrupted)
+restart: the engine will stop/start by itself; do not run another restart
+```
+
+随后 `EngineSupervisor` 在 8 秒后执行热重启（日志：`hot restart requested by user` →
+`previous engine stopped` → `engine healthy on :3080`）。设置页的「重启引擎」仍走默认 500ms
+延迟（无感）。
 
 ## 4. 重启后的 token 与 WebView
 
