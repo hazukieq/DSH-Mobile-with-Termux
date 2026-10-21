@@ -110,13 +110,42 @@ object StatusOverlay {
      * 显示悬浮窗。
      * @param svc 无障碍服务实例（提供 overlay 窗口类型）
      */
+    /** 无障碍服务路径（历史行为）：用 TYPE_ACCESSIBILITY_OVERLAY，不需要悬浮窗权限。 */
     fun show(svc: AccessibilityService) {
+        val ctx = svc.applicationContext
+        val w = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        startOverlay(ctx, w, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+    }
+
+    /**
+     * v1.3.68：与无障碍解耦的显示入口（后台进度提示用）。
+     *
+     * 优先用 **应用悬浮窗**（TYPE_APPLICATION_OVERLAY + SYSTEM_ALERT_WINDOW 权限），
+     * 这样没开无障碍也能显示；没有悬浮窗权限但无障碍在跑时回退到无障碍窗口。
+     * @return true 表示窗口已创建（或已存在）。
+     */
+    fun show(ctx: Context): Boolean {
+        if (root != null) return true
+        val appOverlay = runCatching { android.provider.Settings.canDrawOverlays(ctx) }.getOrDefault(false)
+        val svc = DshAccessibilityService.instance
+        if (appOverlay) {
+            val w = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            startOverlay(ctx, w, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+            return true
+        }
+        if (svc != null) {
+            val w = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            startOverlay(svc.applicationContext, w, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+            return true
+        }
+        return false
+    }
+
+    private fun startOverlay(ctx: Context, w: WindowManager, windowType: Int) {
         main {
             if (root != null || hidden) return@main
             try {
-                val ctx = svc.applicationContext
                 appCtx = ctx
-                val w = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 wm = w
 
                 val view = LayoutInflater.from(ctx).inflate(R.layout.overlay_status, null)
@@ -147,7 +176,7 @@ object StatusOverlay {
                 val p = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    windowType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                     PixelFormat.TRANSLUCENT,
@@ -590,10 +619,19 @@ object StatusOverlay {
     }
 
     fun hide(svc: AccessibilityService?) {
+        hideInternal()
+    }
+
+    /** v1.3.68：与无障碍解耦的隐藏入口。 */
+    fun hide(ctx: Context?) {
+        hideInternal()
+    }
+
+    private fun hideInternal() {
         main {
             val r = root ?: return@main
             runCatching {
-                (svc?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)?.removeView(r)
+                wm?.removeView(r)
             }
             root = null; params = null; statusText = null; actionText = null; statusDot = null
             hidden = true

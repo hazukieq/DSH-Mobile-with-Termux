@@ -183,6 +183,8 @@ class MainActivity : Activity() {
             runCatching { webView.onResume() }
             runCatching { webView.resumeTimers() }
         }
+        // v1.3.68：回到前台收起后台进度提示
+        runCatching { ProgressHub.onAppVisibility(this, true) }
         // Web 内核版本门禁（v1.2.100，酷安用户反馈引出的需求）：
         // WebView < Chrome 85 时引擎前端必白屏（??= 等解析期语法 polyfill 补不了），
         // 与其让用户看「进程异常退出/白屏」无限循环，不如先检测、给出明确升级指引，
@@ -234,6 +236,8 @@ class MainActivity : Activity() {
         // 不在前台就不再提供「App 内部截图」窗口
         app.dsh.mobile.engine.AppShot.unregister(this)
         app.dsh.mobile.engine.AppState.onPause(this)
+        // v1.3.68：离开 App 后展示当前进度（通知/悬浮窗）
+        runCatching { ProgressHub.onAppVisibility(this, false) }
         // 刻意不调用 super.onPause() 里的 WebView 暂停逻辑；
         // 同时显式 resumeTimers，确保切后台瞬间定时器仍在跑。
         if (::webView.isInitialized) {
@@ -426,6 +430,9 @@ class MainActivity : Activity() {
             loadWithOverviewMode = true
             applyZoomControls(desktopMode)
         }
+        // v1.3.68：WebUI 的 mobile-progress 插件通过这个桥把当前思考/步骤报给原生，
+        // 不需要无障碍就能在后台/通知栏展示进度。
+        runCatching { webView.addJavascriptInterface(ProgressJsBridge(this), "DshNative") }
         // ── WebView 诊断（v1.2.49）：用户报「用不了」时能拿到确凿信息 ────────────
         // 背景：华为 Mate40 报 `AbortSignal.any is not a function`、另有 Android 16 用户
         // 报失败，但 App 此前既不捕获 WebView 错误也不转发 console，排查只能靠猜。
@@ -1881,5 +1888,22 @@ class MainActivity : Activity() {
                 "var cw=document.documentElement.clientWidth||412;" +
                 "m.setAttribute('content','width='+W+', initial-scale='+(cw/W).toFixed(4)+', maximum-scale=5, user-scalable=yes');" +
                 "})()"
+    }
+
+    /** JS Bridge：只暴露后台进度这一个能力（页面固定为 127.0.0.1:3080）。 */
+    private class ProgressJsBridge(private val ctx: android.content.Context) {
+        @android.webkit.JavascriptInterface
+        fun progress(payload: String) {
+            runCatching { ProgressHub.onJsProgress(ctx, payload) }
+        }
+
+        /** 打开原生设置页（v1.3.70）：WebUI 侧可用来直达后台进度等设置。 */
+        @android.webkit.JavascriptInterface
+        fun openSettings() {
+            runCatching {
+                ctx.startActivity(android.content.Intent(ctx, SettingsActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
     }
 }

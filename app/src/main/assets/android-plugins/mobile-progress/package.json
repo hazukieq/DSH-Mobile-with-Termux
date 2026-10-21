@@ -1,0 +1,22 @@
+{
+  "name": "dsh-mobile-progress",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reports the current thinking / step from the WebUI to the Android app (DshNative bridge) so the background notification or floating window can show progress without accessibility.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "default": "./index.js"
+    },
+    "./client": {
+      "default": "./client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  }
+}

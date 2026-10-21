@@ -1,6 +1,13 @@
 # AI_CONTEXT
 
 ## Current progress
+- **后台进度提示：通知/悬浮窗，不再依赖无障碍（2026-10-22 第八十八轮，v100）**：按用户确认的方案实现（默认通知、锁屏隐藏正文、通知只放「打开」、悬浮窗改用应用悬浮窗替代纯无障碍窗口）。
+  ① 新增 `ProgressHub.kt`：状态机（thinking/tool/done/error）+ 600ms 节流 + 前台抑制（回后台补发）+ 通知（渠道 dsh_progress、IMPORTANCE_LOW、VISIBILITY_PRIVATE、单一「打开」action、完成后 2 分钟自动清除）+ 悬浮窗分发（无权限时回退通知）+ 与 AgentBridge `/overlay` 合流；
+  ② 新增注入插件 `assets/android-plugins/mobile-progress/`（宿主 no-op + client 端 800ms 轮询 DOM：会话标题、最新「思考」正文、最新工具 label、停止按钮判断 running；通过 `DshNative.progress(json)` 上报）；EngineConfig overlay + 部署清单同步（package.json 必须带 type/main/exports，否则引擎启动失败——本次踩到并修复）；
+  ③ `MainActivity` 注册 JS Bridge `DshNative`（progress + openSettings）、onResume/onPause 同步前台状态；
+  ④ `StatusOverlay` 与无障碍解耦：新增 `show(ctx)`/`hide(ctx)`，优先 `TYPE_APPLICATION_OVERLAY`（SYSTEM_ALERT_WINDOW），无权限再回退无障碍窗口/通知；
+  ⑤ 设置页新增「后台进度提示」区块（显示方式/通知权限/悬浮窗权限/无障碍/预览一次），三语言字符串。
+  实测平板（未开无障碍）：通知模式后台显示「任务进度 · 思考中 …」；悬浮窗模式后台在桌面右上角显示浮窗（`正在分析项目结构并整理方案…` + 标题行）；设置区块渲染正常。版本 1.3.70 / 310；doc v22、AGENTS seed 75、dotfiles VERSION 29。
 - **genui 思考行颜色对齐（2026-10-22 第八十七轮，v97）**：用户指出「颜色不对」。实测对照：引擎原 ReasoningRow 的 summary 颜色 = `rgb(129,133,140)` = `--dsw-alias-label-tertiary`；genui 的 `.vHCAGq_think` 用 label-primary(`rgb(15,17,21)`) + `opacity:.85`，看起来偏黑。
   修法（仍在 genui 补丁块内）：`.vHCAGq_think{color:var(--dsw-alias-label-tertiary,#81858c);opacity:1}`；图标 mask 背景明确用 label-tertiary（不用 currentColor，避免个别时机解析成透明）；正文 `p/li/span/strong/em` 颜色 `!important` 设为 label-tertiary（markdown 容器有更高特异性/显式颜色，必须 important 才能盖住）。
   实测平板：summary/正文 p 颜色 = rgb(129,133,140)，图标可见、正文缩进 22px、13px/20px，与周围原 WebUI 文本一致（截图确认）。版本 1.3.67 / 307。

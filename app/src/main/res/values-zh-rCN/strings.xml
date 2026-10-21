@@ -519,4 +519,24 @@ dsh：%2$s
     <string name="ob_all_files_allow">去授权</string>
     <string name="ob_all_files_skip">暂不</string>
     <string name="ob_all_files_not_granted">未授予文件访问权限，可稍后在「设置 → 权限中心」开启</string>
+    <string name="progress_section_title">后台进度提示</string>
+    <string name="progress_row_mode">显示方式</string>
+    <string name="progress_mode_off">关闭</string>
+    <string name="progress_mode_notify">通知</string>
+    <string name="progress_mode_overlay">悬浮窗</string>
+    <string name="progress_channel">任务进度</string>
+    <string name="progress_state_thinking">思考中</string>
+    <string name="progress_state_working">执行中</string>
+    <string name="progress_state_done">已完成</string>
+    <string name="progress_state_error">出错</string>
+    <string name="progress_state_idle">空闲</string>
+    <string name="progress_open">打开</string>
+    <string name="progress_preview">预览一次</string>
+    <string name="progress_perm_notify">通知权限</string>
+    <string name="progress_perm_overlay">悬浮窗权限</string>
+    <string name="progress_perm_a11y">无障碍（可选）</string>
+    <string name="progress_granted">已授权</string>
+    <string name="progress_not_granted">未授权</string>
+    <string name="progress_preview_text">示例进度：正在读取文件、执行命令…</string>
+    <string name="progress_enabled_hint">离开 App 后仍能看到当前思考/执行到哪一步。</string>
 </resources>

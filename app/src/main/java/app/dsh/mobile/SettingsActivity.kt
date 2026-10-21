@@ -35,6 +35,13 @@ import app.dsh.mobile.engine.LanWebProxy
  */
 class SettingsActivity : Activity() {
 
+    // v1.3.68 后台进度提示（通知/悬浮窗）设置项
+    private var progressModeValue: TextView? = null
+    private var progressNotifyValue: TextView? = null
+    private var progressOverlayValue: TextView? = null
+    private var progressA11yValue: TextView? = null
+
+
     /** 屏幕朝向偏好（v1.2.120 三态） */
     private var orientMode: OrientationMode = OrientationMode.PORTRAIT
     private var pageScale = DEFAULT_PAGE_SCALE
@@ -61,6 +68,7 @@ class SettingsActivity : Activity() {
         // 设置页固定竖屏：即使主界面开了横屏模式，设置页也不跟随旋转
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         setContentView(R.layout.activity_settings)
+        addProgressSection()
 
         val prefs = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
         orientMode = OrientationPrefs.get(this)
@@ -341,6 +349,7 @@ class SettingsActivity : Activity() {
 
     /** 全量刷新：朝向值 + 缩放值 + 权限状态行 + 无障碍 */
     private fun refreshAll() {
+        refreshProgressSection()
         val prefs = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
         orientMode = OrientationPrefs.get(this)
         pageScale = prefs.getInt(KEY_PAGE_SCALE, DEFAULT_PAGE_SCALE)
@@ -773,6 +782,131 @@ class SettingsActivity : Activity() {
     }
 
     /** dp → px 小工具（对话框内边距用） */
+    /**
+     * v1.3.68：后台进度提示设置区。
+     *
+     * 显示方式：关闭 / 通知（默认，无需无障碍）/ 悬浮窗（优先应用悬浮窗，无权限回退通知）。
+     * 下面三行只展示权限状态，点击直达对应系统页；「预览一次」用示例进度验证通知是否正常。
+     */
+    private fun addProgressSection() {
+        val container = findViewById<LinearLayout>(R.id.settingsContainer) ?: return
+        container.addView(TextView(this).apply {
+            text = getString(R.string.progress_section_title)
+            textSize = 13f
+            setTextColor(0xFF7DD3FC.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(8), dp(18), dp(8), dp(8))
+        })
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_card)
+        }
+        fun valueView(): TextView = TextView(this).apply {
+            textSize = 14f
+            setTextColor(0xFF8A94A3.toInt())
+        }
+        fun row(title: String, value: TextView, onClick: (() -> Unit)?): LinearLayout {
+            return LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                if (onClick != null) {
+                    val tv = android.util.TypedValue()
+                    theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
+                    background = getDrawable(tv.resourceId)
+                    setOnClickListener { onClick() }
+                }
+                addView(TextView(this@SettingsActivity).apply {
+                    text = title
+                    textSize = 16f
+                    setTextColor(0xFFFFFFFF.toInt())
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(value)
+            }
+        }
+
+        val modeVal = valueView().also { progressModeValue = it }
+        card.addView(row(getString(R.string.progress_row_mode), modeVal) { pickProgressMode() })
+
+        val notifyVal = valueView().also { progressNotifyValue = it }
+        card.addView(row(getString(R.string.progress_perm_notify), notifyVal) {
+            runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+            }
+        })
+
+        val overlayVal = valueView().also { progressOverlayValue = it }
+        card.addView(row(getString(R.string.progress_perm_overlay), overlayVal) {
+            runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:$packageName")))
+            }
+        })
+
+        val a11yVal = valueView().also { progressA11yValue = it }
+        card.addView(row(getString(R.string.progress_perm_a11y), a11yVal) {
+            runCatching { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        })
+
+        card.addView(row(getString(R.string.progress_preview), valueView()) {
+            ProgressHub.preview(this)
+            Toast.makeText(this, getString(R.string.progress_preview_text), Toast.LENGTH_SHORT).show()
+        })
+        container.addView(card)
+    }
+
+    private fun pickProgressMode() {
+        val modes = arrayOf(
+            ProgressHub.MODE_OFF to getString(R.string.progress_mode_off),
+            ProgressHub.MODE_NOTIFY to getString(R.string.progress_mode_notify),
+            ProgressHub.MODE_OVERLAY to getString(R.string.progress_mode_overlay),
+        )
+        val current = ProgressHub.mode(this)
+        val labels = modes.map { it.second }.toTypedArray()
+        val checked = modes.indexOfFirst { it.first == current }.coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.progress_row_mode))
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                val mode = modes[which].first
+                ProgressHub.setMode(this, mode)
+                progressModeValue?.text = ProgressHub.modeLabel(this, mode)
+                if (mode == ProgressHub.MODE_OVERLAY &&
+                    !android.provider.Settings.canDrawOverlays(this)
+                ) {
+                    Toast.makeText(this, getString(R.string.progress_not_granted), Toast.LENGTH_LONG).show()
+                    runCatching {
+                        startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            android.net.Uri.parse("package:$packageName")))
+                    }
+                }
+                if (mode == ProgressHub.MODE_NOTIFY) requestNotificationPermissionIfNeeded()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4301) }
+        }
+    }
+
+    private fun refreshProgressSection() {
+        val mode = ProgressHub.mode(this)
+        progressModeValue?.text = ProgressHub.modeLabel(this, mode)
+        val granted = getString(R.string.progress_granted)
+        val denied = getString(R.string.progress_not_granted)
+        progressNotifyValue?.text = if (ProgressHub.notificationsEnabled(this)) granted else denied
+        progressOverlayValue?.text =
+            if (android.provider.Settings.canDrawOverlays(this)) granted else denied
+        progressA11yValue?.text = if (DshAccessibilityService.isEnabled()) granted else denied
+    }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     // ================= 权限中心：运行权限模式 =================

@@ -529,4 +529,24 @@ Engine: %6$s</string>
     <string name="ob_all_files_allow">Zugriff erlauben</string>
     <string name="ob_all_files_skip">Später</string>
     <string name="ob_all_files_not_granted">Dateizugriff nicht erteilt — später unter Einstellungen → Berechtigungen möglich</string>
+    <string name="progress_section_title">Hintergrundfortschritt</string>
+    <string name="progress_row_mode">Anzeige</string>
+    <string name="progress_mode_off">Aus</string>
+    <string name="progress_mode_notify">Benachrichtigung</string>
+    <string name="progress_mode_overlay">Schwebefenster</string>
+    <string name="progress_channel">Aufgabenfortschritt</string>
+    <string name="progress_state_thinking">Denkt nach</string>
+    <string name="progress_state_working">Läuft</string>
+    <string name="progress_state_done">Fertig</string>
+    <string name="progress_state_error">Fehler</string>
+    <string name="progress_state_idle">Leerlauf</string>
+    <string name="progress_open">Öffnen</string>
+    <string name="progress_preview">Vorschau</string>
+    <string name="progress_perm_notify">Benachrichtigungsrecht</string>
+    <string name="progress_perm_overlay">Overlay-Recht</string>
+    <string name="progress_perm_a11y">Bedienungshilfen (optional)</string>
+    <string name="progress_granted">Erteilt</string>
+    <string name="progress_not_granted">Nicht erteilt</string>
+    <string name="progress_preview_text">Beispiel: Dateien lesen, Befehl ausführen…</string>
+    <string name="progress_enabled_hint">Zeigt nach dem Verlassen der App weiterhin den aktuellen Gedankengang/Schritt.</string>
 </resources>

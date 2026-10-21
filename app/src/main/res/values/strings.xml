@@ -519,4 +519,24 @@ engine: %6$s</string>
     <string name="ob_all_files_allow">Grant access</string>
     <string name="ob_all_files_skip">Not now</string>
     <string name="ob_all_files_not_granted">File access not granted — you can enable it later in Settings → Permissions</string>
+    <string name="progress_section_title">Background progress</string>
+    <string name="progress_row_mode">Show progress</string>
+    <string name="progress_mode_off">Off</string>
+    <string name="progress_mode_notify">Notification</string>
+    <string name="progress_mode_overlay">Floating window</string>
+    <string name="progress_channel">Task progress</string>
+    <string name="progress_state_thinking">Thinking</string>
+    <string name="progress_state_working">Working</string>
+    <string name="progress_state_done">Done</string>
+    <string name="progress_state_error">Error</string>
+    <string name="progress_state_idle">Idle</string>
+    <string name="progress_open">Open</string>
+    <string name="progress_preview">Preview</string>
+    <string name="progress_perm_notify">Notification permission</string>
+    <string name="progress_perm_overlay">Overlay permission</string>
+    <string name="progress_perm_a11y">Accessibility (optional)</string>
+    <string name="progress_granted">Granted</string>
+    <string name="progress_not_granted">Not granted</string>
+    <string name="progress_preview_text">Sample progress: reading files, running a command…</string>
+    <string name="progress_enabled_hint">Keeps the current thinking / step visible after you leave the app.</string>
 </resources>

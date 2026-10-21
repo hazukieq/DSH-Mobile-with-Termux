@@ -1,5 +1,7 @@
 package app.dsh.mobile.engine
 
+import app.dsh.mobile.ProgressHub
+
 import android.content.Context
 import android.app.Notification
 import android.app.NotificationChannel
@@ -508,7 +510,7 @@ object AgentBridge {
             method == "POST" && path == "/idle" -> idle(body)
             method == "POST" && path == "/batch" -> batch(body)
             method == "GET" && path == "/interference" -> interference(query)
-            method == "POST" && path == "/overlay" -> overlay(body)
+            method == "POST" && path == "/overlay" -> overlay(ctx, body)
             method == "POST" && path == "/launch" -> launch(ctx, body)
             method == "POST" && path == "/launch-intent" -> launchIntent(ctx, body)
             method == "POST" && path == "/tap-id" -> tapId(body)
@@ -2756,7 +2758,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      * automatically when the accessibility service connects;
      * 本端点用于更新内容；`hide:true` 尊重用户不想看的选择。
      */
-    private fun overlay(body: String): Pair<Int, String> {
+    private fun overlay(ctx: android.content.Context, body: String): Pair<Int, String> {
         return try {
             val obj = JSONObject(body)
             if (obj.optBoolean("hide", false)) {
@@ -2766,6 +2768,13 @@ document.getElementById('api').textContent = checks.map(function(c){
             obj.optString("status").takeIf { it.isNotBlank() }?.let { StatusOverlay.setStatus(it) }
             obj.optString("action").takeIf { it.isNotBlank() }?.let { StatusOverlay.setAction(it) }
             if (obj.optBoolean("complete", false)) StatusOverlay.flashCompleteDefault()
+            // v1.3.68：同一份进度也进入后台提示（通知/悬浮窗），不再依赖无障碍
+            ProgressHub.onAgentProgress(
+                ctx,
+                obj.optString("status").takeIf { it.isNotBlank() },
+                obj.optString("action").takeIf { it.isNotBlank() },
+                obj.optBoolean("complete", false),
+            )
             200 to """{"ok":true,"available":${StatusOverlay.isAvailable()}}"""
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"${e.message}"}"""

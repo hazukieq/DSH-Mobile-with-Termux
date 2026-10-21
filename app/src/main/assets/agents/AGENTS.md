@@ -298,6 +298,12 @@ flag/restart is needed; `dsh-mobile cdp off` (opt-out file) + restart disables i
 
 Renderer console errors also appear in logcat under the `chromium` tag.
 
+Background progress (v1.3.68): an injected `mobile-progress` plugin posts the current thinking /
+tool step through `DshNative.progress(json)`; native `ProgressHub` shows it as an ongoing
+notification or floating window (settings → 后台进度提示). The layer works without accessibility -
+overlay uses SYSTEM_ALERT_WINDOW first and only falls back to the accessibility window. Never use
+`POST /overlay` as the only progress channel any more; it is merged into the same hub.
+
 Node/pnpm on device: `dsh` is not on PATH - run
 `node "$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ...`; pnpm is not on PATH either,
 so use Corepack's entry `node "$PREFIX/lib/node_modules/corepack/dist/pnpm.js"` (or a

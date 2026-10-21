@@ -646,6 +646,13 @@ object EngineConfig {
             |    - id: android-narrow-welcome
             |      name: ./android-plugins/narrow-welcome/index.js
             |
+            |# v1.3.68 background progress: watch the current session DOM (thinking / step)
+            |# and report it to native through DshNative for the notification / floating
+            |# window. No-op in a plain browser where DshNative is absent. (ASCII only.)
+            |- insert:
+            |    - id: mobile-progress
+            |      name: ./android-plugins/mobile-progress/index.js
+            |
             |""".trimMargin()
         runCatching {
             if (!f.isFile || f.readText() != body) f.writeText(body)
@@ -667,7 +674,7 @@ object EngineConfig {
             // 新增插件的步骤：① 在 assets 建目录（含这三个文件）
             //               ② 在此列表追加目录名
             //               ③ 在 overlay 的 insert 段追加一条 entry（指向 index.js）
-            listOf("narrow-welcome", "mobile-ui").forEach { pkg ->
+            listOf("narrow-welcome", "mobile-ui", "mobile-progress").forEach { pkg ->
                 listOf("package.json", "index.js", "client.js").forEach { fileName ->
                     val src = ctx.assets.open("android-plugins/$pkg/$fileName")
                         .use { it.readBytes() }

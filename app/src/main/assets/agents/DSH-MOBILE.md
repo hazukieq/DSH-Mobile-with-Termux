@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v21 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v22 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -366,3 +366,18 @@ Notes:
   `http://127.0.0.1:3080/api/...` with `content-type: application/json` and
   `origin: http://127.0.0.1:3080`. An `application:"applied"` result means HMR took it;
   `restart-required` means the engine must be restarted.
+
+### Background progress (notification / floating window)
+
+v1.3.68 adds a background progress layer that does **not** require accessibility:
+
+* a small injected client plugin (`mobile-progress`) watches the current session DOM (latest
+  thinking text / tool step / running state) and posts it through `DshNative.progress(json)`;
+* native `ProgressHub` shows it as a low-importance ongoing notification (default) or a floating
+  window; it only appears while the app is in the background (or for done/error), lockscreen
+  content is `VISIBILITY_PRIVATE` (status only, details hidden);
+* settings → **后台进度提示**: mode 关闭 / 通知 / 悬浮窗, plus permission rows
+  (notifications / overlay / accessibility) and a "预览一次" button. Floating window prefers
+  `TYPE_APPLICATION_OVERLAY` (SYSTEM_ALERT_WINDOW); it falls back to the accessibility window when
+  that permission is missing, and to the notification when neither is available;
+* `DshNative.openSettings()` opens the native settings page from the WebUI.
