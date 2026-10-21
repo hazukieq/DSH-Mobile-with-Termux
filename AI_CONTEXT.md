@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **改用 DSH 官方插件 API 推链路（2026-10-22 第一百轮，v128）**：主人指出 DSH 是开源的。查 GitHub（deepseek-ai/deepseek-harness）确认官方文档：
+  `docs/cookbook/extension-cookbook.md` 的 UI 插件范式 = `ctx.on('agent/assistant-stream', ({agent, frame}) => …)` + `ctx.on('session/event', ...)`；`docs/subsystems/core.md` 给出 `AssistantStreamFrame`（start/chunk/end）；`docs/subsystems/llm-streaming.md` 给出 `StreamChunk`（block-start / text-delta / reasoning-delta / tool-call-delta / block-end / usage / finish）；`session.md` 给出 `tool/call` / `tool/result`。
+  实现：`mobile-progress/index.js`（host 侧）改为订阅上述事件，把 reasoning / tool-call / tool-result / answer 组织成带标签链路，节流 250ms POST 到 AgentBridge `POST /overlay`（`X-DSH-Token: $DSH_BRIDGE_TOKEN`，engine env 已注入）；`AgentBridge.overlay` 增加结构化分支（kind/session/detail/elapsed → `ProgressHub.update`）；浏览器侧 client.js 退化为 `__ModuleLoader__` 占位（不再抓 DOM，之前 ESM 写法导致 import failed）。附加：同一 turn 多 attempt 合并（只在新 turn 重置链路）、done 后保留链路不闪「对话完成」、会话标题由原生 `SessionReader` 解析（插件只带 session id）。
+  实测（真机触发真实回合）：logcat `AgentBridge: structured progress: kind=thinking ... preview=[思考] ...` / `[回复] ...`；浮窗显示 `查询 deepseek 和 dsh · Done · 4s` 且保留链路（截图）。版本 1.4.0 / 340；doc v34、dotfiles VERSION 41。
 - **浮窗链路结构化 + 窗口尺寸修复（2026-10-22 第九十九轮，v123）**：用户批评链路转发敷衍。重写 `mobile-progress` 的 `buildChain()`：按 DOM 顺序遍历当前轮（最后一个 userRow 之后）的流程组，输出带类型标签的步骤：
   `[工具]` 流程组标题、`[思考]` reasoning、`[网页]` 抓取 URL、`[命令]` 运行命令、`[步骤]` 其它、`[提问]` 提问卡片（JSON 参数抽 question 字段，不再整段 JSON）、`[回复]` 最终回答尾部；去重、行内空白折叠、单行截 300 字、整体保留最后 4000 字并丢弃首行残片。
   另修：Windows 折叠时只改子 View 可见性，vivo 上 WMS 保留展开时的 frame（647x418 透明可点区挡下方 App）→ `applyExpandLevel` 显式设置窗口 LayoutParams（折叠 56dp 方、展开 wrap），档位变化时 `removeView`+`addView` 重挂；实测折叠 frame=140x140。

@@ -45,6 +45,8 @@ object ProgressHub {
     @Volatile private var last: Snapshot? = null
     @Volatile private var appVisible = false
     @Volatile private var lastPublishAt = 0L
+    /** sessionId -> 会话标题缓存（插件只带 id，标题由原生读引擎投影缓存解析）。 */
+    private val sessionTitles = java.util.concurrent.ConcurrentHashMap<String, String>()
     @Volatile private var doneClearRunnable: Runnable? = null
 
     /** 后台有任务在跑时抓一个 PARTIAL_WAKE_LOCK，减少 Doze/省电策略把引擎冻死的概率。 */
@@ -108,8 +110,31 @@ object ProgressHub {
         ) {
             return
         }
-        last = s
+        val cached = sessionTitles[s.session]
+        if (cached != null && cached != s.title) {
+            last = s.copy(title = cached)
+        } else {
+            last = s
+            if (s.session.isNotBlank() && cached == null) resolveSessionTitle(ctx, s.session)
+        }
         maybePublish(ctx, force = (k == "done" || k == "error"))
+    }
+
+    /** 从引擎会话投影缓存解析会话标题（保持原有后台线程习惯，失败静默）。 */
+    private fun resolveSessionTitle(ctx: Context, session: String) {
+        if (sessionTitles.containsKey(session)) return
+        Thread({
+            runCatching {
+                val info = app.dsh.mobile.engine.SessionReader.list(ctx).firstOrNull { it.id == session }
+                if (info != null) {
+                    val t = app.dsh.mobile.engine.SessionReader.titleOf(ctx, info)
+                    if (t.isNotBlank()) {
+                        sessionTitles[session] = t
+                        last?.let { cur -> if (cur.session == session) update(ctx, cur.kind, t, cur.detail, session, cur.elapsed) }
+                    }
+                }
+            }
+        }, "progress-title").apply { isDaemon = true }.start()
     }
 
     private fun maybePublish(ctx: Context, force: Boolean) {
@@ -138,9 +163,22 @@ object ProgressHub {
                     StatusOverlay.resetHidden()
                     StatusOverlay.setStatus(snap.detail.ifBlank { stateLabel(ctx, snap.kind) })
                     val secs = snap.elapsed / 1000L
+                    val label = when (snap.kind) {
+                        "done" -> ctx.getString(R.string.progress_state_done)
+                        "error" -> ctx.getString(R.string.progress_state_error)
+                        else -> ""
+                    }
                     val action = snap.title.take(60).ifBlank { stateLabel(ctx, snap.kind) }
-                    StatusOverlay.setAction(if (secs > 0) "$action · ${secs}s" else action)
-                    if (snap.kind == "done" || snap.kind == "error") StatusOverlay.flashCompleteDefault(6000L)
+                    val tail = when {
+                        label.isNotBlank() && secs > 0 -> "$label · ${secs}s"
+                        label.isNotBlank() -> label
+                        secs > 0 -> "${secs}s"
+                        else -> ""
+                    }
+                    StatusOverlay.setAction(listOf(action, tail).filter { it.isNotBlank() }.joinToString(" · "))
+                    if ((snap.kind == "done" || snap.kind == "error") && snap.detail.isBlank()) {
+                        StatusOverlay.flashCompleteDefault(6000L)
+                    }
                 }
                 cancelNotification(ctx)
                 return

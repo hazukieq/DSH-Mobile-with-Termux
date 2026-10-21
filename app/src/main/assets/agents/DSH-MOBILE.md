@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v33 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v34 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -429,3 +429,11 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   previous (expanded) frame, so a collapsed ball kept a large transparent touch-blocking area.
   The window LayoutParams width/height are now set explicitly (56dp square collapsed, wrap
   expanded) and the view is re-attached on level changes; measured collapsed frame is 140x140.
+* Progress by engine events, not DOM (v1.3.100): the host half of mobile-progress subscribes to
+  the public plugin API from the open-source DSH repo - `ctx.on('agent/assistant-stream', ({agent,
+  frame}) => ...)` (StreamChunk: block-start/text-delta/reasoning-delta/tool-call-delta/block-end)
+  plus `ctx.on('session/event', (session, event) => ...)` for tool/call and tool/result - and POSTs
+  a labelled chain ([思考]/[工具]/[结果]/[回复]) to the Android AgentBridge `/overlay` endpoint
+  (X-DSH-Token from DSH_BRIDGE_TOKEN). Multiple attempts in one turn are merged; the chain is kept
+  after done; session titles are resolved natively from the engine projection cache. DOM scraping
+  in the browser half is now a placeholder only.

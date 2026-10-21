@@ -2765,6 +2765,20 @@ document.getElementById('api').textContent = checks.map(function(c){
                 StatusOverlay.hide(DshAccessibilityService.instance)
                 return 200 to """{"ok":true,"visible":false}"""
             }
+            // v1.3.97：host 侧插件直推的结构化链路（kind/session/detail/elapsed）
+            val detail = obj.optString("detail")
+            if (detail.isNotBlank()) {
+                android.util.Log.i("AgentBridge", "structured progress: kind=${obj.optString("kind")} session=${obj.optString("session").take(12)} len=${detail.length} preview=${detail.take(120).replace("\n", " / ")}")
+                ProgressHub.update(
+                    ctx,
+                    obj.optString("kind").ifBlank { "thinking" },
+                    obj.optString("title"),
+                    detail,
+                    obj.optString("session"),
+                    obj.optLong("elapsed"),
+                )
+                return 200 to """{"ok":true,"structured":true}"""
+            }
             obj.optString("status").takeIf { it.isNotBlank() }?.let { StatusOverlay.setStatus(it) }
             obj.optString("action").takeIf { it.isNotBlank() }?.let { StatusOverlay.setAction(it) }
             if (obj.optBoolean("complete", false)) StatusOverlay.flashCompleteDefault()
