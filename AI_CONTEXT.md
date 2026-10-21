@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **首启「开始使用 / 添加 API Key」对话框平板适配（2026-10-22 第八十一轮，v89）**：用户指出「填写密钥这里」也别扭。DOM 取证：该对话框类 `_dialog_o6lrb_33 _76YFJG_dialog`（点添加后变 `jLrgrW_dialog`），同样被上游渲染成整屏 sheet（818×1213、内容顶到左上）。上一轮只选了 `jLrgrW_dialog`，没覆盖 `_76YFJG_dialog`。
+  修法：把 tablet 断点内的选择器改为两套 modal 共用的基类 `html body div[role=dialog][aria-modal=true][class*="_dialog_"]`（含 `> * max-width:100%`），一次性覆盖「预览版说明 / 开始使用 / 添加 API Key」等所有文档型 modal；桌面 >1100px 与手机 <600px 不受影响。
+  实测平板：开始使用 640×165 居中；点「添加 API Key」后弹窗 640×256 居中，标题/说明/输入框/按钮排版正常（截图确认）。版本 1.3.59 / 299。
 - **首次初始化「预览版说明」对话框平板适配（2026-10-22 第八十轮，v88）**：用户在平板上实测首启，截图确认「预览版说明」弹窗被渲染成整页白板（内容顶到左上、按钮贴右上、下方大片空白）。DOM 取证：`[role=dialog][aria-modal=true]` 类 `_dialog_o6lrb_33 jLrgrW_dialog`，宽高 = 整屏 818x1213，内容 762 宽从 x=28 开始。
   修法（只动这个文档型 modal，不改全局）：`narrow-welcome` 插件新增平板断点 `(min-width:600px) and (max-width:1100px)`，把 `jLrgrW_dialog` 变成居中卡片（宽度 min(92vw,640px)、高度自适应、圆角 20、阴影、内部滚动），`jLrgrW_content` 宽 100%。**踩坑**：普通 `[class*=...]` 选择器被上游高特异性 `!important` 规则压住（只有 transform 生效，width/top/left/radius 不生效）→ 改用 `html body div[role=dialog][aria-modal=true][class*=jLrgrW_dialog]` 提高特异性后才全生效。
   实测平板：对话框 640x320 居中（x=89,y=447），圆角 20、阴影正常，截图确认。版本 1.3.58 / 298。
