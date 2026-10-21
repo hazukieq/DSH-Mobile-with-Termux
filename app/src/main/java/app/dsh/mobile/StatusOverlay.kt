@@ -63,7 +63,6 @@ object StatusOverlay {
     @Volatile private var actionText: TextView? = null
     @Volatile private var statusScroll: android.widget.ScrollView? = null
     @Volatile private var statusDot: View? = null
-    @Volatile private var micView: android.widget.ImageView? = null
     @Volatile private var sessionsBox: LinearLayout? = null
     /** 展开档位：0=折叠(仅圆点) / 1=状态+麦克风 / 2=再加动作+会话列表 */
     @Volatile private var expandLevel = 0
@@ -77,7 +76,6 @@ object StatusOverlay {
      * 麦克风点击回调（由 MainActivity 注入：需要 Activity 才能申请 RECORD_AUDIO 权限）。
      * 为 null 时按钮点击无效果（权限未就绪）。
      */
-    @Volatile var onMicClick: ((Context) -> Unit)? = null
 
     /** 识别中标记（用于把状态点染成录音色） */
     @Volatile private var recording = false
@@ -155,33 +153,11 @@ object StatusOverlay {
                 val status = view.findViewById<TextView>(R.id.overlayStatus)
                 val action = view.findViewById<TextView>(R.id.overlayAction)
                 val dot = view.findViewById<View>(R.id.overlayDot)
-                val mic = view.findViewById<android.widget.ImageView>(R.id.overlayMic)
                 val sessions = view.findViewById<LinearLayout>(R.id.overlaySessions)
 
                 status.text = ctx.getString(R.string.overlay_idle)
                 dot.background.setTint(COLOR_IDLE)
 
-                // 语音输入（v1.2.65）：麦克风用**显式触摸处理**（与 VoicePanel.bindTap 同因）——
-                // overlay 窗口里 View 的 clickable 派发链路不可靠，setOnClickListener 实测不触发。
-                // 且它在根容器 setOnTouchListener 之前吃掉自己的事件，避免被当成「点空白升档」。
-                mic.setOnTouchListener { _, ev ->
-                    Log.i(TAG, "mic touch: action=${ev.actionMasked} at (${ev.x.toInt()},${ev.y.toInt()})")
-                    when (ev.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> true
-                        MotionEvent.ACTION_UP -> {
-                            val cb = onMicClick
-                            if (cb != null) {
-                                cb.invoke(ctx)
-                            } else {
-                                // v1.3.77：没有无障碍服务时麦克风没有录音面板可依附 —— 给出明确反馈而不是点了没反应
-                                flashNotice(ctx.getString(R.string.voice_need_a11y), 4_000L)
-                            }
-                            true
-                        }
-                        MotionEvent.ACTION_CANCEL -> true
-                        else -> true
-                    }
-                }
 
                 val p = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT,
@@ -207,7 +183,7 @@ object StatusOverlay {
                 statusScroll = view.findViewById<android.widget.ScrollView>(R.id.overlayScroll)
                 action.tag = "marquee"
                 action.isSelected = true
-                micView = mic; sessionsBox = sessions
+                sessionsBox = sessions
                 root = view; params = p
 
                 w.addView(view, p)
@@ -418,9 +394,6 @@ object StatusOverlay {
         val collapsed = expandLevel == 0
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
         statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
-        val voiceOk = runCatching { appCtx?.let { VoiceReady.canUse(it) } == true && onMicClick != null }
-            .getOrDefault(false)
-        micView?.visibility = if (collapsed || !voiceOk) View.GONE else View.VISIBLE
         // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
         refreshActionVisibility()
         // 离开详情档就停掉周期刷新（档位 2 期间由 refreshSessionList 自己续期）
@@ -493,16 +466,13 @@ object StatusOverlay {
             v.post {
                 // 布局完成后再刷一次手柄绑定（此时子 View 才有真实边界）
                 bindHandle(v, params ?: return@post, ctx)
-                Log.i(TAG, "  after layout: status=[${statusText?.left},${statusText?.right}] mic=[${micView?.left},${micView?.right}]")
+                Log.i(TAG, "  after layout: status=[${statusText?.left},${statusText?.right}]")
             }
         }
         Log.i(TAG, "expand level = $expandLevel")
         // 诊断：打印关键子控件的实际位置与可见性（确认麦克风到底在哪）
         statusText?.let {
             Log.i(TAG, "  status: vis=${it.visibility} [${it.left},${it.top},${it.right},${it.bottom}]")
-        }
-        micView?.let {
-            Log.i(TAG, "  mic: vis=${it.visibility} [${it.left},${it.top},${it.right},${it.bottom}]")
         }
         statusDot?.let {
             Log.i(TAG, "  dot: vis=${it.visibility} [${it.left},${it.top},${it.right},${it.bottom}]")
@@ -685,11 +655,6 @@ object StatusOverlay {
             hide(svc)
             Log.i(TAG, "overlay torn down (engine exited)")
         }
-    }
-
-    /** v1.3.78：无障碍/录音/识别状态变化后刷新麦克风可见性（没有就不显示）。 */
-    fun refreshMicVisibility() {
-        main { applyExpandLevel() }
     }
 
     /** 用户隐藏后重新允许显示（引擎重启等场景调用） */

@@ -61,16 +61,6 @@
                 android:text="DSH" />
         </ScrollView>
 
-        <ImageView
-            android:id="@+id/overlayMic"
-            android:layout_width="22dp"
-            android:layout_height="22dp"
-            android:layout_marginStart="8dp"
-            android:padding="3dp"
-            android:src="@drawable/ic_mic"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/a11y_voice_input"
-            android:scaleType="fitCenter" />
     </LinearLayout>
 
     <!-- 动作行：标题/最近动作；过长跑马灯滚动 -->

@@ -37,7 +37,7 @@
 
     <!-- Bedienungshilfen-Dienst (simulierte Bildschirmtippen) -->
     <string name="accessibility_label">DSH Mobile Helfer (optional)</string>
-    <string name="accessibility_desc">Optionale Hilfe für DSH Mobile: ermöglicht Spracheingabe und lässt die KI auf Anfrage den aktuellen Bildschirm lesen. Chat, Dateien und der Hintergrund-Motor funktionieren auch ohne diesen Dienst.</string>
+    <string name="accessibility_desc">Optionale Hilfe für DSH Mobile: lässt die KI auf Anfrage den Bildschirm lesen und Tipp-/Wischgesten ausführen. Chat, Dateien und der Hintergrund-Motor funktionieren auch ohne diesen Dienst.</string>
     <string name="accessibility_hint">Der Bedienungshilfen-Dienst ist aus — "Bildschirmtippen" ist nicht verfügbar</string>
 
     <!-- Erster Start: Onboarding -->
@@ -555,5 +555,4 @@ Engine: %6$s</string>
     <string name="progress_keepalive_off">Nicht erlaubt</string>
     <string name="progress_vendor_hint">Hersteller-Hintergrundlimits</string>
     <string name="progress_vendor_help">Bei vivo/OPPO/Xiaomi zusätzlich: Einstellungen → Akku → Hintergrund-Akkuverwaltung; iManager → App-Verwaltung → Autostart / Hintergrund-Akku erlauben. Sonst kann das System die App trotzdem beenden.</string>
-    <string name="voice_need_a11y">Spracheingabe im Schwebefenster benötigt die Bedienungshilfen: In den Systemeinstellungen → Bedienungshilfen aktivieren oder die Spracheingabe in der App nutzen.</string>
 </resources>

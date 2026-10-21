@@ -1,6 +1,10 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗去掉语音按钮（2026-10-22 第九十五轮，v111）**：用户决定「语音按钮从悬浮窗去掉，太复杂」。
+  实现：`overlay_status.xml` 删除 `overlayMic`；`StatusOverlay` 移除 `micView`/`onMicClick`/麦克风触摸、可见性与 `refreshMicVisibility`；`DshAccessibilityService` 不再注册浮窗麦克风回调；删除 `VoiceReady.kt` 与 `voice_need_a11y` 字符串；无障碍服务描述改为「可选：按需读取屏幕与点击/滑动」，不再提语音。
+  保留：App 内语音栈（无障碍服务持有 VoicePanel + AsrManager 系统识别 / CloudAsr 云端识别，最终经 VoiceBridge → MainActivity 注入 WebUI 输入框并提交）；引擎自带实验性语音输入 bundle 仍在插件市场可选（默认关闭）。
+  版本 1.3.82 / 322；doc v29、dotfiles VERSION 36。
 - **麦克风显隐条件修正（2026-10-22 第九十四轮，v110）**：用户反馈「开了无障碍也没见到语音按钮」。原因是 v109 的 `VoiceReady.canUse` 把「录音权限 + 识别通道」也纳入显隐条件，用户开了无障碍但没给录音权限/没配 ASR → 按钮被藏，且没有入口去发现缺什么。
   修正：显隐只以**无障碍服务是否连接**为准（`canUse = DshAccessibilityService.isEnabled()`）；录音权限/识别通道缺失时按钮仍显示，点击后由 `startVoiceInput` 给出「去授权 / 去配语音服务」的提示（`fullyReady()` 仅保留为诊断用）。
   排查提示：平板实测发现 `settings put secure enabled_accessibility_services` 在该 vivo 上**并未真正连上**（设置页无障碍行仍显示未授权），所以复现时麦克风不出现是合理的；用户手机上应确认系统无障碍里该服务是「已开启」状态。

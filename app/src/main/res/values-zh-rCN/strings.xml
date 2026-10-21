@@ -34,7 +34,7 @@
 
     <!-- 无障碍服务（模拟屏幕点击） -->
     <string name="accessibility_label">DSH Mobile 辅助（可选）</string>
-    <string name="accessibility_desc">DSH Mobile 的可选辅助：用于语音输入，以及在你要求时读取当前屏幕内容。不开启也能正常聊天、用文件和后台引擎。</string>
+    <string name="accessibility_desc">DSH Mobile 的可选辅助：在你要求时读取当前屏幕内容并执行点击/滑动。不开启也能正常聊天、用文件和后台引擎。</string>
     <string name="accessibility_hint">尚未开启无障碍服务——「模拟屏幕点击」不可用</string>
 
     <!-- 首次启动引导 Onboarding -->
@@ -545,5 +545,4 @@ dsh：%2$s
     <string name="progress_keepalive_off">未允许</string>
     <string name="progress_vendor_hint">厂商后台限制</string>
     <string name="progress_vendor_help">vivo/OPPO/小米还需要额外设置：设置 → 电池 → 后台耗电管理；或 i管家 → 应用管理 → 自启动 / 允许后台高耗电。否则即使忽略电池优化，系统仍可能清理 App。</string>
-    <string name="voice_need_a11y">悬浮窗语音输入依赖无障碍服务：请在系统设置 → 无障碍里开启 DSH Mobile，或回到 App 内使用语音。</string>
 </resources>
