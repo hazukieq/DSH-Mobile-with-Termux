@@ -1,5 +1,9 @@
 # DSH Mobile
 
+> **This is the upstream README kept for reference.** This repository is the fork
+> DSH Mobile with Termux - see [README.md](README.md) for the fork README, feature list and
+> license attribution.
+
 <p align="center">
   <img src="docs/promo/dsh-mobile-github.png" alt="DSH Mobile — DeepSeek Harness for Android" width="100%">
 </p>

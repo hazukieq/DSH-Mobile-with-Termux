@@ -2,6 +2,10 @@
 
 > Tap the microphone on the floating ball, speak a sentence, edit the recognized text if needed,
 > and send it to the current conversation with one tap — even while the app is in the background.
+>
+> Fork note (v1.6.x): the overlay microphone was removed from this fork (the recording panel is
+> owned by the accessibility service and was coupled to the overlay window lifecycle). The voice
+> panel and ASR pipeline remain in the code base; the overlay simply has no mic entry right now.
 
 ## 1. Entry point and form
 

@@ -1,5 +1,9 @@
 # DSH Mobile
 
+> **Dies ist die Upstream-README als Referenz.** Dieses Repository ist der Fork
+> DSH Mobile with Termux - siehe [README.md](README.md) für Fork-README, Funktionsliste und
+> Lizenzangaben.
+
 **Der vollständige Android-Port von DeepSeek Harness — die offizielle dsh-Engine läuft unverändert in der App-Sandbox. Ohne Root, ohne Termux, ohne PC.**
 
 [![CI](https://github.com/Soodok/Deepseek-Harness-Local-Android/actions/workflows/android-build.yml/badge.svg)](https://github.com/Soodok/Deepseek-Harness-Local-Android/actions/workflows/android-build.yml)

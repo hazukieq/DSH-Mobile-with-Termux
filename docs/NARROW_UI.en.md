@@ -1,6 +1,7 @@
-# Narrow-screen UI: three client plugins
+# Narrow-screen and tablet UI: client plugins
 
-> Fixes for Android phones in portrait (~386 CSS px wide). Everything is implemented as
+> Fixes for Android phones in portrait (~386 CSS px wide) and tablets in portrait. Everything is
+> implemented as
 > **client plugins**: no engine source edits, no DOM hijacking, no conflicts with other UI
 > plugins, and engine upgrades won't overwrite them.
 
