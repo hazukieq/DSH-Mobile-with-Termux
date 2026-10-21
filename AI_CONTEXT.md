@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **genui 思考展开正文被放大（2026-10-22 第八十六轮，v94）**：用户指出「思考展开的内容都被影响了，旁边文字都很小，唯独它变大了」。实测：genui 的 `.vHCAGq_think{font-size:.9em}` 在 16px 容器里 = **14.4px**，展开正文 14px/24 行高、无缩进；而引擎原 ReasoningRow 的 summary 是 `--dsh-content-font-size-secondary`（13px/20px），正文 `padding-left:calc(22px + font-delta)` 与图标对齐。
+  修法（仍只 patch genui）：补丁从「加图标」升级为完整对齐原 WebUI 的思考行样式：`.vHCAGq_think{font-size:var(--dsh-content-font-size-secondary,13px)}`、summary 13px/20px、正文 `padding:4px 0 4px calc(22px + var(--dsh-content-font-delta,0px))`、正文 p/li 13px/20px；用 `/*dsh-mobile-genui-think:start*/…:end*/` 包裹以便原地升级，并带 legacy marker 迁移逻辑（旧补丁文件自动替换）。
+  实测平板：summary 13px/20px、正文 pad-left 22px、正文 p 13px/20px，展开后与周围文字一致（截图确认）。版本 1.3.64 / 304。
 - **改为给 genui 打补丁（2026-10-22 第八十五轮，v93）**：用户要求「给 genui 打 patch 或看最新版，不能影响 WebUI 原本的」。查 npm：`dsh-genui` 最新仍是 0.3.1（与设备一致），无新版可升。
   做法：新增 `DshPluginPatches.kt`，在 `EngineConfig.ensureAgentArtifacts` 每轮启动时对 `$DSH_HOME/profiles/*/node_modules/dsh-genui/lib/client.js` 做内容锚定补丁：锚点 `.vHCAGq_think{opacity:.85;font-size:.9em}` → 追加思考图标（引擎同款 IconThinkOutlineRegular path 作 mask，14px）+ 折叠 chevron 的 CSS，带 `/*dsh-mobile-genui-think*/` marker 幂等；锚点不存在（上游修了/升级改名）则自动跳过。**同时撤掉 mobile-ui 里 v92 加的全局思考 CSS**，App 层不再覆盖任何渲染。
   验证平板：日志 `DshPluginPatches: genui thinking patch applied: .../dsh-genui/lib/client.js`；DOM 中 `details.vHCAGq_think > summary::before` 14×14 mask 生效；截图思考行显示图标+chevron；genui 重新启用（对照实验时曾临时关闭）。版本 1.3.63 / 303。
