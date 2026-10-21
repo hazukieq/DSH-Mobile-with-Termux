@@ -52,9 +52,16 @@ object ProgressHub {
     /** 后台有任务在跑时抓一个 PARTIAL_WAKE_LOCK，减少 Doze/省电策略把引擎冻死的概率。 */
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
-    fun mode(ctx: Context): String =
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_MODE, MODE_NOTIFY)
-            ?: MODE_NOTIFY
+    fun mode(ctx: Context): String {
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // v1.4.5：默认改成「悬浮窗」——用户明确要求「总是显示悬浮窗最好」。
+        // 旧安装若已显式选择过，保留原值；从未选过（缺少 key）时才落到新的默认。
+        if (!prefs.contains(KEY_MODE)) {
+            prefs.edit().putString(KEY_MODE, MODE_OVERLAY).apply()
+            return MODE_OVERLAY
+        }
+        return prefs.getString(KEY_MODE, MODE_OVERLAY) ?: MODE_OVERLAY
+    }
 
     fun setMode(ctx: Context, mode: String) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_MODE, mode).apply()
@@ -188,6 +195,14 @@ object ProgressHub {
                 return
             }
             // 没有悬浮窗权限且没有无障碍 → 回退通知
+        }
+        if (m == MODE_OVERLAY && !android.provider.Settings.canDrawOverlays(ctx)) {
+            // 选的是悬浮窗但没权限：明确告知并引导授权，而不是静默退回普通通知
+            publishNotification(
+                ctx,
+                snap.copy(title = ctx.getString(R.string.progress_overlay_denied_title)),
+            )
+            return
         }
         publishNotification(ctx, snap)
     }

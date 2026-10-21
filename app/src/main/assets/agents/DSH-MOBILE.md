@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v36 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v37 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -447,3 +447,7 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   is in the foreground (notification still stays quiet); it keeps updating inside the app. It is
   docked to the nearest screen edge by default (right edge on first show) and re-docks to the same
   side after expanding/collapsing, so its width change never leaves it floating mid-screen.
+* Overlay default (v1.4.6): the default display mode is now 悬浮窗 instead of 通知 (only for installs
+  that never picked a mode; an explicit choice is kept). Selecting 悬浮窗 without the
+  SYSTEM_ALERT_WINDOW permission prompts the system grant page, and if the permission is still
+  missing the notification title says "悬浮窗未授权 · 点此去授权" instead of silently falling back.
