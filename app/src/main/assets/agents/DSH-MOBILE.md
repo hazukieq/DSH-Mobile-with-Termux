@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v35 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v36 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -443,3 +443,7 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   `done` state on `idle`, sends a 2.5s heartbeat while running (so long tool calls do not look
   frozen), and the Android side never deduplicates done/error snapshots - the card keeps the full
   chain and switches to 已完成 with elapsed time.
+* Overlay always on + edge docked (v1.4.4): the floating window is no longer hidden while the app
+  is in the foreground (notification still stays quiet); it keeps updating inside the app. It is
+  docked to the nearest screen edge by default (right edge on first show) and re-docks to the same
+  side after expanding/collapsing, so its width change never leaves it floating mid-screen.

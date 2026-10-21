@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗常驻 + 贴边（2026-10-22 第一百零二轮，v130）**：用户要求「App 内也显示悬浮窗」「默认贴边，展开/关闭后也贴边」。
+  实现：① `ProgressHub.maybePublish` 前台不再 `hideAuto` 悬浮窗（通知仍静默），前台也持续更新；② `StatusOverlay` 新增 `dockRight`（默认右）、`dockX()` 计算贴边 x；`snapToEdge` 拖动结束按最近边设置方向；`applyExpandLevel` 在档位变化（宽度变化）后 `post` 重新贴回同一边。
+  实测：前台打开 App 时右上角常驻；展开 frame=[1173,370][1820,546]（右边距 20px）、折叠 frame=[1680,370][1820,510]（同样右边距 20px）；卡片内点空白收起后仍贴右边（截图确认）。版本 1.4.4 / 344；doc v36、dotfiles VERSION 43。
 - **会话结束浮窗卡半截/状态不变 → 修（2026-10-22 第一百零一轮，v129）**：用户实测 23s 会话结束后浮窗停在 thinking、内容卡一半。
   根因两层：① 收尾只靠 `assistant-stream` 的 `end` 帧，长工具/多 attempt 场景可能漏掉最后一次 flush；② 原生 `ProgressHub.update` 对相同 kind/detail/elapsed 去重，最后一次 done 与上一帧内容相同时被丢弃。
   修法：host 插件同时监听 `ctx.on('agent/status')`，状态变 `idle` 时强制 flush `done`；运行中每 2.5s 心跳 flush（长工具期间不显得停滞）；原生对 `done/error` 快照**永不去重**，保证状态一定切到「已完成」。

@@ -71,6 +71,8 @@ object StatusOverlay {
     @Volatile private var rememberedLevel = 0
     /** 上一次应用过的档位：档位变化时窗口尺寸必须重建，否则 WMS 保留旧 frame。 */
     @Volatile private var lastAppliedLevel = -1
+    /** 贴边方向：true=右边缘，false=左边缘。展开/折叠后始终贴回这一侧。 */
+    @Volatile private var dockRight = true
     @Volatile private var appCtx: Context? = null
     @Volatile private var wm: WindowManager? = null
 
@@ -338,6 +340,18 @@ object StatusOverlay {
         }
     }
 
+    /** 计算贴边后的 x（按当前窗口宽度与 dockRight 侧）。 */
+    private fun dockX(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
+        val screenW = ctx.resources.displayMetrics.widthPixels
+        val margin = dp(ctx, 8)
+        val vw = when {
+            v.width > 0 -> v.width
+            p.width > 0 -> p.width
+            else -> dp(ctx, 120)
+        }
+        return if (dockRight) (screenW - vw - margin).coerceAtLeast(margin) else margin
+    }
+
     /** 松手后吸附到最近的水平边缘（避免长期悬在屏幕中央挡内容） */
     private fun snapToEdge(p: WindowManager.LayoutParams, ctx: Context) {
         val view = root ?: return
@@ -345,7 +359,8 @@ object StatusOverlay {
         val margin = dp(ctx, 8)
         // 宽度兜底：测量未完成时 view.width 会是 0，直接用会把窗口推到屏外
         val vw = if (view.width > 0) view.width else dp(ctx, 120)
-        val target = if (p.x + vw / 2 < screenW / 2) margin else screenW - vw - margin
+        dockRight = !(p.x + vw / 2 < screenW / 2)
+        val target = if (dockRight) screenW - vw - margin else margin
         animateX(p, target)
     }
 
@@ -448,6 +463,13 @@ object StatusOverlay {
                     runCatching {
                         wm?.removeView(v)
                         wm?.addView(v, p)
+                    }
+                    // 展开/折叠后尺寸变了，立即贴回原来的边（用户要求：始终贴边）
+                    v.post {
+                        runCatching {
+                            p.x = dockX(v, p, ctx)
+                            wm?.updateViewLayout(v, p)
+                        }
                     }
                 }
             }

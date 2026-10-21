@@ -151,11 +151,13 @@ object ProgressHub {
         // 后台有任务在跑：保持一个短暂的 partial wakelock（屏幕熄灭/Doze 时引擎仍能继续跑）
         updateWakeLock(ctx, snap)
 
-        // App 在前台且不是完成/错误：不打扰（回后台时 onAppVisibility 会补一次 force）
+        // App 在前台时：通知不打扰；但悬浮窗按用户要求**始终显示**（不再隐藏）。
         if (appVisible && snap.kind != "done" && snap.kind != "error") {
             cancelNotification(ctx)
-            runCatching { StatusOverlay.hideAuto(ctx) }
-            return
+            if (m != MODE_OVERLAY) {
+                runCatching { StatusOverlay.hideAuto(ctx) }
+                return
+            }
         }
 
         if (m == MODE_OVERLAY) {
