@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **文档写明「agent 如何重启引擎」（2026-10-22 第一百零九轮，v142）**：用户要求把重启策略写进环境文档。
+  `AGENTS.md` 新增 "Restarting the engine (read before restarting anything)" 小节：首选 `dsh-update restart`（等 guardian + 健康检查）、`POST /engine/restart`（等价设置页按钮，202 异步）；明确禁止 killx/pkill 受管引擎、禁止用插件市场的「立即重启」（detach spawn 的 dsh web 会抢 3080）；重启会终止当前回合、事后回复通常发不出去，要先告诉用户。`DSH-MOBILE.md` 的 bridge 路由说明处同步加同一条政策。SEED_VERSION 77→78、doc v44。
+  版本 1.6.5 / 365；dotfiles VERSION 51。
 - **dshmarket「立即重启」与 EngineService 抢端口 → 修（2026-10-22 第一百零八轮，v141）**：依据 `~/Downloads/qq/issue-dshmarket-android-restart.md`。
   DSH Mobile 侧修两处：① `EngineSupervisor` 新增 `/proc/net/tcp{,6}` LISTEN inode → `/proc/<pid>/fd` 反查 PID，`killForeignPortHolders(port)` 杀掉非自身/非受管子进程的占端口者；`spawnEngine` 在孤儿清理后调用并 `waitPortFree(3080, 2000ms)`，health 轮询失败时也清一次，避免市场 helper 的独立 `dsh web` 与受管引擎抢 3080（现场表现为 WebView ERR_CONNECTION_REFUSED / INCOMPLETE_CHUNKED_ENCODING、引擎连启 3 分钟）。② `plugin-health.mjs` 做 disposal 安全：`loaderOf(ctx)` 两条路径都 try/catch 且先查 disposed；`check()` 整体 try/catch，异常只停表；`ctx.effect(() => stop)` + disposer 双停表——消除 `cannot get required service "loader" in inactive context` 崩溃。
   未改 dshmarket 本身；宿主重启路径仍是 `dsh-update restart` / App 的「重启引擎」。版本 1.6.4 / 364；doc v43、dotfiles VERSION 50。

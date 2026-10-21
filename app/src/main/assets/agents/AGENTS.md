@@ -64,6 +64,20 @@ check only when the task or an actual error makes the current state relevant.
 - `notify <message>`, `scr …`, `loop …` — the Android bridge tools described further below; they
   authenticate internally, so there is no need to look for tokens or curl the bridge.
 
+### Restarting the engine (read before restarting anything)
+
+Use a controlled restart only; never kill the engine process yourself.
+
+- `dsh-update restart` — preferred. Waits for the app guardian and performs a health check.
+- `POST /engine/restart` — Android bridge equivalent of Settings → 重启引擎 (202, asynchronous).
+- Do **not** `killx`/`pkill` the managed engine, and do **not** use the plugin market's
+  "立即重启" button: that helper SIGTERMs the host and spawns its own detached `dsh web`, which
+  races the managed engine on port 3080 and leaves the WebView with
+  `ERR_CONNECTION_REFUSED` / `ERR_INCOMPLETE_CHUNKED_ENCODING`. DSH Mobile now kills such foreign
+  listeners before spawning, but the controlled paths remain the supported ones.
+- A restart ends the current turn. Tell the user before restarting; the assistant message produced
+  after the restart usually cannot be delivered to the session.
+
 ## Linux environment (proot, optional)
 
 Native `pkg install` (above) is the normal way to add tools. Separately, there is an optional **Linux userland**: a real distro rootfs

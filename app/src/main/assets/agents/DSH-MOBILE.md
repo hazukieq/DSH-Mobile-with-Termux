@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v43 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v44 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -59,6 +59,10 @@ Groups (see the actual handlers for params):
   `/memory/confirm`, `/memory/clear`.
 - App/plugins: `GET /plugin/list`, `POST /plugin/install`, `GET /notif`, `GET /diag`,
   `POST /notify`, `GET|POST /say`, `POST /engine/restart`.
+  Restart policy: prefer `dsh-update restart` (waits for the guardian + health check) or
+  `POST /engine/restart` (202, same as Settings → 重启引擎). Never kill the managed engine or
+  use the plugin market's "立即重启" button - that spawns a detached `dsh web` that races the
+  managed engine for port 3080. A restart ends the current turn, so warn the user first.
 - App self-info/screenshots: `GET /process` (app pid, uid, version, `webview_debug`,
   `devtools_socket`), `GET /app-screenshot?max=N` (native PixelCopy capture of the app window).
 - Runtime: `GET /runtime/status`, `/runtime/feed`, `POST /runtime/stage`, `/runtime/pull`,
