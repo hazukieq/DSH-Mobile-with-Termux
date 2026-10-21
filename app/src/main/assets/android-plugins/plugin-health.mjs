@@ -70,6 +70,26 @@ function safeGet(ctx, service) {
   }
 }
 
+/**
+ * v1.6.3：Cordis context 被 dispose 后，`ctx.loader` 的 getter 会抛
+ * "cannot get required service \"loader\" in inactive context"。
+ * 旧代码 `safeGet(ctx,"loader") || ctx.loader` 只保护了前半段，后半段在
+ * inactive context 上直接抛未捕获异常 → 引擎在重启风暴中崩溃（issue 现场）。
+ * 这里两条路径都夹在 try/catch 里，并显式判断 context 是否已 disposed。
+ */
+function loaderOf(ctx) {
+  const direct = safeGet(ctx, "loader");
+  if (direct !== void 0) return direct;
+  try {
+    if (ctx.scope && ctx.scope.disposed) return void 0;
+  } catch {}
+  try {
+    return ctx.loader;
+  } catch {
+    return void 0;
+  }
+}
+
 function writeMarker(value) {
   const file = markerPath();
   if (!file) return;
@@ -88,7 +108,8 @@ function writeMarker(value) {
 }
 
 function inspect(ctx) {
-  const loader = safeGet(ctx, "loader") || ctx.loader;
+  const loader = loaderOf(ctx);
+  if (loader === void 0) return null;
   const entries = loader && typeof loader.entries === "function" ? [...loader.entries()] : [];
   const failedEntries = entries
     .filter((entry) => {
@@ -149,21 +170,36 @@ function apply(ctx) {
   const started = Date.now();
   let finished = false;
   let timer;
+  const stop = () => {
+    finished = true;
+    if (timer !== void 0) {
+      clearInterval(timer);
+      timer = void 0;
+    }
+  };
   const check = () => {
     if (finished) return;
-    const loader = safeGet(ctx, "loader") || ctx.loader;
-    const tasks = loader && typeof loader.getTasks === "function" ? loader.getTasks() : [];
-    if (tasks.length > 0 && Date.now() - started < MAX_WAIT_MS) return;
-    finished = true;
-    if (timer !== void 0) clearInterval(timer);
-    inspect(ctx);
+    try {
+      const loader = loaderOf(ctx);
+      if (loader === void 0) { stop(); return; }
+      const tasks = typeof loader.getTasks === "function" ? loader.getTasks() : [];
+      if (tasks.length > 0 && Date.now() - started < MAX_WAIT_MS) return;
+      stop();
+      runCatching(() => inspect(ctx));
+    } catch (error) {
+      // 探针永远不能成为引擎崩溃源：任何异常都只记录并停表
+      stop();
+      console.error(`[android-plugin-health] probe failed: ${error?.message || error}`);
+    }
   };
+  const runCatching = (fn) => { try { fn(); } catch (error) {
+    console.error(`[android-plugin-health] inspect failed: ${error?.message || error}`);
+  } };
   timer = setInterval(check, POLL_MS);
   check();
-  return () => {
-    finished = true;
-    if (timer !== void 0) clearInterval(timer);
-  };
+  // 双保险：Cordis 的 disposer 与 effect 清理都停表（disposal 后 timer 不再触发）
+  try { ctx.effect(() => stop); } catch {}
+  return stop;
 }
 
 export { apply, inject, name };

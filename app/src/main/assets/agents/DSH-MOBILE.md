@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v42 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v43 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -468,3 +468,11 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
 * The overlay window docks to a **left/right side edge** (right by default; after dragging it snaps
   to the nearer side) while its vertical position stays where the user put it. When the
   accessibility service is connected the window is hosted in the accessibility window.
+* Restart race with dshmarket (v1.6.4): dshmarket's "立即重启" kills the host and spawns its own
+  detached `dsh web`, while EngineSupervisor also restarts the managed engine - both fight for
+  port 3080 and the WebView shows ERR_CONNECTION_REFUSED. The supervisor now parses
+  /proc/net/tcp{,6} for LISTEN sockets on the engine port, kills processes holding it that are not
+  the managed child, and waits for the port to be free before spawning (also on unhealthy polls).
+  plugin-health.mjs is disposal-safe: the loader lookup is fully guarded (no bare ctx.loader),
+  every probe body runs in try/catch, and the poll timer is stopped from both the disposer and a
+  Cordis effect, so a disposed context can no longer crash the engine.

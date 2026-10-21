@@ -393,6 +393,10 @@ class EngineSupervisor(private val ctx: Context) {
 
                 val healthy = pollHealth(EngineConfig.DEFAULT_PORT, proc)
                 step("health-poll")
+                if (!healthy) {
+                    // 端口没监听/被外来进程占着：清掉外来者，下一轮 spawn 才能拿到端口
+                    runCatching { killForeignPortHolders(EngineConfig.DEFAULT_PORT) }
+                }
                 if (healthy) {
                     var pluginRecoveryRequested = false
                     // HTTP 已监听不代表 Cordis Loader 的关键 entry 已成功激活。
@@ -598,12 +602,79 @@ class EngineSupervisor(private val ctx: Context) {
     private val lastExitStatus: Int?
         get() = process?.exitFuture?.takeIf { it.isDone }?.get()
 
+    /** 监听指定端口的 socket inode（解析 /proc/net/tcp{,6} 的 LISTEN 行）。 */
+    private fun portListenInodes(port: Int): Set<String> {
+        val hex = String.format("%04X", port)
+        val out = HashSet<String>()
+        for (name in listOf("/proc/net/tcp", "/proc/net/tcp6")) {
+            runCatching {
+                java.io.File(name).readLines().drop(1).forEach { line ->
+                    val f = line.trim().split(Regex("\\s+"))
+                    if (f.size > 9 && f[3] == "0A" && f[1].substringAfter(':') == hex) out.add(f[9])
+                }
+            }
+        }
+        return out
+    }
+
+    private fun pidsForSocketInodes(inodes: Set<String>): List<Int> {
+        if (inodes.isEmpty()) return emptyList()
+        val res = ArrayList<Int>()
+        runCatching {
+            java.io.File("/proc").listFiles()?.forEach { d ->
+                val pid = d.name.toIntOrNull() ?: return@forEach
+                runCatching {
+                    java.io.File(d, "fd").listFiles()?.forEach { fd ->
+                        val link = runCatching { android.system.Os.readlink(fd.path) }.getOrNull() ?: return@forEach
+                        if (link.startsWith("socket:[")) {
+                            val ino = link.removePrefix("socket:[").removeSuffix("]")
+                            if (inode_matches(ino, inodes)) { res.add(pid); return@forEach }
+                        }
+                    }
+                }
+            }
+        }
+        return res.distinct()
+    }
+
+    private fun inode_matches(ino: String, set: Set<String>) = set.contains(ino)
+
+    /**
+     * v1.6.3：杀掉**不是本 App 引擎子进程**、却占着引擎端口的进程。
+     *
+     * 背景（issue: dshmarket 立即重启与 EngineService 竞争）：市场 helper 会 SIGTERM 当前
+     * host 并 detached spawn 一个自己的 `dsh web`；本 App 监督器同时重启受管引擎，两者
+     * 抢 3080，WebView 反复 ERR_CONNECTION_REFUSED。这里在 spawn 前/健康失败时把外来
+     * 监听者清掉，保证只有受管引擎占端口。
+     */
+    private fun killForeignPortHolders(port: Int) {
+        val inodes = portListenInodes(port)
+        if (inodes.isEmpty()) return
+        val allow = setOf(android.os.Process.myPid(), process?.pid ?: -1)
+        val pids = pidsForSocketInodes(inodes).filter { it !in allow }
+        if (pids.isEmpty()) return
+        Log.w(TAG, "killing foreign listeners on port $port: $pids")
+        for (p in pids) runCatching { android.os.Process.sendSignal(p, 9) }
+    }
+
+    /** 等端口释放（最多 ms），避免刚 kill 完立刻 spawn 又撞 EADDRINUSE。 */
+    private fun waitPortFree(port: Int, ms: Long) {
+        val deadline = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < deadline && portListenInodes(port).isNotEmpty()) {
+            Thread.sleep(100)
+        }
+    }
+
     private fun spawnEngine(bootId: String): EngineProcess {
         // 【v1.2.32】启动前孤儿清理：App 被强杀/force-stop 后，引擎 node 可能成孤儿
         // 继续占着 3080（普通模式与 App 同 uid；Root 模式需 su）。此时新引擎必然
         // EADDRINUSE 无限重启（用户实测 62 次）。pkill 只匹配我们的引擎路径，
         // 不会误伤其他进程；正常重启（旧引擎已 stop）端口已释放，此处为 no-op。
         cleanupOrphanEngine()
+        // v1.6.3：dshmarket 的自重启 helper 可能已经/即将在 3080 上起一个独立 dsh web。
+        // spawn 前清掉外来监听者并等端口真正释放，避免两条重启路径抢端口导致 WebView 反复断线。
+        runCatching { killForeignPortHolders(EngineConfig.DEFAULT_PORT) }
+        runCatching { waitPortFree(EngineConfig.DEFAULT_PORT, 2_000L) }
         // 【v1.2.36】记录本次启动的日志起点：token 提取只认这段之后的输出。
         // 否则健康探测先于 stdout 泵送达 "dsh web: ?token=" 行时，会提取到上一次
         // 引擎的旧 token → WebView 加载已失效地址 → "Webpage not available"

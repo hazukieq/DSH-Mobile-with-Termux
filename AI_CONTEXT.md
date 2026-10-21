@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **dshmarket「立即重启」与 EngineService 抢端口 → 修（2026-10-22 第一百零八轮，v141）**：依据 `~/Downloads/qq/issue-dshmarket-android-restart.md`。
+  DSH Mobile 侧修两处：① `EngineSupervisor` 新增 `/proc/net/tcp{,6}` LISTEN inode → `/proc/<pid>/fd` 反查 PID，`killForeignPortHolders(port)` 杀掉非自身/非受管子进程的占端口者；`spawnEngine` 在孤儿清理后调用并 `waitPortFree(3080, 2000ms)`，health 轮询失败时也清一次，避免市场 helper 的独立 `dsh web` 与受管引擎抢 3080（现场表现为 WebView ERR_CONNECTION_REFUSED / INCOMPLETE_CHUNKED_ENCODING、引擎连启 3 分钟）。② `plugin-health.mjs` 做 disposal 安全：`loaderOf(ctx)` 两条路径都 try/catch 且先查 disposed；`check()` 整体 try/catch，异常只停表；`ctx.effect(() => stop)` + disposer 双停表——消除 `cannot get required service "loader" in inactive context` 崩溃。
+  未改 dshmarket 本身；宿主重启路径仍是 `dsh-update restart` / App 的「重启引擎」。版本 1.6.4 / 364；doc v43、dotfiles VERSION 50。
 - **贴边理解纠错：窗口只贴左右边（2026-10-22 第一百零七轮，v140）**：主人指出我之前把「notice 在思考链底部」误解成「窗口贴屏幕底」，导致浮窗固定底部、不能移动。
   修法：`dockBottom` 默认 false 并删除该逻辑；保留 `dockX()` 左右贴边；拖动松手 `snapToEdge` 只把 x 吸到最近边、y 保持用户拖动位置（仅屏幕内 clamp）；展开/折叠后 x 重新贴回同一边、y clamp；notice 仍用独立布局在卡片底部（这条需求不变）。
   实测：默认右边缘 frame=[1680,243][1820,383]；拖到屏幕中部松手 → 仍吸回右边 frame=[1680,1145][1820,1285]（y 保留拖动位置）；截图确认。版本 1.6.2 / 362；doc v42、dotfiles VERSION 49。
