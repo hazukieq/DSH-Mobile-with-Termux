@@ -45,7 +45,7 @@ object StatusOverlay {
      */
     // v1.2.157 用户反馈：44dp 的球在展开成面板时"旁边延展、整体内缩"（球比面板高）。
     // 改为 26dp 紧凑圆点：展开后是自然的变大，观感平滑；中间状态点大小不变（DOT_DP）。
-    private const val COLLAPSED_BALL_DP = 26
+    private const val COLLAPSED_BALL_DP = 48
 
     /**
      * 状态点直径（dp）—— **折叠态与展开态用同一个值**。
@@ -61,6 +61,7 @@ object StatusOverlay {
     @Volatile private var params: WindowManager.LayoutParams? = null
     @Volatile private var statusText: TextView? = null
     @Volatile private var actionText: TextView? = null
+    @Volatile private var statusScroll: android.widget.ScrollView? = null
     @Volatile private var statusDot: View? = null
     @Volatile private var micView: android.widget.ImageView? = null
     @Volatile private var sessionsBox: LinearLayout? = null
@@ -194,6 +195,9 @@ object StatusOverlay {
                 //  ③ 在 post 里应用初始档位 —— 此时已完成首次测量，
                 //     子 View 才有真实边界可绑手柄（否则绑到 [0,0,0,0] 的控件上）
                 statusText = status; actionText = action; statusDot = dot
+                statusScroll = view.findViewById<android.widget.ScrollView>(R.id.overlayScroll)
+                action.tag = "marquee"
+                action.isSelected = true
                 micView = mic; sessionsBox = sessions
                 root = view; params = p
 
@@ -283,6 +287,7 @@ object StatusOverlay {
     private fun collapseToBall() {
         autoExpanded = false
         if (expandLevel == 0) return
+        statusScroll?.post { statusScroll?.fullScroll(View.FOCUS_DOWN) }
         expandLevel = 0
         applyExpandLevel()
     }
@@ -402,6 +407,7 @@ object StatusOverlay {
         // 折叠态：隐藏文字/麦克风/动作/会话，只留圆点；同时收紧内边距让它接近圆形
         val collapsed = expandLevel == 0
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
         micView?.visibility = if (collapsed) View.GONE else View.VISIBLE
         // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
         refreshActionVisibility()
@@ -619,23 +625,32 @@ object StatusOverlay {
     }
 
     fun hide(svc: AccessibilityService?) {
-        hideInternal()
+        hideInternal(userHidden = true)
     }
 
-    /** v1.3.68：与无障碍解耦的隐藏入口。 */
+    /** v1.3.68：与无障碍解耦的隐藏入口（用户主动隐藏）。 */
     fun hide(ctx: Context?) {
-        hideInternal()
+        hideInternal(userHidden = true)
     }
 
-    private fun hideInternal() {
+    /**
+     * v1.3.75：自动隐藏（回到前台时收起），**不**置 hidden 标记，
+     * 否则下次后台展示会被 `if (root != null || hidden) return` 永久拦住。
+     */
+    fun hideAuto(ctx: Context?) {
+        hideInternal(userHidden = false)
+    }
+
+    private fun hideInternal(userHidden: Boolean) {
         main {
             val r = root ?: return@main
             runCatching {
                 wm?.removeView(r)
             }
             root = null; params = null; statusText = null; actionText = null; statusDot = null
-            hidden = true
-            Log.i(TAG, "overlay hidden by user")
+            statusScroll = null
+            hidden = userHidden
+            Log.i(TAG, if (userHidden) "overlay hidden by user" else "overlay hidden (auto)")
         }
     }
 
@@ -740,20 +755,23 @@ object StatusOverlay {
     }
 
     /** 更新状态行（如「执行中」），并把状态点染成强调色 */
+    /** v1.3.75：浮窗文案单行化/截断，避免思考正文过长把窗口撑成巨幅。 */
+    private fun fitText(text: String, max: Int = 90): String {
+        val one = text.replace(Regex("\\s+"), " ").trim()
+        return if (one.length <= max) one else one.take(max - 1).trimEnd() + "…"
+    }
+
     fun setStatus(text: String) {
         main {
             cancelIdleReset()   // 新状态来了 → 作废"回空闲"定时器（否则会把这里覆盖掉）
             working = true
-            statusText?.text = text
+            // v1.3.75：内容实时滚动 —— 保留换行、折行显示，每次更新后滚到最新一行。
+            // 用户要求「点击后再展开」，所以这里**不**自动升档（折叠球由用户点开）。
+            val body = text.trim().take(1200)
+            statusText?.text = body
             statusDot?.background?.setTint(COLOR_WORKING)
-            // 若此刻还是折叠球（档位 0），自动展开一档 ——
-            // 主人要的是「AI 在干什么」能直接看到（旧版只有一颗球，什么都不显示）
-            if (expandLevel == 0) {
-                expandLevel = 1
-                autoExpanded = true
-                applyExpandLevel()
-            }
-            refreshActionVisibility()   // 档位 ≥1 就能看到 AI 在干什么
+            statusScroll?.post { statusScroll?.fullScroll(View.FOCUS_DOWN) }
+            refreshActionVisibility()
         }
     }
 
@@ -772,7 +790,7 @@ object StatusOverlay {
         cancelIdleReset()
         main {
             working = true
-            actionText?.text = text
+            actionText?.text = fitText(text, 48)
             refreshActionVisibility()
         }
     }
@@ -780,7 +798,8 @@ object StatusOverlay {
     fun setAction(text: String) {
         main {
             cancelIdleReset()
-            actionText?.text = text
+            actionText?.text = text.take(200)
+            actionText?.isSelected = true
             refreshActionVisibility()
             // 落盘（v1.2.88）：详情档要显示「上次做了什么 + 什么时候」，
             // 进程重启后仍要能看到，所以每次动作都记一次时间戳

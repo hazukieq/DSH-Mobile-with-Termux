@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v24 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v25 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -393,3 +393,8 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   watchdog skip starting the engine. Only a fresh user launch of MainActivity (onCreate without
   saved state) clears the flag and starts the engine again. If you (the agent) need to start it,
   ask the user to open the app instead of calling the service.
+* Floating-window details (v1.3.75): the overlay starts as a small ball; tapping it expands a
+  rounded card whose body is a scrollable TextView (long thinking text wraps, and each update
+  auto-scrolls to the newest line; the card is capped at 232dp wide / 176dp tall). The title
+  line uses a marquee when it overflows. Automatic hide (foreground return) does not set the
+  user-hidden flag, so the next background update can show the window again.

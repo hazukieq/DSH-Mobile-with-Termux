@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  AI 状态悬浮窗（v1.2.58 初版，v1.2.65 三段式重做）
+  AI 状态悬浮窗（v1.2.58 初版；v1.3.75 展开卡片 + 实时滚动）
 
-  三段形态（点一下升一档）：
-    ① 折叠态  —— 只有一个**圆形半透明状态点**，尽量不挡视线
-    ② 展开态  —— 状态点 + 状态文字（空闲/执行中）+ 麦克风按钮
-    ③ 详情态  —— 在②基础上追加：最近动作 + 活跃会话列表（名称/最后活跃时间）
+  形态：
+    ① 折叠态 —— 圆形状态点（26dp 球），不打扰
+    ② 展开态 —— 点击后变成圆角卡片：状态点 + 可滚动的实时内容 + 麦克风
+    ③ 详情态 —— 卡片追加最近动作与会话列表
 
-  颜色语义与设置页一致：强调蓝=执行中 / 绿=完成 / 灰=空闲 / 红=录音中。
+  展开内容用 ScrollView 包住：后台思考文本可能很长，折行显示并自动滚到最新一行；
+  动作行/标题过长时用跑马灯（marquee）滚动。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlayRoot"
@@ -20,37 +21,46 @@
     android:paddingTop="8dp"
     android:paddingBottom="8dp"
     android:minWidth="0dp"
-    android:elevation="8dp">
+    android:elevation="0dp">
 
-    <!-- 状态行：圆点 + 主文案 + 麦克风（折叠态只显示圆点，其余由代码控制可见性） -->
+    <!-- 状态行：圆点 + 可滚动内容 + 麦克风（折叠态只显示圆点） -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:gravity="top">
 
-        <!-- 状态点：两种形态同尺寸 14dp（DOT_DP，见 StatusOverlay）——
-             10dp 在展开态偏小、与折叠态切换时大小跳动 -->
         <View
             android:id="@+id/overlayDot"
             android:layout_width="14dp"
             android:layout_height="14dp"
             android:layout_marginEnd="7dp"
+            android:layout_marginTop="3dp"
             android:background="@drawable/bg_overlay_dot" />
 
-        <TextView
-            android:id="@+id/overlayStatus"
+        <ScrollView
+            android:id="@+id/overlayScroll"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="13sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.01"
-            android:textColor="#FFE8EAED"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:text="DSH" />
+            android:maxWidth="232dp"
+            android:maxHeight="176dp"
+            android:scrollbars="vertical"
+            android:fadeScrollbars="false"
+            android:overScrollMode="never">
 
-        <!-- 语音输入按钮：点击开始/停止录音识别 -->
+            <TextView
+                android:id="@+id/overlayStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxWidth="232dp"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.01"
+                android:lineSpacingExtra="2dp"
+                android:textColor="#FFE8EAED"
+                android:text="DSH" />
+        </ScrollView>
+
         <ImageView
             android:id="@+id/overlayMic"
             android:layout_width="22dp"
@@ -63,21 +73,25 @@
             android:scaleType="fitCenter" />
     </LinearLayout>
 
-    <!-- 动作行：展开态可见（AI 最近在做什么） -->
+    <!-- 动作行：标题/最近动作；过长跑马灯滚动 -->
     <TextView
         android:id="@+id/overlayAction"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
         android:layout_marginStart="16dp"
+        android:maxWidth="232dp"
         android:textSize="11sp"
         android:textColor="#FF9AA0A6"
-        android:maxLines="2"
-        android:ellipsize="end"
+        android:singleLine="true"
+        android:ellipsize="marquee"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:focusable="true"
+        android:focusableInTouchMode="true"
         android:visibility="gone"
         android:text="" />
 
-    <!-- 详情态：活跃会话列表（容器由代码填充，避免 XML 写死条目数） -->
+    <!-- 详情态：活跃会话列表（容器由代码填充） -->
     <LinearLayout
         android:id="@+id/overlaySessions"
         android:layout_width="wrap_content"

@@ -1,6 +1,9 @@
 # AI_CONTEXT
 
 ## Current progress
+- **浮窗改版：点击展开圆角卡片 + 实时滚动（2026-10-22 第九十一轮，v106）**：用户反馈「浮窗太长」，要求「点击按钮后展开一个圆矩形卡片，内容实时滚动，太长就折行（或跑马灯）」。
+  实现：① `overlay_status.xml` 状态文案改为 `ScrollView(maxWidth 232dp, maxHeight 176dp)` + 可折行 TextView；动作/标题行单行 marquee；root elevation 改 0（8dp 阴影在 vivo 上产生 40px surfaceInsets，把 65px 的折叠球内容区吃掉导致完全不可见）；② `StatusOverlay.setStatus` 不再截断/单行化，保留换行，更新后 `fullScroll(FOCUS_DOWN)` 自动滚到最新；`applyExpandLevel` 折叠时隐藏滚动区；③ 取消 setStatus 自动展开（用户要求点击才展开），只有点球才升档；④ `hideAuto()`：前台自动收起不再置 `hidden` 标记（旧逻辑会导致下次后台永远不显示）；⑤ `COLLAPSED_BALL_DP` 26→48（避免阴影内缩后看不见）；⑥ ProgressHub 传完整 detail。
+  实测平板：桌面出现 48dp 折叠球 → 点击展开圆角卡片，长思考文本折行显示（卡片约 232dp 宽、6+ 行，超出可内部滚动并自动滚到底部），标题行 marquee；测试模式已切回「通知」。版本 1.3.76 / 316；doc v25、dotfiles VERSION 32。
 - **正常退出后绝不自动启动（2026-10-22 第九十轮，v104）**：用户硬性要求「app 正常退出后绝对不能自己启动」。原行为：`onTaskRemoved` 自动重启服务 + 无障碍看门狗每 60s 拉起 + `EngineService.start()` 只挡「通知栏退出」标记，所以从最近任务划掉后会被拉回。
   实现：`EngineService` 增加持久化 `user_exited` 标记（prefs `dsh_exit`）：通知「退出」、`onTaskRemoved`（划掉任务）都置位；`EngineService.start()` 与无障碍保活看门狗在置位期间一律跳过；`onStartCommand` 对自动拉起也二次拦截（`stopSelf`）。只有用户主动打开 MainActivity（`onCreate` 且 `savedInstanceState == null`）才清除标记 + `supervisor.clearUserStop()`，随后 onResume 正常启动。新增 `EngineSupervisor.clearUserStop()`。
   实测平板（开启无障碍）：从最近任务划掉 → 进程/引擎立即消失，90s 内无任何自动拉起；再点图标打开 → 引擎正常启动（node pid 出现、3080 返回 401）。版本 1.3.74 / 314；doc v24、AGENTS seed 77、dotfiles VERSION 31。

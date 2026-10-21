@@ -122,7 +122,7 @@ object ProgressHub {
         // App 在前台且不是完成/错误：不打扰（回后台时 onAppVisibility 会补一次 force）
         if (appVisible && snap.kind != "done" && snap.kind != "error") {
             cancelNotification(ctx)
-            runCatching { StatusOverlay.hide(ctx) }
+            runCatching { StatusOverlay.hideAuto(ctx) }
             return
         }
 
@@ -132,7 +132,7 @@ object ProgressHub {
                 runCatching {
                     StatusOverlay.resetHidden()
                     StatusOverlay.setStatus(snap.detail.ifBlank { stateLabel(ctx, snap.kind) })
-                    StatusOverlay.setAction(snap.title.ifBlank { stateLabel(ctx, snap.kind) })
+                    StatusOverlay.setAction(snap.title.take(60).ifBlank { stateLabel(ctx, snap.kind) })
                     if (snap.kind == "done" || snap.kind == "error") StatusOverlay.flashCompleteDefault(6000L)
                 }
                 cancelNotification(ctx)
@@ -230,7 +230,7 @@ object ProgressHub {
     fun clearAll(ctx: Context) {
         runCatching { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
         cancelNotification(ctx)
-        runCatching { StatusOverlay.hide(ctx) }
+        runCatching { StatusOverlay.hideAuto(ctx) }
         last = null
     }
 
