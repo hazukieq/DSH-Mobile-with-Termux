@@ -36,8 +36,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 当前这一轮的完整「思考链路」：从最后一个用户消息开始，按 DOM 顺序拼接
-     * 所有思考正文与工具步骤。流式输出时文本不断变长 → 浮窗就能实时刷新。
+     * 当前这一轮的完整「思考链路」：按时间顺序输出带类型标签的步骤。
+     * - [思考] 模型的 reasoning 片段
+     * - [工具] 工具组标题（如「已访问网页并搜索网页」）
+     * - [命令] / [步骤] 每个 flowItem（工具调用与输出摘要）
+     * - [回复] 最终回答的末尾片段
      */
     function buildChain() {
       var root = transcriptRoot()
@@ -48,26 +51,78 @@ window.__ModuleLoader__.load({
         if (kids[i].querySelector && kids[i].querySelector('[class*="userRow"]')) start = i
       }
       if (start < 0) start = 0
-      var parts = []
+      var lines = []
+      var seen = {}
+
+      function push(line) {
+        var t = (line || '').replace(/\s+/g, ' ').trim()
+        if (!t) return
+        // 工具参数里的 JSON（提问卡片等）不直接展示，抽出 question/label 之类的可读字段
+        if (t.charAt(0) === '{' || /^\[\s*[{"]/.test(t)) {
+          try {
+            var o = JSON.parse(t)
+            var label = o.question || o.label || o.title || ''
+            if (label) { lines.push('[提问] ' + String(label).slice(0, 200)) }
+          } catch (e) { /* 不是完整 JSON：丢弃 */ }
+          return
+        }
+        if (/"options"|"multi_select"|"selected"/.test(t) && t.length > 200) return
+        t = t.replace(/^(运行命令|执行了命令)(?![:：])/, '$1: ')
+        t = t.replace(/^(网页获取)(?![:：])/, '$1: ')
+        if (t.length > 300) t = t.slice(0, 300) + '…'
+        if (seen[t]) return
+        seen[t] = true
+        lines.push(t)
+      }
+
       for (var j = start; j < kids.length; j++) {
         if (j > start) {
-          var k = kids[j]
-          if (k.querySelector && k.querySelector('[class*="userRow"]')) break
+          var kj = kids[j]
+          if (kj.querySelector && kj.querySelector('[class*="userRow"]')) break
         }
-        var thinks = kids[j].querySelectorAll ? kids[j].querySelectorAll('details[class*="_think"]') : []
+        var k = kids[j]
+
+        // 工具/过程组：标题 + 组内每个 flowItem 按顺序摘下
+        var groups = k.querySelectorAll ? k.querySelectorAll('[class*="O_Ebla_root"]') : []
+        Array.prototype.forEach.call(groups, function (g) {
+          var titleEl = g.querySelector('[class*="O_Ebla_title"]')
+          var title = txt(titleEl)
+          if (title) push('[工具] ' + title)
+          var flow = g.querySelectorAll('[class*="EvIC1a_flowItem"]')
+          Array.prototype.forEach.call(flow, function (fi) {
+            var t = txt(fi)
+            if (!t) return
+            t = t.replace(/^(运行命令|执行了命令|执行命令)(?![:：])/, '$1: ')
+            t = t.replace(/^(网页获取)(?![:：])/, '$1: ')
+            if (/^思考/.test(t)) push('[思考] ' + t.replace(/^思考\s*/, ''))
+            else if (/^(运行命令|执行了命令|执行命令)/.test(t)) push('[命令] ' + t)
+            else if (/^网页获取/.test(t)) push('[网页] ' + t)
+            else push('[步骤] ' + t)
+          })
+        })
+
+        // 组外的思考块（genui 的 details 形式）
+        var thinks = k.querySelectorAll ? k.querySelectorAll('details[class*="_think"]') : []
         Array.prototype.forEach.call(thinks, function (d) {
           var body = d.querySelector('div')
-          var t = txt(body) || txt(d)
-          t = t.replace(/^思考\s*/, '')
-          if (t) parts.push(t)
+          var t = (txt(body) || txt(d)).replace(/^思考\s*/, '')
+          if (t) push('[思考] ' + t)
         })
-        var labels = kids[j].querySelectorAll ? kids[j].querySelectorAll('[class*="O_Ebla_label"]') : []
-        Array.prototype.forEach.call(labels, function (el) {
-          var t = txt(el)
-          if (t) parts.push('· ' + t)
-        })
+
+        // 最终回答：取该轮最后一个 markdown 文本块的尾部
+        var md = k.querySelectorAll ? k.querySelectorAll('[class*="_markdown_"], [class*="markdownPreview"]') : []
+        if (md.length) {
+          var last = txt(md[md.length - 1])
+          if (last && !/^思考/.test(last)) push('[回复] ' + last.slice(-400))
+        }
       }
-      return parts.join('\n\n').slice(0, 4000)
+      var out = lines.join('\n')
+      if (out.length > 4000) {
+        out = out.slice(out.length - 4000)
+        var nl = out.indexOf('\n')
+        if (nl >= 0) out = out.slice(nl + 1)
+      }
+      return out
     }
 
     function isRunning() {
@@ -127,6 +182,7 @@ window.__ModuleLoader__.load({
     var timer = null
     function apply() {
       try { window.__dshMobileProgressPoke = poke } catch (e) {}
+      try { window.__dshMobileBuildChain = buildChain } catch (e) {}
       if (timer === null) timer = window.setInterval(function () { tick(false) }, POLL_MS)
       return function () {
         if (timer !== null) { window.clearInterval(timer); timer = null }

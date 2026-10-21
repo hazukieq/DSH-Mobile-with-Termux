@@ -69,6 +69,8 @@ object StatusOverlay {
     @Volatile private var hidden = false
     /** v1.3.77：用户手动展开过的档位，重建窗口/下次显示时沿用（保持展开）。 */
     @Volatile private var rememberedLevel = 0
+    /** 上一次应用过的档位：档位变化时窗口尺寸必须重建，否则 WMS 保留旧 frame。 */
+    @Volatile private var lastAppliedLevel = -1
     @Volatile private var appCtx: Context? = null
     @Volatile private var wm: WindowManager? = null
 
@@ -419,13 +421,35 @@ object StatusOverlay {
                     else R.drawable.bg_overlay_panel
                 )
             }
-            // 折叠态强制**正圆**（52dp）：球里只有一个小圆点，内容撑不满控件，
+            // 折叠态强制**正圆**（COLLAPSED_BALL_DP）：球里只有一个小圆点，内容撑不满控件，
             // 必须靠 minimumWidth/Height 才能量出正方形（旧版实测 95x77 = 椭圆）。
             // 展开态交还给内容自适应（置 0）。
             val minSize = if (collapsed) dp(ctx, COLLAPSED_BALL_DP) else 0
             if (v.minimumWidth != minSize || v.minimumHeight != minSize) {
                 v.minimumWidth = minSize
                 v.minimumHeight = minSize
+            }
+            // v1.3.94：窗口尺寸必须显式更新。只改子 View 可见性时 WMS 仍保留上一次
+            // 展开时的大 frame（实测折叠后仍有 647x418 的透明区域，挡住下面 App 的触摸）。
+            params?.let { p ->
+                if (collapsed) {
+                    val side = dp(ctx, COLLAPSED_BALL_DP) + dp(ctx, 8)
+                    p.width = side
+                    p.height = side
+                } else {
+                    p.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    p.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                }
+                runCatching { wm?.updateViewLayout(v, p) }
+                // v1.3.95：vivo 上只改 LayoutParams 的宽高，WMS 偶尔仍保留旧 frame
+                //（折叠后留下一大片透明可点区域，挡住下面 App）。档位变化时直接重挂窗口。
+                if (lastAppliedLevel != expandLevel) {
+                    lastAppliedLevel = expandLevel
+                    runCatching {
+                        wm?.removeView(v)
+                        wm?.addView(v, p)
+                    }
+                }
             }
             // 折叠态让状态点落在**球心**（内容居中）；展开态回到默认靠左上排布。
             // 根容器是 LinearLayout（overlay_status.xml），gravity 决定子项对齐方式。

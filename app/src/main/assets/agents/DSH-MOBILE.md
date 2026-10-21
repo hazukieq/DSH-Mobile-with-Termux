@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v31 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v33 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 You are not on a generic Linux box: this is **DSH Mobile**, a single APK that bundles the
@@ -421,3 +421,11 @@ v1.3.68 adds a background progress layer that does **not** require accessibility
   stale background session). While a turn runs, the payload carries elapsed milliseconds and the
   title line shows `· Ns`, so the card visibly ticks even when the reasoning text is momentarily
   unchanged. Body height stays capped (132dp, internal scroll).
+* Structured chain (v1.3.93): the overlay body is no longer a raw text dump. The plugin walks the
+  current turn in DOM order and emits labelled lines - [工具] process title, [思考] reasoning,
+  [命令] tool call, [网页] fetch, [步骤] other steps, [提问] question cards, [回复] answer tail -
+  deduped and capped to the last 4000 chars (first partial line dropped).
+* Overlay window sizing (v1.3.96): on vivo, changing only child visibility left the window at the
+  previous (expanded) frame, so a collapsed ball kept a large transparent touch-blocking area.
+  The window LayoutParams width/height are now set explicitly (56dp square collapsed, wrap
+  expanded) and the view is re-attached on level changes; measured collapsed frame is 140x140.
