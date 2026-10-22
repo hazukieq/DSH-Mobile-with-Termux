@@ -30,6 +30,11 @@ Android 的无障碍服务有两个独立状态（参考
 注意：Android 规定 **force-stop 应用会同时禁用其无障碍服务**，需要用户重新去系统设置开启；
 这不是 App 能绕过的限制。
 
+另一个实测状态（v1.8.7）：服务可能「已连接但假活」——`/status` 报
+`accessibility_connected: true`，但 `rootInActiveWindow` 返回 null、`/screen` 只有
+`0nodes`。此时在系统设置里把 DSH 辅助服务关一次再开即可恢复（实测 31 节点恢复）。
+排查顺序：`/status` → `/screen` 是否 0 nodes → 关/开服务；不要盲目重装 APK。
+
 ## 1. 能做什么
 
 开启无障碍服务后，Agent 获得以下能力（全部无需 Root、无需 ADB）：

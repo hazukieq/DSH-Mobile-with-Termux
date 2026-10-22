@@ -87,9 +87,22 @@ POST /tap
 
 ### P1-6 listId / itemIndex（v1.8.2）
 
-- `/screen?format=json` 与 `/scene` 的节点：滚动容器内的可点行带 `listId` 与 `itemIndex`；
+- `/screen?format=json` 与 `/scene` 的节点：滚动容器内的可点行带 `listId`、`itemIndex` 与
+  `label`（行容器本身常无 text/desc，label 从子节点聚合最多 3 段）；
+- 可滚动容器即使没有文本/desc 也会保留一条节点记录，作为 listId 锚点；
 - `POST /tap {"listId":"L12","itemIndex":3}`：App 实时重读节点树定位并点击，不依赖上一屏坐标；
 - 找不到时返回 404 + `failedAt:"tap"` + 重新读取的提示。
+
+实测（系统设置列表）：
+
+```
+L0 0 | -
+L0 1 | 网络 Hazukie-spot
+L0 2 | SIM 卡 China Unicom, CMHK
+POST /tap {"listId":"L2","itemIndex":0}
+→ {"ok":true,"via":"list","listId":"L2","itemIndex":0,"x":540,"y":470,"bounds":[0,364,1080,576]}
+后续 /scene 显示页面已进入「网络和互联网」（标题/网络/Hazukie-spot）
+```
 
 ## 未落地（下一批）
 

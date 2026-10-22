@@ -1024,7 +1024,11 @@ class DshAccessibilityService : AccessibilityService() {
                 if ((text.isNotEmpty() || desc.isNotEmpty()) && rect.centerY() > contentTop) {
                     contentChars += text.length + desc.length
                 }
-                if ((text.isNotEmpty() || desc.isNotEmpty() || node.isClickable || node.isCheckable) &&
+                // v1.8.6：可滚动容器即使没有文本/desc/clickable 也要保留一条记录，
+                // 否则 P1-6 的 listId 锚点找不到（实测 Settings 的 RecyclerView 是
+                // scrollable=true 但无文本，被过滤后列表行全部拿不到 listId）。
+                if ((text.isNotEmpty() || desc.isNotEmpty() || node.isClickable || node.isCheckable ||
+                        node.isScrollable) &&
                     (!filterRestricted || when (filter) {
                         "clickable" -> node.isClickable
                         "editable" -> node.isEditable
@@ -1121,6 +1125,29 @@ class DshAccessibilityService : AccessibilityService() {
                     o.put("listId", hit.id)
                     o.put("itemIndex", hit.counter[0])
                     hit.counter[0]++
+                    // v1.8.7：列表行容器本身常常没有 text/desc（文本在子节点里）。
+                    // 给一个 label（最多 3 段子文本），让 Agent 不点开也知道这一行是什么。
+                    if (o.optString("text").isBlank() && o.optString("desc").isBlank()) {
+                        val rb = o.optJSONArray("bounds")
+                        if (rb != null && rb.length() >= 4) {
+                            val l = rb.optInt(0); val t = rb.optInt(1)
+                            val r = rb.optInt(2); val b = rb.optInt(3)
+                            val parts = ArrayList<String>()
+                            for (j in 0 until arr.length()) {
+                                val child = arr.optJSONObject(j) ?: continue
+                                if (child === o) continue
+                                val cb = child.optJSONArray("bounds") ?: continue
+                                if (cb.length() < 4) continue
+                                val cx = child.optInt("x"); val cy = child.optInt("y")
+                                if (cx in l..r && cy in t..b) {
+                                    val label = child.optString("text").ifBlank { child.optString("desc") }
+                                    if (label.isNotBlank() && label !in parts) parts.add(label)
+                                    if (parts.size >= 3) break
+                                }
+                            }
+                            if (parts.isNotEmpty()) o.put("label", parts.joinToString(" "))
+                        }
+                    }
                 }
             }
         }
