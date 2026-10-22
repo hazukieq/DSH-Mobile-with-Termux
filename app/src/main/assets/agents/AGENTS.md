@@ -262,6 +262,22 @@ How to react:
 **Anti-fraud-guarded apps: the default answer is NO.**
 WeChat（微信）/ QQ / banking and financial apps run real-time device-integrity checks (accessibility detection, gesture histograms, root detection): automating them gets accounts **banned**, sometimes permanently, and a mistimed tap can move money. Douyin（抖音）/ 小红书 and heavy-DRM apps are nearly as hostile. Refuse by default; for financial apps it is a flat no. If the user insists after you state the ban risk in one plain sentence — and only then — they must be watching live (never unattended), and the ban, account loss and any ToS violation are **theirs**; say that out loud before starting. Never help make injected input undetectable — that crosses from automation into fraud.
 
+## Exporting files to the user (never write album folders directly)
+
+Workspaces and the trash are media-hidden (`$DSH_HOME/workspaces/.nomedia`,
+`/sdcard/dsh-trash/.nomedia`), so pictures you generate there stay out of the gallery.
+
+When the user should actually see/receive a file, use the one export path instead of copying by hand:
+
+- `native export <path...>` - default target `Download/DSH/` (single folder), then the media scan runs
+  so the file is visible to the user.
+- `native export <path...> --to pictures` - only when the user explicitly asked for the album.
+- `native export <path...> --to custom:/sdcard/Documents/foo` - exact folder, no media scan.
+- Bridge equivalent: `POST /export {"paths":[...],"target":"download|pictures|custom","dir":"..."}`.
+
+Never write directly into `/sdcard/Pictures`, `/sdcard/DCIM`, or the root of `/sdcard/Download`.
+After exporting, report the actual `targetDir` and each copied path from the reply.
+
 ## Deleting files on shared storage (trash, not permanent)
 
 - Deleting anything under `/sdcard` or `/storage` must go through `rm`: this environment's

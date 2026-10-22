@@ -381,6 +381,8 @@ object EngineConfig {
             File(ctx.filesDir, "dsh-home").mkdirs()
             val a = externaliseSubdir(ctx, "sessions")
             val b = externaliseSubdir(ctx, "workspaces")
+            // v2.3.0：工作区/回收站加 .nomedia，避免内部产物被系统相册扫描
+            MediaHygiene.ensureAll(ctx)
             Log.i(TAG, "user data external: sessions=$a workspaces=$b")
         }.onFailure { Log.w(TAG, "externalise failed: ${it.message}") }
     }

@@ -21,6 +21,9 @@ fi
 #   native apps [send|view] [mime]   列出能接这个意图的 App（label + package）
 #   native share <path> [--to 名称]   分享文件/文件夹；--to 直接派给指定 App，不弹选择器
 #   native share-text "<text>" [--to 名称]  分享文本/链接（转发给微信/QQ 等）
+#   native export <path...> [--to download|pictures|custom:<dir>]
+#                                    导出给用户：默认 Download/DSH/；pictures 才进相册；
+#                                    custom:<dir> 不触发媒体扫描
 #   native files                     检查 $PREFIX/bin 里 App 管理的脚本：真实文件/可执行/符号链接
 #   native json <GET|POST> <path> [body]  直接调 AgentBridge（token 自动带；path 必须是真实端点，
 #                                     如 GET /notif、GET /process、POST /tap）
@@ -75,6 +78,29 @@ case "${1:-}" in
       pairs="$pairs\"$k\":$jv"
     done
     json_or_die POST /settings "{\"set\":{$pairs}}"
+    ;;
+  export)
+    shift
+    target="download"; dir=""; paths=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --to) target="${2:-}"; shift 2 ;;
+        --dir) dir="${2:-}"; shift 2 ;;
+        -*) echo "native export: unknown flag '$1'" >&2; exit 2 ;;
+        *)
+          [ -n "$paths" ] && paths="$paths,"
+          paths="$paths\"$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+          shift ;;
+      esac
+    done
+    [ -n "$paths" ] || usage
+    case "$target" in
+      custom:*) dir="${target#custom:}"; target="custom" ;;
+    esac
+    body="{\"paths\":[$paths],\"target\":\"$target\""
+    [ -n "$dir" ] && body="$body,\"dir\":\"$(printf '%s' "$dir" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+    body="$body}"
+    json_or_die POST /export "$body"
     ;;
   apps)
     # 列出能处理 share/view 的 App（label+package），供「分享给微信 / 用某播放器打开」选目标

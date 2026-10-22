@@ -504,6 +504,7 @@ object AgentBridge {
             method == "GET" && path == "/screen-changed" -> screenChanged()
             method == "GET" && path == "/scene" -> scene(ctx, query)
             method == "POST" && path == "/act" -> act(ctx, body)
+            method == "POST" && path == "/export" -> mediaExport(ctx, body)
             method == "POST" && path == "/pick" -> pick(body)
             method == "GET" && path == "/local/status" -> localStatus(ctx)
             method == "GET" && path == "/frame-diff" -> frameDiff()
@@ -2245,9 +2246,13 @@ document.getElementById('api').textContent = checks.map(function(c){
                         .isIgnoringBatteryOptimizations(ctx.packageName)
                 }.getOrDefault(false))
 
+            val media = JSONObject()
+                .put("workspaceMediaVisible", MediaHygiene.workspaceMediaVisible(ctx))
+                .put("trashMediaVisible", MediaHygiene.trashMediaVisible())
             return 200 to JSONObject()
                 .put("ok", true)
                 .put("app", app)
+                .put("media", media)
                 .put("engine", engine)
                 .put("net", net)
                 .put("battery", battery)
@@ -3503,6 +3508,26 @@ document.getElementById('api').textContent = checks.map(function(c){
         if (returnScreens) out.put("beforeScreen", before)
             .put("afterScreen", runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault(""))
         return 200 to out.toString()
+    }
+
+    /**
+     * POST /export（v2.3.0）：唯一“导出给用户”出口。
+     * body: {"paths":[...],"target":"download|pictures|custom","dir":"..."}；默认 Download/DSH/。
+     */
+    private fun mediaExport(ctx: Context, body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val paths = obj.optJSONArray("paths")
+            ?: return 400 to """{"ok":false,"error":"paths[] required"}"""
+        if (paths.length() == 0) return 400 to """{"ok":false,"error":"paths[] is empty"}"""
+        val target = obj.optString("target", "download").lowercase()
+        if (target !in listOf("download", "pictures", "custom")) {
+            return 400 to """{"ok":false,"error":"target must be download|pictures|custom"}"""
+        }
+        if (target == "custom" && obj.optString("dir").isBlank()) {
+            return 400 to """{"ok":false,"error":"target=custom needs dir"}"""
+        }
+        return 200 to MediaHygiene.export(ctx, obj).toString()
     }
 
     /** POST /wait-text —— 等文本出现/消失（v1.2.141）：{text, gone?, timeoutMs?} */
