@@ -168,3 +168,27 @@ step 支持 `tap`、`tapDesc`、`tapId`、`tapXY`、`listId+itemIndex`、`input(
 |---|---|---|
 | P2-8 完整版（batch rec / 区域增量） | ✅ 完成（v2.1.4） | 批推理 + 截图缓存 + ifChanged + 区域增量 |
 | P3-9 失败可观测性（完整版） | ✅ 完成（v2.1.4） | tap/tap-id/wait-text/act 统一 failedAt/screenHash/hint；20 次失败注入 20/20 可定位 |
+
+
+## 实战反馈（2026-10-22 真机报告）与 v2.4.0 对齐
+
+真机报告最重要的结论不是“引擎能力不够”，而是**时序错配**：有时间窗的控件（B站控制条约 3s、
+Toast 2–3s）经不起“点一下→dump→思考→再点”的节奏（1.5–3s/步），第二次点击会落到页面上。
+
+### 已写进 agent 文档（AGENTS.md / DSH-MOBILE.md）
+
+- **规划慢、执行快**：时间窗操作先读一次屏、规划完整序列，再用 `POST /act` 一次执行，中间
+  **不插 dump / 不插推理**，最后只验证一次；
+- **手势参数优先于坐标**：拖动 `durationMs >= 800–1200`；短时长长距离会被识别成 fling；
+  双击 `gapMs <= 150`；列表滚动 400–600px/次；坐标必须现读（同一条进度条不同布局 y 不同）；
+- **图标按钮不要猜**：用 `/screen?format=json` 或 `/scene` 的 `bounds`/`center`。
+
+### v2.4.0 新增的 API 支撑
+
+- `/act` 的 step 新增：
+  - `swipe`: `{"x1":..,"y1":..,"x2":..,"y2":..,"durationMs":1200,"human":false}`
+    （也接受 `[x1,y1,x2,y2,durationMs]` 数组）；
+  - `doubleTap`: `[x,y]` + 顶层 `gapMs`（默认 90，范围 40–400）；
+- `/gesture` 的 swipe 在「距离 >300px 且 duration <300ms」时返回 `warning`，提示会被当成 fling；
+- `/local/status` 增加 `installHint` 与 `modelUrl`，配合 2.3.9 的 `serverBinary/lastError`，
+  “模型下载了但 llama-server 缺失”可以直接定位（`pkg install -y llama-cpp`）。

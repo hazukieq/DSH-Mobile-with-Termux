@@ -50,6 +50,11 @@ object LocalModel {
 
     fun isServerRunning(): Boolean = LocalEmbedder.isReady()
 
+    fun modelUrl(): String = MIRRORS.first()
+
+    fun installHint(): String =
+        "pkg install -y llama-cpp (then POST /local/ensure?install=1 or restart the engine)"
+
     /**
      * llama-server 二进制。
      *
@@ -71,21 +76,32 @@ object LocalModel {
      * @param onProgress (0f..1f 下载进度, 说明文字)
      * @return 成功与否
      */
+    /** 最近一次 ensure 失败原因（供 /local/status 显示，避免用户只能看日志）。 */
+    @Volatile var lastError: String? = null
+        private set
+
+    fun serverBinaryPresent(ctx: Context): Boolean = llamaServer(ctx) != null
+
     fun ensureReady(ctx: Context, onProgress: (Float, String) -> Unit = { _, _ -> }): Boolean {
         if (isServerRunning()) return true
-
-        val server = llamaServer(ctx) ?: run {
-            onProgress(0f, "llama-server not installed (install llama.cpp extension first)")
-            return false
-        }
+        // v2.3.9（vivo 反馈「语义模型无法下载」）：旧顺序先查 llama-server，缺二进制就直接
+        // return false，**模型根本没开始下载**，用户只看到「下载失败」。现在先下模型，
+        // 再把「服务器缺失」作为单独、可执行的错误报告。
         val model = modelFile(ctx)
         if (!isModelReady(ctx)) {
             onProgress(0f, "downloading embedding model (15MB)…")
             if (!downloadModel(model, onProgress)) {
+                lastError = "embedding model download failed (network or mirror)"
                 onProgress(0f, "model download failed")
                 return false
             }
         }
+        val server = llamaServer(ctx) ?: run {
+            lastError = "embedding model is ready (15MB), but llama-server is missing; install it with: pkg install -y llama-cpp"
+            onProgress(1f, "model ready; llama-server missing (pkg install -y llama-cpp)")
+            return false
+        }
+        lastError = null
         onProgress(1f, "starting local inference server…")
         return startServer(ctx, server, model)
     }

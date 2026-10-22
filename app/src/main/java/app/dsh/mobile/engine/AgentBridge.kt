@@ -528,7 +528,7 @@ object AgentBridge {
                 SceneMemory.clear(ctx)
                 200 to """{"ok":true,"cleared":true}"""
             }
-            method == "POST" && path == "/local/ensure" -> localEnsure(ctx)
+            method == "POST" && path == "/local/ensure" -> localEnsure(ctx, query)
             method == "GET" && path == "/daemon/status" -> daemonStatus()
             method == "POST" && path == "/daemon/stop" -> daemonStop()
             method == "POST" && path == "/tap" -> tap(body)
@@ -1659,6 +1659,11 @@ document.getElementById('api').textContent = checks.map(function(c){
         200 to JSONObject().apply {
             put("ok", true)
             put("modelReady", LocalModel.isModelReady(ctx))
+            put("modelSize", LocalModel.modelFile(ctx).takeIf { it.isFile }?.length() ?: 0L)
+            put("serverBinary", LocalModel.serverBinaryPresent(ctx))
+            put("lastError", LocalModel.lastError ?: "")
+            put("installHint", LocalModel.installHint())
+            put("modelUrl", LocalModel.modelUrl())
             put("serverRunning", LocalModel.isServerRunning())
             put("modelPath", LocalModel.modelFile(ctx).absolutePath)
             put("port", LocalEmbedder.PORT)
@@ -1671,14 +1676,30 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 首次调用会下载 15MB 模型并启动 llama-server；返回 202 立即开始，
      * 结果通过 /local/status 轮询（或等通知）。
      */
-    private fun localEnsure(ctx: Context): Pair<Int, String> {
+    private fun localEnsure(ctx: Context, query: String): Pair<Int, String> {
+        val install = parseQuery(query)["install"] in listOf("1", "true", "yes")
         Thread({
+            if (install && !LocalModel.serverBinaryPresent(ctx)) {
+                Log.i("LocalModel", "install requested: pkg install -y llama-cpp")
+                runCatching {
+                    val bash = java.io.File(EngineConfig.engineRoot(ctx), "bin/bash")
+                    val pb = ProcessBuilder(bash.absolutePath, "-lc", "pkg install -y llama-cpp")
+                    pb.redirectErrorStream(true)
+                    pb.environment()["PREFIX"] = EngineConfig.engineRoot(ctx).absolutePath
+                    pb.environment()["PATH"] = "${EngineConfig.engineRoot(ctx).absolutePath}/bin:/system/bin"
+                    val p = pb.start()
+                    val out = p.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+                    p.waitFor(15, java.util.concurrent.TimeUnit.MINUTES)
+                    Log.i("LocalModel", "pkg llama-cpp done: ${out.takeLast(300)}")
+                }.onFailure { Log.w("LocalModel", "pkg llama-cpp failed: ${it.message}") }
+            }
             val ok = LocalModel.ensureReady(ctx) { _, msg ->
                 Log.i("LocalModel", "ensure: $msg")
             }
             Log.i("LocalModel", "ensureReady -> $ok")
         }, "local-model-ensure").apply { isDaemon = true }.start()
-        return 202 to """{"ok":true,"started":true,"hint":"poll GET /local/status"}"""
+        return 202 to JSONObject().put("ok", true).put("started", true).put("install", install)
+            .put("hint", "poll GET /local/status").toString()
     }
 
     /**
@@ -2670,6 +2691,17 @@ document.getElementById('api').textContent = checks.map(function(c){
             )
         return try {
             val obj = JSONObject(body)
+            val gestureWarn = runCatching {
+                if (obj.optString("type") == "swipe" && obj.has("x1")) {
+                    val dx = obj.getDouble("x2") - obj.getDouble("x1")
+                    val dy = obj.getDouble("y2") - obj.getDouble("y1")
+                    val dist = kotlin.math.hypot(dx, dy)
+                    val dur = obj.optLong("durationMs", 300L)
+                    if (dist > 300 && dur < 300) {
+                        "short duration (${dur}ms) with ${dist.toInt()}px distance will likely be treated as a fling; use durationMs>=800 for drags (slider/seekbar), and verify the resulting value"
+                    } else ""
+                } else ""
+            }.getOrDefault("")
             val ok = when (obj.optString("type")) {
                 // v1.2.149：默认**拟人化**滑动（弧线+变速+抖动）；human=false 精确直线
                 "swipe" -> if (obj.optBoolean("human", true)) svc.dispatchSwipeHuman(
@@ -3447,6 +3479,40 @@ document.getElementById('api').textContent = checks.map(function(c){
                         ) { cx = n.optInt("x"); cy = n.optInt("y"); break }
                     }
                     actionOk = cx >= 0 && svc.dispatchTap(cx.toFloat(), cy.toFloat())
+                }
+                st.has("swipe") -> {
+                    action = "swipe"
+                    val sw = st.optJSONObject("swipe")
+                    val arr = if (sw == null) st.optJSONArray("swipe") else null
+                    var x1 = 0f; var y1 = 0f; var x2 = 0f; var y2 = 0f
+                    var dur = 300L
+                    var human = false
+                    if (sw != null) {
+                        x1 = sw.optDouble("x1").toFloat(); y1 = sw.optDouble("y1").toFloat()
+                        x2 = sw.optDouble("x2").toFloat(); y2 = sw.optDouble("y2").toFloat()
+                        dur = sw.optLong("durationMs", 300L)
+                        human = sw.optBoolean("human", false)
+                    } else if (arr != null && arr.length() >= 4) {
+                        x1 = arr.optDouble(0).toFloat(); y1 = arr.optDouble(1).toFloat()
+                        x2 = arr.optDouble(2).toFloat(); y2 = arr.optDouble(3).toFloat()
+                        if (arr.length() >= 5) dur = arr.optLong(4, 300L)
+                    } else actionOk = false
+                    if (actionOk) {
+                        actionOk = if (human) svc.dispatchSwipeHuman(x1, y1, x2, y2, dur)
+                        else svc.dispatchSwipe(x1, y1, x2, y2, dur)
+                    }
+                }
+                st.has("doubleTap") -> {
+                    action = "double-tap"
+                    val xy = st.optJSONArray("doubleTap")
+                    val gap = st.optLong("gapMs", 90L).coerceIn(40L, 400L)
+                    if (xy != null && xy.length() >= 2) {
+                        val x = xy.optDouble(0).toFloat(); val y = xy.optDouble(1).toFloat()
+                        actionOk = svc.dispatchTap(x, y) && runCatching {
+                            Thread.sleep(gap)
+                            svc.dispatchTap(x, y)
+                        }.getOrDefault(false)
+                    } else actionOk = false
                 }
                 st.has("input") -> {
                     action = "input"

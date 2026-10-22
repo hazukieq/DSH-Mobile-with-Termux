@@ -118,6 +118,40 @@ managers, distro build dependencies, sshd-style daemons, and anything that assum
 
 ## UI Automation Workflow (role and continuation protocol)
 
+### Time windows: plan slow, execute fast (real-device finding)
+
+Some controls disappear in a few seconds (video seek bars ~3s, toasts 2–3s, dropdowns). A
+"tap -> dump -> think -> tap" loop takes 1.5–3s and loses the window; the second tap lands on the
+page instead of the control. For anything with a time window:
+
+- read the screen once, plan the whole sequence, then execute it **without intermediate dumps or
+  reasoning**;
+- prefer one transaction over hand-written shell sleeps:
+  `POST /act {"steps":[{"tapXY":[540,350]},{"sleepMs":400},
+   {"swipe":{"x1":520,"y1":656,"x2":60,"y2":656,"durationMs":1200}},
+   {"tapXY":[69,656]}],"onFail":"stop"}`
+  (steps support tap/doubleTap/swipe with durationMs/tapXY/listId+itemIndex/input/key/sleepMs/expect)
+- verify **once at the end** (one `expect`/dump), not between every action;
+- measured baseline on a phone: `scr dump` ~0.22s, `scr tap` ~0.16s, `loop pick` exact ~11ms.
+
+### Gesture parameters matter more than coordinates
+
+- drag a slider/seekbar: `durationMs >= 800–1200` slow swipe; a short swipe over a long distance is
+  treated as a fling (the gesture reply now returns a `warning` for that case);
+- double tap: two taps with `gapMs <= 150` (use `/act {"doubleTap":[x,y],"gapMs":90}`); 0.4s apart is
+  two single taps;
+- list scrolling: 400–600px per swipe, verify between scrolls instead of one huge fling;
+- coordinates are only valid for the current layout: re-read before acting, never reuse coordinates
+  from an earlier dump;
+- a11y node centers and screenshot pixels are 1:1, so OCR boxes can be tapped directly.
+
+### Prefer bounds over guessing icons
+
+Icon-only buttons (search/back/more) often have no text. Do not guess centers: read
+`GET /screen?format=json` (each node has `bounds` and `center`) or `GET /scene` (merged a11y+OCR with
+bounds), then tap the reported center and use `expect` to verify.
+
+
 **You are the cloud predictor and takeover operator; the local loop is the executor.** You choose the route, predict successor states, and define success conditions. The local loop performs matching → action → verification → retry. Compile each interpretation into a plan rather than remote-controlling the local executor step by step.
 
 **Speed switch for UI work: the `fast_mode` TOOL.** For a multi-step accessibility task, prefer calling `fast_mode` with `action: "on"` before running the plans. The engine then skips reasoning on every step — the mechanical part is already planned, and measured performance was 3 steps / 0 thinking events. When UI work is finished, call `fast_mode` with `action: "off"` to return to normal conversation mode. `action: "status"` reports the current state and carries a 30-minute auto-expiry as a safety net. Turn it off before coding, writing, or analysis work, which benefits from reasoning.
