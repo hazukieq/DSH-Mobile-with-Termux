@@ -74,10 +74,14 @@ object PpOcr {
         return runCatching {
             // onnxruntime 的 Python 绑定在 Termux 主仓库不一定存在；numpy/Pillow/scipy 是
             // ppocr6 预处理的硬依赖。分步安装，缺哪个就如实报告（不假装成功）。
+            // ⚠️ 必须先装/升级 python，再 **reinstall** onnxruntime：Termux 的 onnxruntime
+            // 包在 python 版本变化后不会自动重装 python 绑定（实测：system python 3.14 时
+            // site-packages 里没有 onnxruntime，只有 libonnxruntime.so）。
             val pb = ProcessBuilder(
                 bash.absolutePath, "-lc",
-                "pkg install -y python onnxruntime; " +
-                    "pkg install -y python-numpy python-pillow python-scipy || true",
+                "pkg install -y python; " +
+                    "pkg install -y python-numpy python-pillow python-scipy || true; " +
+                    "pkg install -y --reinstall onnxruntime || pkg install -y onnxruntime",
             )
             pb.redirectErrorStream(true)
             pb.environment()["PREFIX"] = EngineConfig.engineRoot(ctx).absolutePath

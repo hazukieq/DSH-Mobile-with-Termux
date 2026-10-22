@@ -76,7 +76,13 @@ POST /tap
 - 随 APK 内置 `assets/ppocr6/`：脚本 + `det_tiny.onnx` + `rec_tiny.onnx/yml`（约 6.3MB）；
 - 引擎启动时部署到 `$PREFIX/bin/ppocr6` 与 `$PREFIX/share/ppocr6/`；
 - `GET /ocr?engine=ppocr6`：依赖缺失时返回 `unavailable:true, reason`（含安装提示）；
-- `GET /ocr?engine=ppocr6&ensure=1`：执行 `pkg install -y python onnxruntime` 后重试（网络/体积较大，显式触发）；
+- `GET /ocr?engine=ppocr6&ensure=1`：依次安装 `python`、`python-numpy/python-pillow/python-scipy`，
+  并 **reinstall onnxruntime**（Termux 的 python 绑定不会随 python 升级自动重装）；网络/体积较大，显式触发；
+- ⚠️ 实测边界（2026-10-22，LineageOS 测试机）：Termux 只装了 `libonnxruntime.so` C 库，
+  `site-packages/onnxruntime` 仍缺失（python 3.14 与包内 wheel 版本不匹配），`ensure` 后
+  仍会返回 `unavailable` + 具体原因。要实现「干净设备开箱可用」，需要改走内置
+  onnxruntime（route B）或提供一个可用的 python 绑定包；当前实现依赖设备已有该绑定
+  （手机端提案环境即如此）；
 - `/scene` 在 ML Kit 不可用或 `engine=ppocr6` 时自动用 PP-OCRv6。
 
 ### P1-6 listId / itemIndex（v1.8.2）
