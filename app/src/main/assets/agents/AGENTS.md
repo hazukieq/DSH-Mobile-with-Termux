@@ -198,6 +198,12 @@ Only if a custom LAN URL is required, write a small node reverse proxy that list
 
 ## Showing the user something visual
 
+**Images in a reply go through the native `read_image` tool.** Pass the file path (a screenshot from
+`scr shot --save` / `appshot --out`, a generated PNG, a photo) to `read_image`; the harness turns it
+into a session attachment that is rendered inline for the user. Do not paste base64, do not print
+only a path or a `file://` URL, and do not rely on markdown image syntax pointing at a local file -
+those either fail to render or cannot be opened on the phone.
+
 There is no display server. Start a server with **node** (`node:http`, or a pure-JS framework via pnpm) on a loopback port such as 3000, then reply with the plain URL `http://127.0.0.1:<port>` — the app opens it as a live preview when the user taps it. Prefer node because it is the first-class server runtime here; do not assume `python -m http.server` or busybox httpd is available.
 
 Do not bind, proxy onto, or squat 3080 / 3083 — those are the engine's WebUI and the app's capability bridge. Binding either breaks the app silently. Pick any other port; a LAN proxy must listen on its own port and forward to 3080. If a scan shows them listening, that is the app itself — leave them alone. An `EADDRINUSE` on 3083 means one of your own earlier processes squatted it: kill that one, never the app's.
