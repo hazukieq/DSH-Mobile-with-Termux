@@ -3,6 +3,33 @@
 > 不是"模拟点击脚本"，而是一套**能看、能判断、能验证、能自我纠错**的手机操作能力：
 > 读得懂屏幕、找得到目标、点得准、知道点没点中，失败会自己换路。
 
+## 0. 授权状态：启用 ≠ 已连接（v1.7.4）
+
+Android 的无障碍服务有两个独立状态（参考
+[AccessibilityManager](https://developer.android.com/reference/android/view/accessibility/AccessibilityManager)
+的 `getEnabledAccessibilityServiceList`）：
+
+| 状态 | 判定 | 含义 |
+|---|---|---|
+| 已启用 | `AccessibilityManager.getEnabledAccessibilityServiceList(...)` 里有本包 | 系统设置里已授权 |
+| 已连接 | `DshAccessibilityService.instance != null` | 服务进程已绑定，动作可用 |
+
+历史 bug：`/health` 与所有动作端点都用「已连接」当作「已启用」，于是**授权过但绑定还没完成**
+（App 刚启动、服务被系统回收后重绑）时，agent 预检直接拿到 503，误以为没授权。
+
+现在的行为：
+
+- `/health` 的 `permissions.accessibility` 报**已启用**，另给 `accessibility_connected`；
+- 需要无障碍的端点（读屏/动作/视觉/截图）在进入前等最多 **1.5s** 完成绑定，再决定：
+  - 仍未连接 → 503，`retryable: true`，提示「已启用但未连接，稍后重试；持续出现就在系统设置里关/开一次」；
+  - 未启用 → 503，`retryable: false`，提示去系统设置启用。
+- 设置页「无障碍（可选）」区分「已连接 / 已开启（未连接）/ 已授权但被系统停用 / 未授权」；
+  服务首次连接成功会持久化 `granted_once`，所以 force-stop/更新把 secure 设置摘掉后，仍能
+  报出「曾授权、被系统停用」，而不是误报「从未授权」。
+
+注意：Android 规定 **force-stop 应用会同时禁用其无障碍服务**，需要用户重新去系统设置开启；
+这不是 App 能绕过的限制。
+
 ## 1. 能做什么
 
 开启无障碍服务后，Agent 获得以下能力（全部无需 Root、无需 ADB）：

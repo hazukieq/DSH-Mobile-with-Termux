@@ -1,6 +1,7 @@
 package app.dsh.mobile
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
 import android.graphics.Path
@@ -34,6 +35,15 @@ class DshAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // v1.7.6：记住「曾经授权成功过」。Android 在 force-stop/部分更新流程里会把
+        // 无障碍从 secure settings 整个摘掉，此时系统状态与 secure 列表都看不出历史，
+        // 只能靠我们自己记住，才能在 503 里给出「被系统停用，去重开」而不是「你从没授权」。
+        runCatching {
+            getSharedPreferences("dsh_a11y", MODE_PRIVATE).edit()
+                .putBoolean("granted_once", true)
+                .putLong("last_connected", System.currentTimeMillis())
+                .apply()
+        }
         // 订阅触摸交互事件（v1.2.54）：用于检测「人突然接管」。
         // 服务 xml 里 accessibilityEventTypes 已含 typeAllMask，但触摸类事件
         // （typeTouchInteractionStart/End）还需要在运行时显式加入过滤列表，
@@ -1621,7 +1631,61 @@ class DshAccessibilityService : AccessibilityService() {
         internal var instance: DshAccessibilityService? = null
 
         /** 服务是否已启用（用户在系统设置开启后为 true） */
-        fun isEnabled(): Boolean = instance != null
+        /** 服务实例是否已连接（真正能执行无障碍动作）。 */
+        fun isConnected(): Boolean = instance != null
+
+        /**
+         * v1.7.3：**系统层面**是否已启用本服务（不看 instance）。
+         *
+         * 旧实现 `isEnabled() = instance != null` 把「已授权但尚未绑定/绑定被系统回收」
+         * 误判成「未授权」，Agent 预检 /health 或调动作端点直接拿到 503。
+         * 按官方文档，启用状态应查 AccessibilityManager#getEnabledAccessibilityServiceList
+         * （https://developer.android.com/reference/android/view/accessibility/AccessibilityManager）。
+         */
+        fun isEnabled(ctx: Context): Boolean = runCatching {
+            val am = ctx.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+                ?: return@runCatching false
+            if (!am.isEnabled) return@runCatching false
+            am.getEnabledAccessibilityServiceList(
+                android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK,
+            ).any { info ->
+                info.resolveInfo?.serviceInfo?.packageName == ctx.packageName
+            }
+        }.getOrDefault(false)
+
+        /**
+         * v1.7.5：secure 设置里仍列着本服务、但系统并不认为它已启用。
+         *
+         * 典型来源：Android 规定 **force-stop 应用会禁用其无障碍服务**（更新/强杀后
+         * secure setting 可能还是旧值）。此时必须让用户去系统设置重新开启，App 无法代替。
+         */
+        fun wasGrantedOnce(ctx: Context): Boolean = runCatching {
+            ctx.getSharedPreferences("dsh_a11y", Context.MODE_PRIVATE)
+                .getBoolean("granted_once", false)
+        }.getOrDefault(false)
+
+        fun isListedButDisabled(ctx: Context): Boolean = runCatching {
+            if (isEnabled(ctx)) return@runCatching false
+            val listed = android.provider.Settings.Secure.getString(
+                ctx.contentResolver,
+                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ).orEmpty()
+            listed.split(':').any { it.contains(ctx.packageName) } || wasGrantedOnce(ctx)
+        }.getOrDefault(false)
+
+        /** 已启用但实例还没连上时，短暂等待系统完成绑定（避免瞬时 503）。 */
+        fun awaitConnection(timeoutMs: Long): Boolean {
+            if (instance != null) return true
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                if (instance != null) return true
+                runCatching { Thread.sleep(100) }
+            }
+            return instance != null
+        }
+
+        /** 兼容旧调用：语义改为「已连接」。新代码请用 isConnected() / isEnabled(ctx)。 */
+        fun isEnabled(): Boolean = isConnected()
 
         /** 是否支持手势注入（API 24+ 且服务已连接） */
         fun canTap(): Boolean = instance != null && Build.VERSION.SDK_INT >= 24

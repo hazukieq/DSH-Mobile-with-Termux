@@ -680,7 +680,7 @@ class SettingsActivity : Activity() {
 
     /** 无障碍状态刷新 */
     private fun refreshAccess() {
-        val on = DshAccessibilityService.isEnabled()
+        val on = DshAccessibilityService.isConnected()
         findViewById<TextView>(R.id.subAccess).text = getString(
             if (on) R.string.setting_access_sub_on else R.string.setting_access_sub_off
         )
@@ -930,7 +930,12 @@ class SettingsActivity : Activity() {
         progressNotifyValue?.text = if (ProgressHub.notificationsEnabled(this)) granted else denied
         progressOverlayValue?.text =
             if (android.provider.Settings.canDrawOverlays(this)) granted else denied
-        progressA11yValue?.text = if (DshAccessibilityService.isEnabled()) granted else denied
+        progressA11yValue?.text = when {
+            DshAccessibilityService.isConnected() -> granted
+            DshAccessibilityService.isEnabled(this) -> getString(R.string.settings_a11y_enabled_not_connected)
+            DshAccessibilityService.isListedButDisabled(this) -> getString(R.string.settings_a11y_disabled_by_system)
+            else -> denied
+        }
         progressKeepaliveValue?.text = runCatching {
             val pm = getSystemService(android.os.PowerManager::class.java)
             if (pm.isIgnoringBatteryOptimizations(packageName)) {
@@ -1088,7 +1093,7 @@ class SettingsActivity : Activity() {
 
     /** 无障碍：未开启则跳系统设置引导开启；已开启则提示已可用 */
     private fun handleAccessibility() {
-        if (DshAccessibilityService.isEnabled()) {
+        if (DshAccessibilityService.isConnected()) {
             Toast.makeText(
                 this, getString(R.string.access_enabled_toast),
                 Toast.LENGTH_SHORT

@@ -222,6 +222,29 @@ The documented environment already puts `scr`, `loop`, `notify`, and `say` on yo
 - `scr interference [since-ms]` — checks whether the user grabbed the phone mid-flow. Record `before=$(( $(date +%s) * 1000 ))` (portable arithmetic form: don't rely on GNU-only `%3N`, the Android `date` in /system/bin ignores it), run the flow, then check. `"interfered":true` means a real touch happened (your own injected gestures are excluded) — stop, re-dump, and ask the user. Window changes alone are not interference. Taps carry small randomized offsets so they do not look robotic; avoid rapid taps during an animation because they can land on the wrong target.
 - **Speed**: suggest that the user turn OFF thinking mode for UI automation sessions, or use the `fast_mode` tool.
 
+### Accessibility readiness: "enabled" is not "connected"
+
+Android keeps two independent states for an accessibility service (official docs:
+`AccessibilityManager.getEnabledAccessibilityServiceList`): the user has granted it in system
+settings, and the service actually bound to the app process. Recent builds report both:
+
+- `GET /status` → `permissions.accessibility` (system-enabled) and
+  `permissions.accessibility_connected` (bound). Only both true means actions work.
+- Screen/gesture/vision endpoints return a structured 503 instead of a bare error:
+  `{ok:false,error,accessibility_enabled,accessibility_connected,accessibility_listed_but_disabled,retryable,action}`.
+  The app also waits ~1.5s for a transient bind before answering.
+
+How to react:
+
+- `retryable:true` → the service is enabled but not bound yet: wait ~2s and retry once.
+- `retryable:false` and `accessibility_listed_but_disabled:true` → it was granted before but Android
+  disabled it (force-stop, app update, some ROMs). Do not loop. Tell the user, and offer to open the
+  page: `POST /activity {"name":"accessibility-settings"}`. Apps cannot enable accessibility
+  themselves - this is a platform rule, not an app limitation.
+- `retryable:false` otherwise → never granted; same settings page.
+- Probe once at the start of a UI task, not before every action; the endpoints already retry the
+  transient case internally.
+
 **Anti-fraud-guarded apps: the default answer is NO.**
 WeChat（微信）/ QQ / banking and financial apps run real-time device-integrity checks (accessibility detection, gesture histograms, root detection): automating them gets accounts **banned**, sometimes permanently, and a mistimed tap can move money. Douyin（抖音）/ 小红书 and heavy-DRM apps are nearly as hostile. Refuse by default; for financial apps it is a flat no. If the user insists after you state the ban risk in one plain sentence — and only then — they must be watching live (never unattended), and the ban, account loss and any ToS violation are **theirs**; say that out loud before starting. Never help make injected input undetectable — that crosses from automation into fraud.
 

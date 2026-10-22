@@ -455,6 +455,29 @@ object AgentBridge {
         // 只统计**动作类**端点（点击/输入/滑动/按键/启动…），读屏类不计入 ——
         // 否则每看一眼屏幕都算一步，通知会烦人。
         if (method == "POST" && path in A11Y_ACTION_PATHS) noteA11yOperation(ctx, path)
+        // v1.7.3：无障碍「已启用但未绑定」时先等 1.5s，再给出可区分的错误，
+        // 避免 Agent 预检/动作拿到笼统的 503 就判定「无障碍没开」。
+        if (path in A11Y_REQUIRED_PATHS && !DshAccessibilityService.isConnected()) {
+            val enabled = DshAccessibilityService.isEnabled(ctx)
+            if (enabled) DshAccessibilityService.awaitConnection(1_500L)
+            if (!DshAccessibilityService.isConnected()) {
+                val listed = !enabled && DshAccessibilityService.isListedButDisabled(ctx)
+                val msg = when {
+                    enabled -> "accessibility service is enabled in system settings but not connected yet; retry in a moment, or toggle the service off/on in Settings > Accessibility if it persists"
+                    listed -> "accessibility was granted before but Android disabled the service (force-stop or app update); re-enable it in Settings > Accessibility -> DSH Screen Helper - the app cannot enable it itself. Bridge can open the page: POST /activity {\"name\":\"accessibility-settings\"}"
+                    else -> "accessibility service not enabled (enable 'DSH Screen Helper' in Settings > Accessibility)"
+                }
+                return 503 to JSONObject()
+                    .put("ok", false)
+                    .put("error", msg)
+                    .put("accessibility_enabled", enabled)
+                    .put("accessibility_connected", false)
+                    .put("accessibility_listed_but_disabled", listed)
+                    .put("retryable", enabled)
+                    .put("action", if (listed || !enabled) "open accessibility settings and enable DSH Screen Helper" else "retry")
+                    .toString()
+            }
+        }
         return when {
             method == "POST" && path == "/notify" -> notify(ctx, body)
             method == "GET" && path == "/screen" -> screen(query)
@@ -894,6 +917,16 @@ document.getElementById('api').textContent = checks.map(function(c){
         "/scroll-find", "/scroll-center", "/scroll-edge",
         "/launch", "/launch-intent", "/vision/tap", "/vision/drag",
         "/loop/run",
+    )
+
+    /**
+     * v1.7.3：真正依赖无障碍服务的端点（读屏 + 动作 + 视觉 + 截图）。
+     * 进入路由前统一做「已启用但尚未连接」的短暂等待，而不是让每个端点各自 503。
+     */
+    private val A11Y_REQUIRED_PATHS = A11Y_ACTION_PATHS + setOf(
+        "/screen", "/ocr", "/screen-changed", "/pick", "/diff", "/interference",
+        "/wait-text", "/screenshot", "/app-screenshot", "/frame-diff", "/frame-wait",
+        "/vision/track", "/vision/crop", "/vision/drag",
     )
 
     /** 连续操作够几步才提示（太少会打扰，太多用户又看不到过程）。 */
@@ -1972,7 +2005,8 @@ document.getElementById('api').textContent = checks.map(function(c){
             }
 
             val perms = JSONObject()
-                .put("accessibility", DshAccessibilityService.instance != null)
+                .put("accessibility", DshAccessibilityService.isEnabled(ctx))
+                .put("accessibility_connected", DshAccessibilityService.isConnected())
                 .put("all_files", runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false))
                 .put("overlay", runCatching { android.provider.Settings.canDrawOverlays(ctx) }.getOrDefault(false))
                 .put("notifications", if (android.os.Build.VERSION.SDK_INT >= 33)
