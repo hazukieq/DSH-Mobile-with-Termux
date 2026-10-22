@@ -503,6 +503,7 @@ object AgentBridge {
             method == "GET" && path == "/ocr" -> ocr(ctx, query)
             method == "GET" && path == "/screen-changed" -> screenChanged()
             method == "GET" && path == "/scene" -> scene(ctx, query)
+            method == "POST" && path == "/act" -> act(ctx, body)
             method == "POST" && path == "/pick" -> pick(body)
             method == "GET" && path == "/local/status" -> localStatus(ctx)
             method == "GET" && path == "/frame-diff" -> frameDiff()
@@ -3340,6 +3341,124 @@ document.getElementById('api').textContent = checks.map(function(c){
         }
         flush()
         return lines
+    }
+
+    /**
+     * POST /act（v1.9.8，提案 P2-7）：事务化批量操作。
+     *
+     * 一次调用执行多步，每步可带内联 expect；返回每步 status/verified/elapsedMs，
+     * 避免「一动作一往返」。step 支持：
+     *   tap/tapDesc/tapId/tapXY/listId+itemIndex · input/append · key · sleepMs · expect
+     * 顶层：onFail=stop|continue，returnScreens=true。
+     */
+    private fun act(ctx: Context, body: String): Pair<Int, String> {
+        val svc = DshAccessibilityService.instance
+            ?: return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled"}"""
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val steps = obj.optJSONArray("steps")
+            ?: return 400 to """{"ok":false,"error":"steps[] required"}"""
+        val onFail = obj.optString("onFail", "stop").lowercase()
+        val returnScreens = obj.optBoolean("returnScreens", false)
+        val t0 = System.currentTimeMillis()
+        val results = JSONArray()
+        var allOk = true
+        var failedAt = -1
+        val before = if (returnScreens) runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault("") else ""
+
+        for (i in 0 until steps.length()) {
+            val st = steps.optJSONObject(i) ?: continue
+            val stepStart = System.currentTimeMillis()
+            val r = JSONObject()
+            var action = "?"
+            var actionOk = true
+            when {
+                st.has("tap") -> { action = "tap"; actionOk = svc.tapText(st.getString("tap")) }
+                st.has("tapDesc") -> { action = "tap-desc"; actionOk = svc.tapDesc(st.getString("tapDesc")) }
+                st.has("tapId") -> {
+                    action = "tap-id"
+                    actionOk = runCatching { svc.tapById(st.getString("tapId")) != null }.getOrDefault(false)
+                }
+                st.has("tapXY") -> {
+                    action = "tap-xy"
+                    val xy = st.optJSONArray("tapXY")
+                    actionOk = xy != null && xy.length() >= 2 &&
+                        svc.dispatchTap(xy.optDouble(0).toFloat(), xy.optDouble(1).toFloat())
+                }
+                st.has("listId") && st.has("itemIndex") -> {
+                    action = "tap-list"
+                    val nodes = runCatching {
+                        JSONObject(svc.dumpScreenJson("all", ocrFallback = false)).optJSONArray("nodes")
+                    }.getOrNull()
+                    var cx = -1; var cy = -1
+                    if (nodes != null) for (j in 0 until nodes.length()) {
+                        val n = nodes.optJSONObject(j) ?: continue
+                        if (n.optString("listId") == st.getString("listId") &&
+                            n.optInt("itemIndex", -1) == st.getInt("itemIndex")
+                        ) { cx = n.optInt("x"); cy = n.optInt("y"); break }
+                    }
+                    actionOk = cx >= 0 && svc.dispatchTap(cx.toFloat(), cy.toFloat())
+                }
+                st.has("input") -> {
+                    action = "input"
+                    actionOk = svc.inputText(st.getString("input"), st.optBoolean("append", false))
+                }
+                st.has("key") -> {
+                    action = "key"
+                    actionOk = svc.performGlobalActionByName(st.getString("key"))
+                }
+                st.has("sleepMs") -> {
+                    action = "sleep"
+                    runCatching { Thread.sleep(st.getLong("sleepMs").coerceIn(0L, 10_000L)) }
+                }
+                st.has("expect") -> action = "expect"
+                else -> { action = "unknown"; actionOk = false }
+            }
+
+            var verified = true
+            var verifyHow = ""
+            val exp = st.optJSONObject("expect")
+            if (exp != null && actionOk) {
+                val anyText = ArrayList<String>()
+                exp.optJSONArray("anyText")?.let { a ->
+                    for (k in 0 until a.length()) a.optString(k).takeIf { it.isNotBlank() }?.let(anyText::add)
+                }
+                val timeoutMs = exp.optLong("timeoutMs", 4_000L).coerceIn(200L, 15_000L)
+                val dead = System.currentTimeMillis() + timeoutMs
+                verified = false
+                while (System.currentTimeMillis() < dead) {
+                    val dump = runCatching { svc.dumpScreenCompact("all") }.getOrDefault("")
+                    val hit = anyText.firstOrNull { dump.contains(it, true) }
+                    if (hit != null) { verified = true; verifyHow = "anyText:$hit"; break }
+                    Thread.sleep(200)
+                }
+            }
+            val stepOk = actionOk && verified
+            r.put("index", i)
+            r.put("action", action)
+            r.put("ok", stepOk)
+            r.put("verified", verified)
+            r.put("verifyHow", verifyHow)
+            r.put("elapsedMs", System.currentTimeMillis() - stepStart)
+            if (!stepOk) {
+                r.put("failedAt", i)
+                r.put("hint", if (!actionOk) "action could not be dispatched (target not found?)" else "expect not met within timeout")
+                allOk = false
+                if (failedAt < 0) failedAt = i
+            }
+            results.put(r)
+            if (!stepOk && onFail != "continue") break
+        }
+
+        val out = JSONObject()
+            .put("ok", allOk)
+            .put("steps", results)
+            .put("elapsedMs", System.currentTimeMillis() - t0)
+            .put("onFail", onFail)
+        if (failedAt >= 0) out.put("failedAt", failedAt)
+        if (returnScreens) out.put("beforeScreen", before)
+            .put("afterScreen", runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault(""))
+        return 200 to out.toString()
     }
 
     /** POST /wait-text —— 等文本出现/消失（v1.2.141）：{text, gone?, timeoutMs?} */

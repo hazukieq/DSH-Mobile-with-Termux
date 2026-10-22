@@ -205,6 +205,24 @@ object PpOcr {
             return Result(false, unavailable = true, reason = "models for tier '$tier' missing (call /ocr?engine=ppocr6&download=$tier)")
         }
         val t0 = System.currentTimeMillis()
+        // P2-8：先走常驻 worker（模型只加载一次）；失败再回落一次性 CLI。
+        val warm = PpOcrWorker.recognize(ctx, png, tier)
+        if (warm != null) {
+            val items = warm.optJSONArray("items") ?: JSONArray()
+            val blocks = ArrayList<Block>()
+            for (i in 0 until items.length()) items.optJSONObject(i)?.let { o ->
+                val bbox = o.optJSONArray("bbox")
+                val l = bbox?.optInt(0) ?: o.optInt("left")
+                val t = bbox?.optInt(1) ?: o.optInt("top")
+                val rr = bbox?.optInt(2) ?: o.optInt("right")
+                val bb = bbox?.optInt(3) ?: o.optInt("bottom")
+                val text = o.optString("text")
+                if (text.isNotBlank()) {
+                    blocks.add(Block(text, l, t, rr, bb, o.optDouble("conf", 0.0)))
+                }
+            }
+            return Result(true, blocks = blocks, costMs = System.currentTimeMillis() - t0)
+        }
         return runCatching {
             val pb = ProcessBuilder(script(ctx).absolutePath, png.absolutePath, "--tier", tier, "--json")
             pb.redirectErrorStream(true)

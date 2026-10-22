@@ -124,10 +124,32 @@ POST /tap {"listId":"L2","itemIndex":0}
 后续 /scene 显示页面已进入「网络和互联网」（标题/网络/Hazukie-spot）
 ```
 
+### P2-7 `/act` 事务化（v1.9.8）
+
+```json
+POST /act
+{"steps":[
+  {"tapDesc":"返回","expect":{"anyText":["引擎已就绪"],"timeoutMs":4000}},
+  {"tapDesc":"设置","expect":{"anyText":["权限中心"],"timeoutMs":5000}},
+  {"key":"back"}],
+ "onFail":"stop"}
+```
+
+回执：每步 `index/action/ok/verified/verifyHow/elapsedMs`，失败带 `failedAt/hint`；顶层
+`ok/elapsedMs/onFail`，可选 `returnScreens:true`（before/after 紧凑读屏）。
+step 支持 `tap`、`tapDesc`、`tapId`、`tapXY`、`listId+itemIndex`、`input(+append)`、`key`、
+`sleepMs`、`expect`。实测 3 步（返回→设置→back）一次调用 878ms，全部 verified。
+
+### P2-8 OCR 常驻 worker（v1.9.9）
+
+- `ppocr6_worker.py` 常驻进程：模型只加载一次，App 按 JSON 行喂图片路径；
+  进程崩溃/超时自动销毁并回落一次性 CLI；
+- 实测同一屏连续两次：冷启动 1823ms → 热调用 **1251ms**（快约 31%，目标区间 1.2–1.8s）；
+- 尚未做：rec 批量推理、`scr changed` 触发、区域增量（下一批）。
+
 ## 未落地（下一批）
 
 | 提案 | 状态 | 备注 |
 |---|---|---|
-| P2-7 `/act` 事务化 | 待做 | 可在 `loop run` 之上抽象 |
-| P2-8 OCR 批量/增量 | 待做 | 依赖 P1-4 已就绪 |
-| P3-9 失败可观测性（完整版） | 部分 | tap 已带 failedAt/screenHash/candidates/hint |
+| P2-8 完整版（batch rec / 区域增量） | 部分 | worker 已落地；提速到 ~1s 需改 ppocr6 识别批处理 |
+| P3-9 失败可观测性（完整版） | 部分 | tap/act 已带 failedAt/screenHash/candidates/hint |

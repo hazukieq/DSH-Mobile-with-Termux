@@ -1315,7 +1315,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             runCatching {
                 val share = File(root, "share/ppocr6").apply { mkdirs() }
                 val pyDir = File(share, "py").apply { mkdirs() }
-                listOf("onnxruntime.py", "libortshim.so").forEach { name ->
+                listOf("onnxruntime.py", "libortshim.so", "ppocr6_worker.py").forEach { name ->
                     val bytes = ctx.assets.open("ppocr6/py/$name").use { it.readBytes() }
                     val dst = File(pyDir, name)
                     if (!dst.isFile || dst.length() != bytes.size.toLong()) dst.writeBytes(bytes)
