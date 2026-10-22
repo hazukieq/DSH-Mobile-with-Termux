@@ -205,6 +205,11 @@ class MainActivity : Activity() {
         ) {
             return   // 门禁未过：不启动引擎（引擎起了前端也渲染不了，纯粹耗电）
         }
+        // v2.3.6（用户实测：退出后再点图标，引擎不启动）：
+        // 显式退出/划掉任务后 Activity 可能仍以 savedInstanceState 重建（不新建），
+        // onCreate 里「savedInstanceState == null 才清标记」就不会执行 → 引擎永远跳过启动。
+        // 用户回到前台本身就是明确的启动意图，这里补一次清理。
+        clearUserExitedIfNeeded("resume")
         // 前台进入即拉起前台服务；服务存在则幂等
         EngineService.start(this)
         // 页面卡死看门狗（v1.2.100）：前台时才检测（后台由系统节流，探针会误判）
@@ -267,9 +272,21 @@ class MainActivity : Activity() {
     /** v1.3.44：singleTask 下其它 App 再次分享会走 onNewIntent。 */
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        clearUserExitedIfNeeded("new intent")
         if (intent != null) {
             setIntent(intent)
             runCatching { handleIncomingShare(intent) }
+        }
+    }
+
+    /** v2.3.6：用户重新回到 App（resume/new intent）时清除「正常退出」标记并允许启动引擎。 */
+    private fun clearUserExitedIfNeeded(why: String) {
+        runCatching {
+            if (EngineService.userExited(this)) {
+                android.util.Log.i("MainActivity", "user reopened app ($why): clearing userExited and starting engine")
+                EngineService.setUserExited(this, false)
+                (application as DshApp).supervisor.clearUserStop("user reopened the app ($why)")
+            }
         }
     }
 
