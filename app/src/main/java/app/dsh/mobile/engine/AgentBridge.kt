@@ -962,9 +962,9 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 进入路由前统一做「已启用但尚未连接」的短暂等待，而不是让每个端点各自 503。
      */
     private val A11Y_REQUIRED_PATHS = A11Y_ACTION_PATHS + setOf(
-        "/screen", "/ocr", "/screen-changed", "/pick", "/diff", "/interference",
+        "/screen", "/screen-changed", "/pick", "/diff", "/interference",
         "/wait-text", "/screenshot", "/app-screenshot", "/frame-diff", "/frame-wait",
-        "/vision/track", "/vision/crop", "/vision/drag", "/scene",
+        "/vision/track", "/vision/crop", "/vision/drag",
     )
 
     /** 连续操作够几步才提示（太少会打扰，太多用户又看不到过程）。 */
@@ -1515,6 +1515,29 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun ocr(ctx: Context, query: String): Pair<Int, String> {
         val params = parseQuery(query)
+        val tier = (params["tier"] ?: "tiny").lowercase()
+        // v1.9.6（P1-4 收尾）：medium 档按需下载；也可查状态。均不需要无障碍。
+        if (params["engine"]?.lowercase() == "ppocr6" && params["download"] != null) {
+            val rawDownload = params["download"].orEmpty()
+            val want = rawDownload.takeIf { it.isNotBlank() && it != "1" } ?: tier
+            val err = PpOcr.ensureModels(ctx, want)
+            return if (err == null) {
+                200 to JSONObject().put("ok", true).put("engine", "ppocr6").put("tier", want)
+                    .put("deployed", PpOcr.isTierDeployed(ctx, want))
+                    .put("sizes", JSONObject(PpOcr.tierSizes(ctx, want).toMap())).toString()
+            } else {
+                503 to JSONObject().put("ok", false).put("engine", "ppocr6").put("tier", want)
+                    .put("unavailable", true).put("reason", err).toString()
+            }
+        }
+        if (params["engine"]?.lowercase() == "ppocr6" && params["models"] == "1") {
+            val list = JSONArray()
+            listOf("tiny", "medium").forEach { t ->
+                list.put(JSONObject().put("tier", t).put("deployed", PpOcr.isTierDeployed(ctx, t))
+                    .put("sizes", JSONObject(PpOcr.tierSizes(ctx, t).toMap())))
+            }
+            return 200 to JSONObject().put("ok", true).put("tiers", list).toString()
+        }
         // v1.9.4：装 OCR 依赖不需要无障碍（只需 pkg/context），放在 svc 判空之前。
         if (params["engine"]?.lowercase() == "ppocr6" && params["ensure"] in listOf("1", "true", "yes")) {
             val err = PpOcr.ensureDeps(ctx)
@@ -1533,7 +1556,32 @@ document.getElementById('api').textContent = checks.map(function(c){
                 .toString()
         }
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled for screenshot capture"}"""
+        if (svc == null) {
+            // v1.9.6：无障碍不可用时，尝试 root/Shizuku 的 screencap 回退
+            if (params["engine"]?.lowercase() == "ppocr6") {
+                val shot = ShotFallback.capture(ctx)
+                if (shot != null) {
+                    val r = PpOcr.recognizeFile(ctx, shot, tier)
+                    shot.delete()
+                    if (r.ok) {
+                        val arr = JSONArray()
+                        r.blocks.forEach { b ->
+                            arr.put(JSONObject().apply {
+                                put("text", b.text); put("x", b.cx); put("y", b.cy)
+                                put("left", b.left); put("top", b.top); put("right", b.right); put("bottom", b.bottom)
+                                put("conf", b.conf)
+                            })
+                        }
+                        return 200 to JSONObject().put("ok", true).put("engine", "ppocr6-$tier")
+                            .put("via", "privileged-screencap").put("costMs", r.costMs)
+                            .put("lines", r.blocks.size).put("blocks", arr).toString()
+                    }
+                    return 503 to JSONObject().put("ok", false).put("engine", "ppocr6-$tier")
+                        .put("unavailable", true).put("reason", r.reason).toString()
+                }
+            }
+            return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled for screenshot capture"}"""
+        }
         // v1.8.2（提案 P1-4）：PP-OCRv6 tiny 本地兜底（Termux python+onnxruntime）
         if (params["engine"]?.lowercase() == "ppocr6") {
             if (!PpOcr.ready(ctx)) {
@@ -1547,7 +1595,7 @@ document.getElementById('api').textContent = checks.map(function(c){
             val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 ?: return 500 to """{"ok":false,"error":"bitmap_decode_failed"}"""
-            val r = PpOcr.recognize(svc, bmp)
+            val r = PpOcr.recognize(svc, bmp, tier)
             bmp.recycle()
             val arr = JSONArray()
             r.blocks.forEach { b ->

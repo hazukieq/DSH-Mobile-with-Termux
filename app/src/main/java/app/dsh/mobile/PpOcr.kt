@@ -6,6 +6,8 @@ import app.dsh.mobile.engine.EngineConfig
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.TimeUnit
 
 /**
@@ -49,6 +51,75 @@ object PpOcr {
         script(ctx).isFile && modelsDir(ctx).isDirectory &&
             File(modelsDir(ctx), "det_tiny.onnx").isFile &&
             File(modelsDir(ctx), "rec_tiny.onnx").isFile
+
+    fun isTierDeployed(ctx: Context, tier: String): Boolean {
+        val d = modelsDir(ctx)
+        if (!script(ctx).isFile) return false
+        return File(d, "det_$tier.onnx").isFile && File(d, "rec_$tier.onnx").isFile &&
+            File(d, "rec_$tier.yml").isFile
+    }
+
+    fun tierSizes(ctx: Context, tier: String): Map<String, Long> = runCatching {
+        val d = modelsDir(ctx)
+        listOf("det_$tier.onnx", "rec_$tier.onnx", "rec_$tier.yml").associateWith {
+            File(d, it).takeIf { f -> f.isFile }?.length() ?: 0L
+        }
+    }.getOrDefault(emptyMap())
+
+    /** v1.9.6：medium 档按需下载（约 139MB；HuggingFace 或 hf-mirror 镜像）。 */
+    fun ensureModels(ctx: Context, tier: String): String? {
+        if (tier == "tiny") return null // 随 APK 部署
+        if (tier != "medium") return "unknown tier '$tier' (tiny|medium)"
+        if (isTierDeployed(ctx, tier)) return null
+        val d = modelsDir(ctx).apply { mkdirs() }
+        val files = listOf(
+            Triple("det_$tier.onnx", "PP-OCRv6_medium_det_onnx", "inference.onnx"),
+            Triple("rec_$tier.onnx", "PP-OCRv6_medium_rec_onnx", "inference.onnx"),
+            Triple("rec_$tier.yml", "PP-OCRv6_medium_rec_onnx", "inference.yml"),
+        )
+        // 国内优先：ModelScope（实测 ~9MB/s）→ hf-mirror → 官方 HF。
+        val hostTemplates = listOf(
+            "https://modelscope.cn/models/PaddlePaddle/%s/resolve/master",
+            "https://hf-mirror.com/PaddlePaddle/%s/resolve/main",
+            "https://huggingface.co/PaddlePaddle/%s/resolve/main",
+        )
+        for ((destName, repo, srcName) in files) {
+            val dst = File(d, destName)
+            if (dst.isFile && dst.length() > 0) continue
+            var lastErr = "download failed"
+            var done = false
+            for (hostTemplate in hostTemplates) {
+                val host = hostTemplate.format(repo)
+                runCatching {
+                    val tmp = File(d, "$destName.part")
+                    val have = if (tmp.isFile) tmp.length() else 0L
+                    val conn = (URL("$host/$srcName").openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15_000
+                        readTimeout = 300_000
+                        instanceFollowRedirects = true
+                        setRequestProperty("User-Agent", "DSH-Mobile/1.9")
+                        if (have > 0) setRequestProperty("Range", "bytes=$have-")
+                    }
+                    if (conn.responseCode !in 200..299) {
+                        lastErr = "HTTP ${conn.responseCode} from $host"
+                        conn.disconnect(); return@runCatching
+                    }
+                    val append = conn.responseCode == 206 && have > 0
+                    conn.inputStream.use { input ->
+                        java.io.FileOutputStream(tmp, append).use { out -> input.copyTo(out) }
+                    }
+                    conn.disconnect()
+                    if (tmp.length() <= 0) { lastErr = "empty body from $host"; tmp.delete(); return@runCatching }
+                    if (append && tmp.length() < have) { lastErr = "short append"; return@runCatching }
+                    tmp.renameTo(dst)
+                    done = true
+                }.onFailure { lastErr = it.message ?: it.javaClass.simpleName }
+                if (done) break
+            }
+            if (!done) return "cannot download $destName: $lastErr"
+        }
+        return if (isTierDeployed(ctx, tier)) null else "models downloaded but files missing"
+    }
 
     @Volatile private var depsOk: Boolean? = null
 
@@ -118,14 +189,24 @@ object PpOcr {
     }
 
     /** 识别一张位图（写入 cache PNG 后调用脚本，解析 --json 输出）。 */
-    fun recognize(ctx: Context, bitmap: Bitmap): Result {
+    fun recognize(ctx: Context, bitmap: Bitmap, tier: String = "tiny"): Result {
+        if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
+        val png = File(ctx.cacheDir, "ppocr6-${System.currentTimeMillis()}.png")
+        runCatching { png.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+            .onFailure { return Result(false, reason = "write png failed: ${it.message}") }
+        return recognizeFile(ctx, png, tier).also { png.delete() }
+    }
+
+    /** 识别一个已存在的 PNG（供 root/Shizuku 截图回退复用）。 */
+    fun recognizeFile(ctx: Context, png: File, tier: String = "tiny"): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
         if (!ready(ctx)) return Result(false, unavailable = true, reason = "python/onnxruntime not installed (call /ocr?engine=ppocr6&ensure=1)")
+        if (!isTierDeployed(ctx, tier)) {
+            return Result(false, unavailable = true, reason = "models for tier '$tier' missing (call /ocr?engine=ppocr6&download=$tier)")
+        }
         val t0 = System.currentTimeMillis()
-        val png = File(ctx.cacheDir, "ppocr6-${System.currentTimeMillis()}.png")
         return runCatching {
-            png.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            val pb = ProcessBuilder(script(ctx).absolutePath, png.absolutePath, "--tier", "tiny", "--json")
+            val pb = ProcessBuilder(script(ctx).absolutePath, png.absolutePath, "--tier", tier, "--json")
             pb.redirectErrorStream(true)
             val p = pb.start()
             val out = p.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
@@ -138,7 +219,6 @@ object PpOcr {
             val blocks = parseBlocks(out)
             Result(true, blocks = blocks, costMs = System.currentTimeMillis() - t0)
         }.getOrElse { Result(false, reason = "ppocr6 run failed: ${it.message}", costMs = System.currentTimeMillis() - t0) }
-            .also { png.delete() }
     }
 
     /** 解析 `--json`：兼容 {"blocks":[...]} 与逐行 JSON。 */

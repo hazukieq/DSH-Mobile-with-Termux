@@ -92,7 +92,15 @@ POST /tap
   用 ctypes 提供 `InferenceSession / SessionOptions / GraphOptimizationLevel /
   set_default_logger_severity`，ppocr6 无需安装任何 python 绑定即可 `import onnxruntime`；
   shim 随 APK 部署到 `$PREFIX/share/ppocr6/py/`；
+- **medium 档按需下载（v1.9.7）**：`GET /ocr?engine=ppocr6&download=medium`，源顺序
+  **ModelScope（国内，实测约 9MB/s）→ hf-mirror → HuggingFace**，支持 `.part` 断点续传
+  （det 62MB + rec 76MB + yml 150KB，实测全部下载成功）；状态查
+  `GET /ocr?engine=ppocr6&models=1`；`&tier=medium` 切换识别档位（实测 43 行 / 13.2s）；
+- **无 a11y 截图回退（v1.9.6）**：无障碍不可用时，OCR 走 `Privilege.runPrivileged`（Shizuku 优先
+  → su 兜底）执行系统 `screencap`，返回 `via:"privileged-screencap"`；没有 root/Shizuku 时仍回
+  `a11y_off` 并引导开服务；
 - 实测（LineageOS/aarch64，1080×2400）：`/ocr?engine=ppocr6` → `lines:45, costMs:2022`；
+  无障碍关闭 + root：`via:"privileged-screencap", lines:45, costMs:1975`；
   `/scene?engine=ppocr6` → 98 节点（31 个 OCR 行，`near-clickable` 正确继承 a11y 索引）；
   CLI `ppocr6 ... --tier tiny --json` 单图 0.98s（det 0.64 + rec 0.09）；
 - `/scene` 在 ML Kit 不可用或 `engine=ppocr6` 时自动用 PP-OCRv6。
