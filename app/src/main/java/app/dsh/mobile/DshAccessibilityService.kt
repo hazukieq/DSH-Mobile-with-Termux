@@ -66,7 +66,12 @@ class DshAccessibilityService : AccessibilityService() {
         // 于是「长按隐藏后，悬浮窗在本进程内再也回不来」（实测：服务重连、切前台都不恢复）。
         // 服务重连 = 系统层面重新装配无障碍能力，此时恢复显示是符合直觉的语义。
         runCatching {
-            StatusOverlay.resetHidden()
+            // v2.3.2：用户划掉 App / 点通知退出后，userExited=true。
+            // 此时服务若被系统重连，不允许再把悬浮窗拉回来（用户明确要它消失）。
+            if (app.dsh.mobile.service.EngineService.userExited(this)) {
+                android.util.Log.i("DshA11y", "overlay not shown: user exited")
+            } else {
+                StatusOverlay.resetHidden()
             // v1.2.182（用户要求）：**原「试验性功能」开关已移除**，悬浮窗常驻——
             // 开关取消后不再有"默认不显示"的语义，服务连上即展示（用户随时看到 AI 在做什么）。
             StatusOverlay.show(this)
@@ -77,6 +82,7 @@ class DshAccessibilityService : AccessibilityService() {
             // 代码整体保留，排查清楚后解开下面两行注释即可恢复。
             // tickerBar().show()
             // tickerBar().startPolling()
+            }
         }.onFailure { android.util.Log.w("DshA11y", "overlay show failed: ${it.message}") }
         // 语音输入（v1.2.65）：麦克风回调由服务自己持有 —— 旧版在 MainActivity 里赋值，
         // 主界面没活着时点麦克风完全无响应（且面板因窗口 token 不合法从未显示过）。
