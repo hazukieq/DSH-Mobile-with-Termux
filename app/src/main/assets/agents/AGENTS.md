@@ -147,7 +147,7 @@ page instead of the control. For anything with a time window:
 
 ### /scene paging and tap forms
 
-`GET /scene` is paginated by default (`limit` 120, `offset` 0) because tool output has a ~20KB cap and
+`GET /scene` is paginated by default (`limit` 80, `offset` 0; the server auto-shrinks a page to keep it under 18KB) because tool output has a ~20KB cap and
 an unpaginated merged scene could exceed it. The reply always includes `total`, `offset`, `limit` and
 `nextOffset` (`null` = last page); fetch the next page with `&offset=<nextOffset>` when needed. Nodes
 are compact (text/desc/bounds/center/source/clickable/flags); pass `&verbose=1` only when you need

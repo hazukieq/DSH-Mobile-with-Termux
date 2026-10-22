@@ -3402,11 +3402,20 @@ document.getElementById('api').textContent = checks.map(function(c){
         val perf = JSONObject().put("a11y", a11yMs).put("ocr", ocrMs)
         // v2.4.1：分页返回，任何一页都远低于 20KB；nextOffset=null 表示结束。
         val total = out.length()
-        val limit = (params["limit"]?.toIntOrNull() ?: 120).coerceIn(1, 1000)
+        var limit = (params["limit"]?.toIntOrNull() ?: 80).coerceIn(1, 1000)
         val offset = (params["offset"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
-        val page = JSONArray()
-        var i = offset
-        while (i < total && i < offset + limit) { page.put(out.get(i)); i++ }
+        fun buildPage(n: Int): JSONArray {
+            val p = JSONArray()
+            var k = offset
+            while (k < total && k < offset + n) { p.put(out.get(k)); k++ }
+            return p
+        }
+        var page = buildPage(limit)
+        // 硬保证单页 <18KB（工具层 20KB 截断），超了就自动缩页；不返回非法 JSON。
+        while (page.toString().length > 18_000 && limit > 1) {
+            limit = (limit * 3) / 4
+            page = buildPage(limit)
+        }
         return 200 to JSONObject().apply {
             put("ok", true)
             put("nodes", page)
