@@ -232,7 +232,7 @@ object ProgressHub {
                     }
                     StatusOverlay.setAction(listOf(action, tail).filter { it.isNotBlank() }.joinToString(" · "))
                     if ((snap.kind == "done" || snap.kind == "error") && snap.detail.isBlank()) {
-                        StatusOverlay.flashCompleteDefault(6000L)
+                        StatusOverlay.flashCompleteDefault(15_000L)
                     }
                 }
                 cancelNotification(ctx)

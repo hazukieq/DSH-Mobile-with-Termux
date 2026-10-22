@@ -115,7 +115,8 @@ object StatusOverlay {
     /** 状态点配色（与 drawable 默认色一致，运行时切换） */
     private const val COLOR_IDLE = 0xFF9AA0A6.toInt()      // 中性灰
     private const val COLOR_WORKING = 0xFF7DD3FC.toInt()   // 强调蓝
-    private const val COLOR_DONE = 0xFF81C995.toInt()      // 完成绿
+    // v2.4.8（用户要求）：完成/结束时圆点变**红**，比绿色醒目，避免错过。
+    private const val COLOR_DONE = 0xFFFF5A5F.toInt()      // 完成/结束：红
     private const val COLOR_RECORDING = 0xFFF28B82.toInt() // 录音红
 
     fun isAvailable(): Boolean = DshAccessibilityService.instance != null
@@ -1086,7 +1087,7 @@ object StatusOverlay {
     /**
      * 对话完成提示：绿色高亮 + 短暂显示，到点自动回空闲。
      */
-    fun flashComplete(summary: String, holdMs: Long = 6_000L) {
+    fun flashComplete(summary: String, holdMs: Long = 15_000L) {
         main {
             val s = statusText ?: return@main
             working = true
@@ -1103,7 +1104,7 @@ object StatusOverlay {
     }
 
     /** 默认完成文案（供无 Context 的调用方，如桥接层 handler） */
-    fun flashCompleteDefault(holdMs: Long = 6_000L) {
+    fun flashCompleteDefault(holdMs: Long = 15_000L) {
         flashComplete(appCtx?.getString(R.string.overlay_turn_done) ?: "Done", holdMs)
     }
 
