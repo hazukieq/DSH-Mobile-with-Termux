@@ -468,7 +468,10 @@ object AgentBridge {
         if (method == "POST" && path in A11Y_ACTION_PATHS) noteA11yOperation(ctx, path)
         // v1.7.3：无障碍「已启用但未绑定」时先等 1.5s，再给出可区分的错误，
         // 避免 Agent 预检/动作拿到笼统的 503 就判定「无障碍没开」。
-        if (path in A11Y_REQUIRED_PATHS && !DshAccessibilityService.isConnected()) {
+        // v1.9.3：`/ocr?engine=ppocr6&ensure=1` 只是装依赖，不需要无障碍截图，
+        // 不应当因为服务未连接就被 503 挡住。
+        val ensureOnly = path == "/ocr" && parseQuery(query)["ensure"] in listOf("1", "true", "yes")
+        if (!ensureOnly && path in A11Y_REQUIRED_PATHS && !DshAccessibilityService.isConnected()) {
             val enabled = DshAccessibilityService.isEnabled(ctx)
             if (enabled) DshAccessibilityService.awaitConnection(1_500L)
             if (!DshAccessibilityService.isConnected()) {
@@ -497,7 +500,7 @@ object AgentBridge {
         return when {
             method == "POST" && path == "/notify" -> notify(ctx, body)
             method == "GET" && path == "/screen" -> screen(query)
-            method == "GET" && path == "/ocr" -> ocr(query)
+            method == "GET" && path == "/ocr" -> ocr(ctx, query)
             method == "GET" && path == "/screen-changed" -> screenChanged()
             method == "GET" && path == "/scene" -> scene(ctx, query)
             method == "POST" && path == "/pick" -> pick(body)
@@ -1510,20 +1513,30 @@ document.getElementById('api').textContent = checks.map(function(c){
      * （dumpScreenCompact 兜底），本端点用于强制刷新与诊断。
      * ?force=1 忽略缓存重新识别。
      */
-    private fun ocr(query: String): Pair<Int, String> {
+    private fun ocr(ctx: Context, query: String): Pair<Int, String> {
+        val params = parseQuery(query)
+        // v1.9.4：装 OCR 依赖不需要无障碍（只需 pkg/context），放在 svc 判空之前。
+        if (params["engine"]?.lowercase() == "ppocr6" && params["ensure"] in listOf("1", "true", "yes")) {
+            val err = PpOcr.ensureDeps(ctx)
+            if (err != null) {
+                return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
+                    .put("unavailable", true).put("reason", err).toString()
+            }
+            // v1.9.5：纯安装请求不需要无障碍；装完直接回执，不再走截图
+            return 200 to JSONObject()
+                .put("ok", true)
+                .put("engine", "ppocr6")
+                .put("deps", true)
+                .put("deployed", PpOcr.deployed(ctx))
+                .put("realBinding", PpOcr.realBindingReady(ctx))
+                .put("hint", "deps installed; OCR itself still needs the accessibility screenshot (or call /a11y/enable)")
+                .toString()
+        }
         val svc = DshAccessibilityService.instance
             ?: return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled for screenshot capture"}"""
-        val params = parseQuery(query)
         // v1.8.2（提案 P1-4）：PP-OCRv6 tiny 本地兜底（Termux python+onnxruntime）
         if (params["engine"]?.lowercase() == "ppocr6") {
-            if (params["ensure"] in listOf("1", "true", "yes")) {
-                val err = PpOcr.ensureDeps(svc)
-                if (err != null) {
-                    return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
-                        .put("unavailable", true).put("reason", err).toString()
-                }
-            }
-            if (!PpOcr.ready(svc)) {
+            if (!PpOcr.ready(ctx)) {
                 return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
                     .put("unavailable", true)
                     .put("reason", "ppocr6 deps missing: run /ocr?engine=ppocr6&ensure=1 (installs python + onnxruntime)")

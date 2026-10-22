@@ -11,10 +11,16 @@ ppocr6 —— PP-OCRv6 (ONNX Runtime, 纯 CPU) 本地 OCR，输出文字 + 可�
 """
 import argparse, json, math, os, re, sys, time
 
-# DSH Mobile: local onnxruntime shim (Termux package ships no python binding).
-_PYDIR = os.environ.get("PPOCR6_PY", "/data/user/0/com.termux/files/usr/share/ppocr6/py")
-if os.path.isdir(_PYDIR) and _PYDIR not in sys.path:
-    sys.path.insert(0, _PYDIR)
+# DSH Mobile: prefer the real Termux `python-onnxruntime` binding; only fall back to the
+# ctypes shim (share/ppocr6/py) when the package is not installed.
+try:
+    import importlib.util as _ilu
+    if _ilu.find_spec("onnxruntime") is None:
+        _PYDIR = os.environ.get("PPOCR6_PY", "/data/user/0/com.termux/files/usr/share/ppocr6/py")
+        if os.path.isdir(_PYDIR) and _PYDIR not in sys.path:
+            sys.path.insert(0, _PYDIR)
+except Exception:
+    pass
 
 import numpy as np
 import warnings

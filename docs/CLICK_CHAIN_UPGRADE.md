@@ -82,7 +82,12 @@ POST /tap
   实际 `.deb` 里只有 `libonnxruntime.so`、头文件与 cmake 配置，**没有** `site-packages/onnxruntime`
   ——不是 python 3.14 与 wheel 不匹配，而是这个包根本没带 python 绑定；`build.sh` 里虽然
   有 `pip install` wheel 的步骤，但当前仓库 revision 的产物没有它；
-- **解决（v1.8.8，用户要求「直接编译一个」）**：用 Termux clang + `onnxruntime_c_api.h`
+- **更正（v1.9.3，用户指出）**：Termux **有**对应的 python 包 `python-onnxruntime`
+  （Depends: python, python-numpy, python-pip, onnxruntime），应当 `pkg install python-onnxruntime`；
+  pip 在 bionic 上没有可用 wheel。之前 ensure 只装了 `onnxruntime`（C 库）所以一直缺绑定；
+  v1.9.2 起 ensure 改为 `pkg install -y python python-numpy python-pillow python-scipy python-onnxruntime`
+  并校验真实绑定；实测装好后 `onnxruntime 1.31.0` 可用，`/ocr?engine=ppocr6` 46 行 / ~1.96s。
+- **兜底保留（v1.8.8）**：用 Termux clang + `onnxruntime_c_api.h`
   编译了 `libortshim.so`（`tools/ortshim/ortshim.c`），并在 `assets/ppocr6/py/onnxruntime.py`
   用 ctypes 提供 `InferenceSession / SessionOptions / GraphOptimizationLevel /
   set_default_logger_severity`，ppocr6 无需安装任何 python 绑定即可 `import onnxruntime`；

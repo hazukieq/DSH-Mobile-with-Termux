@@ -56,50 +56,63 @@ object PpOcr {
     fun ready(ctx: Context): Boolean {
         depsOk?.let { return it }
         if (!deployed(ctx) || !python(ctx).isFile) { depsOk = false; return false }
-        val ok = runCatching {
+        fun probe(extraPythonPath: String?): Boolean = runCatching {
             val pb = ProcessBuilder(
                 python(ctx).absolutePath, "-c",
                 "import onnxruntime,numpy,PIL,scipy;print('ok')",
             )
             pb.redirectErrorStream(true)
-            // v1.8.8：onnxruntime 用随包部署的 ctypes shim（Termux 包无 python 绑定），
-            // 需要把 share/ppocr6/py 放进 PYTHONPATH。
-            pb.environment()["PYTHONPATH"] = File(modelsDir(ctx), "py").absolutePath
+            if (extraPythonPath != null) pb.environment()["PYTHONPATH"] = extraPythonPath
             pb.environment()["LD_LIBRARY_PATH"] = EngineConfig.engineRoot(ctx).absolutePath + "/lib"
             val p = pb.start()
             val out = p.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
             p.waitFor(20, TimeUnit.SECONDS) && p.exitValue() == 0 && out.contains("ok")
         }.getOrDefault(false)
+        // 优先真实包（pkg install python-onnxruntime）；没有才用随包 ctypes shim。
+        var ok = probe(null)
+        if (!ok) ok = probe(File(modelsDir(ctx), "py").absolutePath)
         depsOk = ok
         return ok
     }
 
-    /** 显式安装依赖（耗时/占空间；由 `/ocr?engine=ppocr6&ensure=1` 触发）。 */
+    /** python 包 `python-onnxruntime` 是否真的装进了 site-packages（区别于 shim 兜底）。 */
+    fun realBindingReady(ctx: Context): Boolean = runCatching {
+        val pb = ProcessBuilder(python(ctx).absolutePath, "-c", "import onnxruntime;print('real')")
+        pb.redirectErrorStream(true)
+        pb.environment()["LD_LIBRARY_PATH"] = EngineConfig.engineRoot(ctx).absolutePath + "/lib"
+        val p = pb.start()
+        val out = p.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+        p.waitFor(20, TimeUnit.SECONDS) && p.exitValue() == 0 && out.contains("real")
+    }.getOrDefault(false)
+
+    /**
+     * 显式安装依赖（耗时/占空间；由 `/ocr?engine=ppocr6&ensure=1` 触发）。
+     *
+     * Termux 的 Python 绑定是**独立包 `python-onnxruntime`**（Depends: python, python-numpy,
+     * python-pip, onnxruntime），必须走 `pkg install`；pip 在 bionic 上没有可用 wheel。
+     */
     fun ensureDeps(ctx: Context): String? {
         val bash = File(EngineConfig.engineRoot(ctx), "bin/bash")
         if (!bash.isFile) return "engine bash missing"
         return runCatching {
-            // onnxruntime 的 Python 绑定在 Termux 主仓库不一定存在；numpy/Pillow/scipy 是
-            // ppocr6 预处理的硬依赖。分步安装，缺哪个就如实报告（不假装成功）。
-            // ⚠️ 必须先装/升级 python，再 **reinstall** onnxruntime：Termux 的 onnxruntime
-            // 包在 python 版本变化后不会自动重装 python 绑定（实测：system python 3.14 时
-            // site-packages 里没有 onnxruntime，只有 libonnxruntime.so）。
             val pb = ProcessBuilder(
                 bash.absolutePath, "-lc",
-                "pkg install -y python; " +
-                    "pkg install -y python-numpy python-pillow python-scipy || true; " +
-                    "pkg install -y onnxruntime || true",
+                "pkg install -y python python-numpy python-pillow python-scipy python-onnxruntime",
             )
             pb.redirectErrorStream(true)
             pb.environment()["PREFIX"] = EngineConfig.engineRoot(ctx).absolutePath
             pb.environment()["PATH"] = "${EngineConfig.engineRoot(ctx).absolutePath}/bin:/system/bin"
             val p = pb.start()
             val out = p.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-            if (!p.waitFor(15, TimeUnit.MINUTES) || p.exitValue() != 0) {
-                "pkg install failed: ${out.takeLast(600)}"
-            } else {
-                depsOk = null
-                if (ready(ctx)) null else "pkg install finished but import check still fails: ${out.takeLast(400)}"
+            runCatching {
+                File(EngineConfig.engineRoot(ctx), "tmp/ppocr6-ensure.log").writeText(out.takeLast(6000))
+            }
+            val ok = p.waitFor(15, TimeUnit.MINUTES) && p.exitValue() == 0
+            depsOk = null
+            when {
+                ok && realBindingReady(ctx) -> null
+                ok -> "pkg finished but python binding is still missing (log: \$PREFIX/tmp/ppocr6-ensure.log)"
+                else -> "pkg install failed (mirror/deps?): ${out.takeLast(700)}"
             }
         }.getOrElse { "ensure failed: ${it.message}" }
     }
