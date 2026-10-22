@@ -3292,11 +3292,37 @@ document.getElementById('api').textContent = checks.map(function(c){
         val a11yNodes = base.optJSONArray("nodes") ?: JSONArray()
         val out = JSONArray()
         val clickables = ArrayList<JSONObject>()
+        val verbose = params["verbose"] in listOf("1", "true", "yes")
         for (i in 0 until a11yNodes.length()) {
             val o = a11yNodes.optJSONObject(i) ?: continue
-            o.put("source", "a11y")
-            out.put(o)
-            if (o.optBoolean("clickable")) clickables.add(o)
+            // v2.4.1（用户反馈 /scene 超 20KB 被截断成非法 JSON）：
+            // 默认只输出 agent 真正需要的字段；cls/rid/desc 等空字段与冗余字段省略，
+            // verbose=1 才回完整 a11y 节点。100 节点可从 ~35KB 降到 ~12KB。
+            val n = JSONObject()
+            n.put("index", o.optInt("index"))
+            n.put("text", o.optString("text"))
+            o.optString("desc").takeIf { it.isNotBlank() }?.let { n.put("desc", it) }
+            n.put("bounds", o.optJSONArray("bounds"))
+            n.put("center", o.optJSONArray("center"))
+            n.put("source", "a11y")
+            if (o.optBoolean("clickable")) n.put("clickable", true)
+            if (o.optBoolean("editable")) n.put("editable", true)
+            if (o.optBoolean("scrollable")) n.put("scrollable", true)
+            if (o.optBoolean("checkable")) {
+                n.put("checkable", true); n.put("checked", o.optBoolean("checked"))
+            }
+            o.optString("listId").takeIf { it.isNotBlank() }?.let { n.put("listId", it) }
+            if (o.has("itemIndex")) n.put("itemIndex", o.optInt("itemIndex"))
+            if (verbose) {
+                n.put("x", o.optInt("x")); n.put("y", o.optInt("y"))
+                n.put("w", o.optInt("w")); n.put("h", o.optInt("h"))
+                n.put("cls", o.optString("cls")); n.put("rid", o.optString("rid"))
+                n.put("hint", o.optString("hint"))
+            }
+            n.put("centerX", o.optJSONArray("center")?.optInt(0) ?: o.optInt("x"))
+            n.put("centerY", o.optJSONArray("center")?.optInt(1) ?: o.optInt("y"))
+            out.put(n)
+            if (o.optBoolean("clickable")) clickables.add(n)
         }
 
         var ocrEngine = "none"
@@ -3374,10 +3400,21 @@ document.getElementById('api').textContent = checks.map(function(c){
         }
 
         val perf = JSONObject().put("a11y", a11yMs).put("ocr", ocrMs)
+        // v2.4.1：分页返回，任何一页都远低于 20KB；nextOffset=null 表示结束。
+        val total = out.length()
+        val limit = (params["limit"]?.toIntOrNull() ?: 120).coerceIn(1, 1000)
+        val offset = (params["offset"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
+        val page = JSONArray()
+        var i = offset
+        while (i < total && i < offset + limit) { page.put(out.get(i)); i++ }
         return 200 to JSONObject().apply {
             put("ok", true)
-            put("nodes", out)
-            put("count", out.length())
+            put("nodes", page)
+            put("count", page.length())
+            put("total", total)
+            put("offset", offset)
+            put("limit", limit)
+            put("nextOffset", if (offset + limit < total) offset + limit else JSONObject.NULL)
             put("timings", perf)
             put("ocrEngine", ocrEngine)
             put("ocrCached", ocrCached)
@@ -3454,7 +3491,17 @@ document.getElementById('api').textContent = checks.map(function(c){
             var action = "?"
             var actionOk = true
             when {
-                st.has("tap") -> { action = "tap"; actionOk = svc.tapText(st.getString("tap")) }
+                st.has("tap") -> {
+                    action = "tap"
+                    val v = st.get("tap")
+                    when (v) {
+                        is JSONArray -> actionOk = v.length() >= 2 &&
+                            svc.dispatchTap(v.optDouble(0).toFloat(), v.optDouble(1).toFloat())
+                        is JSONObject -> actionOk = v.has("x") && v.has("y") &&
+                            svc.dispatchTap(v.optDouble("x").toFloat(), v.optDouble("y").toFloat())
+                        else -> actionOk = svc.tapText(st.getString("tap"))
+                    }
+                }
                 st.has("tapDesc") -> { action = "tap-desc"; actionOk = svc.tapDesc(st.getString("tapDesc")) }
                 st.has("tapId") -> {
                     action = "tap-id"

@@ -145,6 +145,18 @@ page instead of the control. For anything with a time window:
   from an earlier dump;
 - a11y node centers and screenshot pixels are 1:1, so OCR boxes can be tapped directly.
 
+### /scene paging and tap forms
+
+`GET /scene` is paginated by default (`limit` 120, `offset` 0) because tool output has a ~20KB cap and
+an unpaginated merged scene could exceed it. The reply always includes `total`, `offset`, `limit` and
+`nextOffset` (`null` = last page); fetch the next page with `&offset=<nextOffset>` when needed. Nodes
+are compact (text/desc/bounds/center/source/clickable/flags); pass `&verbose=1` only when you need
+cls/rid/x/y/w/h. `&region=0` disables incremental OCR, `&engine=mlkit` forces ML Kit.
+
+`POST /act` step forms are normalized: `{"tap":"搜索文字"}` taps by text, while
+`{"tap":[834,189]}` / `{"tapXY":[834,189]}` tap coordinates (an object `{"x":..,"y":..}` also works);
+`tapDesc`/`tapId`/`listId+itemIndex` select by other attributes.
+
 ### Prefer bounds over guessing icons
 
 Icon-only buttons (search/back/more) often have no text. Do not guess centers: read
