@@ -419,10 +419,19 @@ object AgentBridge {
             val obj = JSONObject(json)
             when (kind) {
                 "instant" -> {
+                    // v1.8.1：带内联 expect 的 tap 已经自己校验过，不要把 verify/hint 覆盖成
+                    // "none/去 dump"；只补 instant 元数据。
+                    val inlineVerified = obj.has("verified")
                     obj.put("instant", true)
-                        .put("verify", "none")
-                        .put("do_not", org.json.JSONArray().put("screenshot_immediately").put("retry_immediately"))
-                        .put("hint", "Action dispatched; the UI may already be changing or the user may have moved on. Do not screenshot right away. If the task needs confirmation, wait for the UI to settle (scr idle / dsh-mobile cdp wait) and read once; if nothing changes after two tries, ask the user.")
+                    if (!inlineVerified) {
+                        obj.put("verify", "none")
+                        obj.put("do_not", org.json.JSONArray().put("screenshot_immediately").put("retry_immediately"))
+                        if (!obj.has("hint")) {
+                            obj.put("hint", "Action dispatched; the UI may already be changing or the user may have moved on. Do not screenshot right away. If the task needs confirmation, wait for the UI to settle (scr idle / dsh-mobile cdp wait) and read once; if nothing changes after two tries, ask the user.")
+                        }
+                    } else {
+                        obj.put("verify", "inline_expect")
+                    }
                 }
                 "handoff" -> {
                     obj.put("handoff", true)
@@ -469,12 +478,17 @@ object AgentBridge {
                 }
                 return 503 to JSONObject()
                     .put("ok", false)
-                    .put("error", msg)
+                    // v1.8.0（提案 P1-5）：err 用稳定 code，便于上层一次判断；人读文案放 reason。
+                    .put("error", if (enabled) "a11y_connecting" else "a11y_off")
+                    .put("code", if (enabled) "a11y_connecting" else "a11y_off")
+                    .put("reason", msg)
+                    .put("message", msg)
                     .put("accessibility_enabled", enabled)
                     .put("accessibility_connected", false)
                     .put("accessibility_listed_but_disabled", listed)
                     .put("retryable", enabled)
-                    .put("action", if (listed || !enabled) "open accessibility settings and enable DSH Screen Helper" else "retry")
+                    .put("action", if (listed || !enabled) "open_a11y_settings" else "retry")
+                    .put("actionHint", "POST /a11y/enable opens the system accessibility page")
                     .toString()
             }
         }
@@ -560,6 +574,7 @@ object AgentBridge {
             method == "POST" && path == "/runtime/apply" -> runtimeApply(ctx)
             method == "POST" && path == "/runtime/rollback" -> runtimeRollback(ctx)
             method == "POST" && path == "/engine/restart" -> engineRestart(ctx, body)
+            method == "POST" && path == "/a11y/enable" -> a11yEnable(ctx)
             else -> 404 to """{"ok":false,"error":"unknown route"}"""
         }
     }
@@ -759,6 +774,23 @@ object AgentBridge {
     private fun runtimeRollback(ctx: Context): Pair<Int, String> {
         val err = RuntimeUpdater.rollback(ctx)
         return acceptedOrRejected("rollback", err)
+    }
+
+    /** POST /a11y/enable（提案 P1-5）：一次调用打开系统无障碍设置页。 */
+    private fun a11yEnable(ctx: Context): Pair<Int, String> {
+        return try {
+            ctx.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            200 to JSONObject()
+                .put("ok", true)
+                .put("opened", "accessibility-settings")
+                .put("hint", "enable the DSH Screen Helper / DSH Screen Control service, then retry")
+                .toString()
+        } catch (e: Exception) {
+            500 to """{"ok":false,"error":"cannot open accessibility settings: ${e.message}"}"""
+        }
     }
 
     /**
@@ -1325,6 +1357,52 @@ document.getElementById('api').textContent = checks.map(function(c){
             // 故在响应里带上 dispatched 语义 + 提示，让调用方知道要自行校验。
             // 每步自动截图（v1.2.70）：路径直接给 AI，省掉它自己再调一次截图接口
             val shot = if (ok) captureStepShot() else null
+            // v1.8.0（点击链路提案 P0-3）：tap 支持内联期望，点完就地校验，省掉一轮 dump。
+            // 例：{"text":"搜索","expect":{"anyText":["综合","番剧"],"timeoutMs":4000}}
+            val expectObj = obj.optJSONObject("expect")
+            if (ok && expectObj != null) {
+                val anyText = ArrayList<String>()
+                expectObj.optJSONArray("anyText")?.let { a ->
+                    for (i in 0 until a.length()) a.optString(i).takeIf { it.isNotBlank() }?.let(anyText::add)
+                }
+                val timeoutMs = expectObj.optLong("timeoutMs", 4_000L).coerceIn(200L, 15_000L)
+                val t0 = System.currentTimeMillis()
+                var verified = false
+                var verifyHow = ""
+                var lastDump = ""
+                while (System.currentTimeMillis() - t0 < timeoutMs) {
+                    lastDump = runCatching { svc.dumpScreenCompact("all") }.getOrDefault("")
+                    val hitText = anyText.firstOrNull { lastDump.contains(it, true) }
+                    if (hitText != null) {
+                        verified = true
+                        verifyHow = "anyText:$hitText"
+                        break
+                    }
+                    Thread.sleep(250)
+                }
+                val elapsed = System.currentTimeMillis() - t0
+                val fg2 = runCatching { svc.foregroundPackage() }.getOrNull()
+                val obj2 = JSONObject().apply {
+                    put("ok", true)
+                    put("dispatched", true)
+                    put("verified", verified)
+                    put("verifyHow", verifyHow)
+                    put("elapsedMs", elapsed)
+                    put("foreground", fg2 ?: "")
+                    put("foregroundChanged", fg2 != null && fg2 != fg)
+                    if (shot != null) put("shot", shot)
+                    if (!verified) {
+                        put("failedAt", "tap")
+                        put("screenHash", lastDump.hashCode())
+                        put(
+                            "hint",
+                            "expect not met within ${timeoutMs}ms: the page may still be loading. " +
+                                "Wait with /idle or dump once; retry with looser anyText before assuming the tap missed.",
+                        )
+                    }
+                }
+                return 200 to obj2.toString()
+            }
             if (ok) {
                 200 to """{"ok":true,"dispatched":true,"foreground":"${fg ?: ""}","foregroundChanged":$fgChanged,"shot":"${shot ?: ""}","hint":"ok means the gesture was dispatched, not that the UI reacted — dump again to verify"}"""
             } else {
@@ -1335,6 +1413,8 @@ document.getElementById('api').textContent = checks.map(function(c){
                 JSONObject().apply {
                     put("ok", false)
                     put("error", "tap failed / text not found")
+                    put("failedAt", "tap")
+                    put("screenHash", runCatching { svc.dumpScreenCompact("all").hashCode() }.getOrDefault(0))
                     put("foreground", fg ?: "")
                     put("foregroundChanged", fgChanged)
                     if (nearest.isNotEmpty()) {
@@ -2984,7 +3064,18 @@ document.getElementById('api').textContent = checks.map(function(c){
         if (id.isBlank()) return 400 to """{"ok":false,"error":"id required"}"""
         val hit = runCatching { svc.tapById(id) }.getOrNull()
             ?: return 404 to """{"ok":false,"error":"no node with id '$id'"}"""
-        return 200 to """{"ok":true,"id":"$id","x":${hit.first},"y":${hit.second},"via":"${hit.third}"}"""
+        val (cx, cy, via) = hit.first
+        val r = hit.second
+        return 200 to JSONObject().apply {
+            put("ok", true)
+            put("id", id)
+            put("x", cx)
+            put("y", cy)
+            put("via", via)
+            // v1.8.0（提案 P0-1）：回执带 bounds 与点击中心，便于核对是否点在空心图标/行上
+            put("bounds", org.json.JSONArray().put(r.left).put(r.top).put(r.right).put(r.bottom))
+            put("boundsCenter", org.json.JSONArray().put(cx).put(cy))
+        }.toString()
     }
 
     /** POST /wait-text —— 等文本出现/消失（v1.2.141）：{text, gone?, timeoutMs?} */

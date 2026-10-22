@@ -1042,10 +1042,16 @@ class DshAccessibilityService : AccessibilityService() {
                         // （与 dumpScreenCompact 同判据；越界坐标点击会静默落空）
                         val vis = Rect(rect)
                         val onScreen = vis.intersect(0, 0, resources.displayMetrics.widthPixels, rootHeight)
-                        put("x", if (onScreen) vis.centerX() else rect.centerX())
-                        put("y", if (onScreen) vis.centerY() else rect.centerY())
+                        val cx = if (onScreen) vis.centerX() else rect.centerX()
+                        val cy = if (onScreen) vis.centerY() else rect.centerY()
+                        put("x", cx)
+                        put("y", cy)
                         put("w", rect.width())
                         put("h", rect.height())
+                        // v1.8.0（点击链路提案 P0-1）：显式 bbox 与中心，图标按钮/空心控件
+                        // 不再靠 w/h 反推，直接给可点区域。
+                        put("bounds", JSONArray().put(rect.left).put(rect.top).put(rect.right).put(rect.bottom))
+                        put("center", JSONArray().put(cx).put(cy))
                         put("clickable", node.isClickable)
                         put("checkable", node.isCheckable)
                         put("checked", node.isChecked)
@@ -1559,13 +1565,13 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     /** 按 id 点击（v1.2.141）：先试节点 ACTION_CLICK，回退坐标注入。返回 (x, y, via) */
-    fun tapById(rid: String): Triple<Int, Int, String>? {
+    fun tapById(rid: String): Pair<Triple<Int, Int, String>, Rect>? {
         val node = findNodeById(rid) ?: return null
         val r = Rect().also { node.getBoundsInScreen(it) }
         if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            return Triple(r.centerX(), r.centerY(), "action")
+            return Triple(r.centerX(), r.centerY(), "action") to Rect(r)
         }
-        return if (dispatchTapRect(r)) Triple(r.centerX(), r.centerY(), "tap") else null
+        return if (dispatchTapRect(r)) Triple(r.centerX(), r.centerY(), "tap") to Rect(r) else null
     }
 
     /** 滚动到边界（v1.2.141）：优先 SCROLL action；无明确容器（Compose/自绘）回退滑动手势。返回执行次数 */
