@@ -1314,6 +1314,14 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             // 只部署 tiny（6MB）；python/onnxruntime 由 /ocr?engine=ppocr6&ensure=1 显式安装。
             runCatching {
                 val share = File(root, "share/ppocr6").apply { mkdirs() }
+                val pyDir = File(share, "py").apply { mkdirs() }
+                listOf("onnxruntime.py", "libortshim.so").forEach { name ->
+                    val bytes = ctx.assets.open("ppocr6/py/$name").use { it.readBytes() }
+                    val dst = File(pyDir, name)
+                    if (!dst.isFile || dst.length() != bytes.size.toLong()) dst.writeBytes(bytes)
+                    dst.setReadable(true, false)
+                    if (name.endsWith(".so")) dst.setExecutable(true, false)
+                }
                 listOf("det_tiny.onnx", "rec_tiny.onnx", "rec_tiny.yml").forEach { name ->
                     val bytes = ctx.assets.open("ppocr6/$name").use { it.readBytes() }
                     val dst = File(share, name)

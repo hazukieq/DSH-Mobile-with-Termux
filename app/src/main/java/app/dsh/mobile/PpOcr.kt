@@ -57,11 +57,18 @@ object PpOcr {
         depsOk?.let { return it }
         if (!deployed(ctx) || !python(ctx).isFile) { depsOk = false; return false }
         val ok = runCatching {
-            val p = ProcessBuilder(
+            val pb = ProcessBuilder(
                 python(ctx).absolutePath, "-c",
-                "import onnxruntime,numpy,PIL,scipy",
-            ).redirectErrorStream(true).start()
-            p.waitFor(20, TimeUnit.SECONDS) && p.exitValue() == 0
+                "import onnxruntime,numpy,PIL,scipy;print('ok')",
+            )
+            pb.redirectErrorStream(true)
+            // v1.8.8：onnxruntime 用随包部署的 ctypes shim（Termux 包无 python 绑定），
+            // 需要把 share/ppocr6/py 放进 PYTHONPATH。
+            pb.environment()["PYTHONPATH"] = File(modelsDir(ctx), "py").absolutePath
+            pb.environment()["LD_LIBRARY_PATH"] = EngineConfig.engineRoot(ctx).absolutePath + "/lib"
+            val p = pb.start()
+            val out = p.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            p.waitFor(20, TimeUnit.SECONDS) && p.exitValue() == 0 && out.contains("ok")
         }.getOrDefault(false)
         depsOk = ok
         return ok
@@ -81,7 +88,7 @@ object PpOcr {
                 bash.absolutePath, "-lc",
                 "pkg install -y python; " +
                     "pkg install -y python-numpy python-pillow python-scipy || true; " +
-                    "pkg install -y --reinstall onnxruntime || pkg install -y onnxruntime",
+                    "pkg install -y onnxruntime || true",
             )
             pb.redirectErrorStream(true)
             pb.environment()["PREFIX"] = EngineConfig.engineRoot(ctx).absolutePath
@@ -140,7 +147,8 @@ object PpOcr {
         }
         runCatching {
             val root = JSONObject(out)
-            val arr = root.optJSONArray("blocks") ?: root.optJSONArray("lines")
+            // ppocr6 --json: {"items":[{text,conf,x,y,bbox:[l,t,r,b]}]}
+            val arr = root.optJSONArray("items") ?: root.optJSONArray("blocks") ?: root.optJSONArray("lines")
             if (arr != null) for (i in 0 until arr.length()) arr.optJSONObject(i)?.let(::add)
             if (blocks.isNotEmpty()) return blocks
         }

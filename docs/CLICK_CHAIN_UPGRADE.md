@@ -78,11 +78,18 @@ POST /tap
 - `GET /ocr?engine=ppocr6`：依赖缺失时返回 `unavailable:true, reason`（含安装提示）；
 - `GET /ocr?engine=ppocr6&ensure=1`：依次安装 `python`、`python-numpy/python-pillow/python-scipy`，
   并 **reinstall onnxruntime**（Termux 的 python 绑定不会随 python 升级自动重装）；网络/体积较大，显式触发；
-- ⚠️ 实测边界（2026-10-22，LineageOS 测试机）：Termux 只装了 `libonnxruntime.so` C 库，
-  `site-packages/onnxruntime` 仍缺失（python 3.14 与包内 wheel 版本不匹配），`ensure` 后
-  仍会返回 `unavailable` + 具体原因。要实现「干净设备开箱可用」，需要改走内置
-  onnxruntime（route B）或提供一个可用的 python 绑定包；当前实现依赖设备已有该绑定
-  （手机端提案环境即如此）；
+- **为什么 `import onnxruntime` 一直失败**：Termux 的 `onnxruntime` 包（1.31.0-3）
+  实际 `.deb` 里只有 `libonnxruntime.so`、头文件与 cmake 配置，**没有** `site-packages/onnxruntime`
+  ——不是 python 3.14 与 wheel 不匹配，而是这个包根本没带 python 绑定；`build.sh` 里虽然
+  有 `pip install` wheel 的步骤，但当前仓库 revision 的产物没有它；
+- **解决（v1.8.8，用户要求「直接编译一个」）**：用 Termux clang + `onnxruntime_c_api.h`
+  编译了 `libortshim.so`（`tools/ortshim/ortshim.c`），并在 `assets/ppocr6/py/onnxruntime.py`
+  用 ctypes 提供 `InferenceSession / SessionOptions / GraphOptimizationLevel /
+  set_default_logger_severity`，ppocr6 无需安装任何 python 绑定即可 `import onnxruntime`；
+  shim 随 APK 部署到 `$PREFIX/share/ppocr6/py/`；
+- 实测（LineageOS/aarch64，1080×2400）：`/ocr?engine=ppocr6` → `lines:45, costMs:2022`；
+  `/scene?engine=ppocr6` → 98 节点（31 个 OCR 行，`near-clickable` 正确继承 a11y 索引）；
+  CLI `ppocr6 ... --tier tiny --json` 单图 0.98s（det 0.64 + rec 0.09）；
 - `/scene` 在 ML Kit 不可用或 `engine=ppocr6` 时自动用 PP-OCRv6。
 
 ### P1-6 listId / itemIndex（v1.8.2）
