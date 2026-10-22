@@ -1287,6 +1287,18 @@ class DshAccessibilityService : AccessibilityService() {
 
     fun screenshotBase64(timeoutMs: Long = 3000L): Triple<Int, Int, String>? {
         if (Build.VERSION.SDK_INT < 30) return null
+        // v2.2.0：与 screenshotArgb 一样，截图前临时隐藏自家悬浮窗，避免它混进
+        // OCR/无障碍识别结果；try/finally 保证任何路径都恢复，绝不吞掉用户的悬浮窗。
+        val svcForAvoid = instance
+        StatusOverlay.beginCaptureAvoid(svcForAvoid)
+        try {
+            return screenshotBase64Inner(timeoutMs)
+        } finally {
+            StatusOverlay.endCaptureAvoid(svcForAvoid)
+        }
+    }
+
+    private fun screenshotBase64Inner(timeoutMs: Long): Triple<Int, Int, String>? {
         val latch = CountDownLatch(1)
         var bmp: Bitmap? = null
         val callback = object : TakeScreenshotCallback {
