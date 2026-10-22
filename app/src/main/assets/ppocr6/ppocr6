@@ -180,6 +180,50 @@ def run(image_path, tier="tiny", det_side=0, min_conf=0.35, top=0, filt=None, de
     charset = load_charset(tier)
     items = []
     t2 = time.time()
+
+    def emit(out, charset, min_conf, filt, x0, y0, x1, y1, score):
+        text, conf = ctc_decode(out, charset)
+        text = text.strip()
+        if not text or conf < min_conf:
+            return None
+        if filt and not re.search(filt, text):
+            return None
+        bx0 = max(0, int(x0)); by0 = max(0, int(y0))
+        bx1 = min(w, int(math.ceil(x1))); by1 = min(h, int(math.ceil(y1)))
+        return {
+            "text": text, "conf": round(conf, 3),
+            "x": int((bx0 + bx1) / 2), "y": int((by0 + by1) / 2),
+            "bbox": [bx0, by0, bx1, by1], "det": round(float(score), 3),
+        }
+
+    # v2.0.1（P2-8）：识别阶段批处理。PP-OCRv6 rec 是 [N,3,48,W] 动态 shape，
+    # 把 8 个框 pad 到同宽后一次推理，省掉逐框调用开销；若模型不接受 batch，自动回落单条。
+    BATCH = 8
+    pending = []   # (xin, x0, y0, x1, y1, score)
+
+    def flush(pending):
+        if not pending:
+            return
+        max_w = max(p[0].shape[3] for p in pending)
+        batch = np.zeros((len(pending), 3, 48, max_w), dtype=np.float32)
+        for k, (xin, _, _, _, _, _) in enumerate(pending):
+            batch[k, :, :, :xin.shape[3]] = xin[0]
+        try:
+            outs = rs.run(None, {rs.get_inputs()[0].name: batch})[0]  # [N,T,C]
+        except Exception:
+            outs = None
+        if outs is not None and len(outs) == len(pending):
+            for k, (_, x0, y0, x1, y1, score) in enumerate(pending):
+                it = emit(outs[k], charset, min_conf, filt, x0, y0, x1, y1, score)
+                if it:
+                    items.append(it)
+        else:
+            for xin, x0, y0, x1, y1, score in pending:
+                out = rs.run(None, {rs.get_inputs()[0].name: xin})[0][0]
+                it = emit(out, charset, min_conf, filt, x0, y0, x1, y1, score)
+                if it:
+                    items.append(it)
+
     for x0, y0, x1, y1, score in boxes:
         pad = 2
         cx0 = max(0, int(x0) - pad); cy0 = max(0, int(y0) - pad)
@@ -188,20 +232,11 @@ def run(image_path, tier="tiny", det_side=0, min_conf=0.35, top=0, filt=None, de
         xin = rec_preprocess(crop)
         if xin is None:
             continue
-        out = rs.run(None, {rs.get_inputs()[0].name: xin})[0][0]
-        text, conf = ctc_decode(out, charset)
-        text = text.strip()
-        if not text or conf < min_conf:
-            continue
-        if filt and not re.search(filt, text):
-            continue
-        bx0 = max(0, int(x0)); by0 = max(0, int(y0))
-        bx1 = min(w, int(math.ceil(x1))); by1 = min(h, int(math.ceil(y1)))
-        items.append({
-            "text": text, "conf": round(conf, 3),
-            "x": int((bx0 + bx1) / 2), "y": int((by0 + by1) / 2),
-            "bbox": [bx0, by0, bx1, by1], "det": round(float(score), 3),
-        })
+        pending.append((xin, x0, y0, x1, y1, score))
+        if len(pending) >= BATCH:
+            flush(pending)
+            pending = []
+    flush(pending)
     items.sort(key=lambda d: (d["y"], d["x"]))
     t_rec = time.time() - t2
     if top:

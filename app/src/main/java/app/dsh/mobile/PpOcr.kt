@@ -40,6 +40,7 @@ object PpOcr {
         val unavailable: Boolean = false,
         val reason: String = "",
         val costMs: Long = 0L,
+        val cached: Boolean = false,
     )
 
     fun script(ctx: Context): File = File(EngineConfig.engineRoot(ctx), "bin/ppocr6")
@@ -121,6 +122,23 @@ object PpOcr {
         return if (isTierDeployed(ctx, tier)) null else "models downloaded but files missing"
     }
 
+    /** v2.0.1（P2-8）：同一截图 5s 内重复请求直接复用结果（轮询/重复读屏时省掉整次 OCR）。 */
+    private data class CacheEntry(val hash: Long, val at: Long, val blocks: List<Block>)
+    private val cache = HashMap<String, CacheEntry>()
+
+    private fun fileHash(f: File): Long = runCatching {
+        val crc = java.util.zip.CRC32()
+        f.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                crc.update(buf, 0, n)
+            }
+        }
+        crc.value
+    }.getOrDefault(0L)
+
     @Volatile private var depsOk: Boolean? = null
 
     /** python3 + onnxruntime + numpy/PIL/scipy 是否可用（缓存结果）。 */
@@ -189,20 +207,28 @@ object PpOcr {
     }
 
     /** 识别一张位图（写入 cache PNG 后调用脚本，解析 --json 输出）。 */
-    fun recognize(ctx: Context, bitmap: Bitmap, tier: String = "tiny"): Result {
+    fun recognize(ctx: Context, bitmap: Bitmap, tier: String = "tiny", useCache: Boolean = true): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
         val png = File(ctx.cacheDir, "ppocr6-${System.currentTimeMillis()}.png")
         runCatching { png.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
             .onFailure { return Result(false, reason = "write png failed: ${it.message}") }
-        return recognizeFile(ctx, png, tier).also { png.delete() }
+        return recognizeFile(ctx, png, tier, useCache).also { png.delete() }
     }
 
     /** 识别一个已存在的 PNG（供 root/Shizuku 截图回退复用）。 */
-    fun recognizeFile(ctx: Context, png: File, tier: String = "tiny"): Result {
+    fun recognizeFile(ctx: Context, png: File, tier: String = "tiny", useCache: Boolean = true): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
         if (!ready(ctx)) return Result(false, unavailable = true, reason = "python/onnxruntime not installed (call /ocr?engine=ppocr6&ensure=1)")
         if (!isTierDeployed(ctx, tier)) {
             return Result(false, unavailable = true, reason = "models for tier '$tier' missing (call /ocr?engine=ppocr6&download=$tier)")
+        }
+        val hash = if (useCache) fileHash(png) else 0L
+        if (useCache) {
+            cache[tier]?.let { c ->
+                if (c.hash == hash && System.currentTimeMillis() - c.at <= 5_000L) {
+                    return Result(true, blocks = c.blocks, costMs = 0L, cached = true)
+                }
+            }
         }
         val t0 = System.currentTimeMillis()
         // P2-8：先走常驻 worker（模型只加载一次）；失败再回落一次性 CLI。
@@ -221,7 +247,9 @@ object PpOcr {
                     blocks.add(Block(text, l, t, rr, bb, o.optDouble("conf", 0.0)))
                 }
             }
-            return Result(true, blocks = blocks, costMs = System.currentTimeMillis() - t0)
+            val res = Result(true, blocks = blocks, costMs = System.currentTimeMillis() - t0)
+            if (useCache) cache[tier] = CacheEntry(hash, System.currentTimeMillis(), blocks)
+            return res
         }
         return runCatching {
             val pb = ProcessBuilder(script(ctx).absolutePath, png.absolutePath, "--tier", tier, "--json")
@@ -235,6 +263,7 @@ object PpOcr {
                 return Result(false, reason = "ppocr6 exit=${p.exitValue()}: ${out.takeLast(500)}")
             }
             val blocks = parseBlocks(out)
+            if (useCache) cache[tier] = CacheEntry(hash, System.currentTimeMillis(), blocks)
             Result(true, blocks = blocks, costMs = System.currentTimeMillis() - t0)
         }.getOrElse { Result(false, reason = "ppocr6 run failed: ${it.message}", costMs = System.currentTimeMillis() - t0) }
     }

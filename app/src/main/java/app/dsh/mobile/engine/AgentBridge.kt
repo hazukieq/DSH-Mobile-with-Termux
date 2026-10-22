@@ -1596,7 +1596,8 @@ document.getElementById('api').textContent = checks.map(function(c){
             val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 ?: return 500 to """{"ok":false,"error":"bitmap_decode_failed"}"""
-            val r = PpOcr.recognize(svc, bmp, tier)
+            val useCache = params["cache"] != "0"
+            val r = PpOcr.recognize(svc, bmp, tier, useCache)
             bmp.recycle()
             val arr = JSONArray()
             r.blocks.forEach { b ->
@@ -1607,7 +1608,8 @@ document.getElementById('api').textContent = checks.map(function(c){
                 })
             }
             return if (r.ok) 200 to JSONObject().put("ok", true).put("engine", "ppocr6-tiny")
-                .put("costMs", r.costMs).put("lines", r.blocks.size).put("blocks", arr).toString()
+                .put("costMs", r.costMs).put("cached", r.cached)
+                .put("lines", r.blocks.size).put("blocks", arr).toString()
             else 503 to JSONObject().put("ok", false).put("engine", "ppocr6-tiny")
                 .put("unavailable", r.unavailable).put("reason", r.reason).toString()
         }
