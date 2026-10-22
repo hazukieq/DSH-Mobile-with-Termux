@@ -92,10 +92,11 @@ export function apply(ctx) {
         const t = clean(it.text)
         if (t) lines.push('[思考] ' + clip(t, 1400))
       } else if (it.t === 'tool') {
-        const args = clean(it.args)
-        const head = clean(it.name) || '工具调用'
-        lines.push('[工具] ' + clip(head + (args ? ': ' + args : ''), 420))
-        if (it.status) lines.push('[结果] ' + head + ' → ' + it.status)
+        // v2.3.8（用户要求）：不显示具体指令/参数，只表达状态：
+        //   运行中 → [工具] 调用
+        //   结束   → [工具] 调用 → 完成 / 失败
+        // 工具名与参数对用户没有意义，还会占满滚动区、暴露实现细节。
+        lines.push('[工具] ' + (it.status ? '调用 → ' + it.status : '调用'))
       } else if (it.t === 'reply') {
         const t = clean(it.text)
         // 回复用尾部：模型最后几行通常才是结论；只截前 N 字会出现「只有前几行」
