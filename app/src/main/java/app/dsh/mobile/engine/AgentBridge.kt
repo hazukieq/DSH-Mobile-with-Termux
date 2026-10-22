@@ -88,8 +88,12 @@ object AgentBridge {
     private fun announceAction(actionRes: Int, detail: String) {
         runCatching {
             val c = shotCtx ?: return@runCatching
-            StatusOverlay.setStatus(StatusOverlay.labelWorking(c.getString(actionRes)))
-            StatusOverlay.setAction(detail)
+            // v2.3.7（用户反馈「无障碍点击动作占用思考链 layout」）：
+            // 旧实现把动作写进 overlayStatus（即 [思考]/[工具]/[结果] 链的正文视图），
+            // 一次 tap 就把整段思考链覆盖成「点击」，而且占用滚动区高度。
+            // 动作只属于独立的动作行（overlayAction），不碰思考链正文。
+            val label = c.getString(actionRes)
+            StatusOverlay.setAction(if (detail.isBlank()) label else "$label · $detail")
         }
     }
 
