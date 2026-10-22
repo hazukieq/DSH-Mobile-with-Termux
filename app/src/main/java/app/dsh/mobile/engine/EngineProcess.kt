@@ -122,9 +122,14 @@ class EngineProcess private constructor(
             // 且自带一份**不完整**的 su 路径表（漏了 /vendor/bin、/data/adb/magisk、
             // /data/adb/ksu），Magisk/KernelSU 设备上会直接跳过击杀 → 孤儿占着 3080/3083。
             // runSu 内部用 findSu() 覆盖全部路径，并按设备实测挑可用的 su 形式。
+            // v2.3.3：实测 Root 模式下 `su -c` 会 fork 出 shell 再 exec node，
+            // 杀掉 su 的 pid 后 node 仍以 root 变孤儿（ps 里 UID 0 的 node-bin 继续占 3080）。
+            // 因此这里先按 cmdline 精准杀 node（实测路径 .../lib/dsh-engine/node-bin），
+            // 再兜底进程组/子进程；su 本身可能慢，超时放宽到 12s。
             Privilege.runSu(
-                "kill -9 -- -$pid 2>/dev/null; pkill -9 -P $pid 2>/dev/null; " +
-                    "pkill -9 -f 'dsh-engine/node-bin' 2>/dev/null; true"
+                "pkill -9 -f 'dsh-engine/node-bin' 2>/dev/null; " +
+                    "kill -9 -- -$pid 2>/dev/null; pkill -9 -P $pid 2>/dev/null; true",
+                timeoutMs = 12_000L,
             )
         }
         pumpThread.join(1_000)

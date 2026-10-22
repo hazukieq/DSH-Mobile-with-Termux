@@ -744,32 +744,70 @@ class EngineSupervisor(private val ctx: Context) {
      * ⚠️ 必须排除 LAN 反向代理（`lan-web-proxy`）：它的 cmdline 里同样含
      * `files/engine/bin/node`，误杀会让「局域网访问」在每次引擎重启后静默失效。
      */
+    /**
+     * v2.3.4：Root 模式孤儿清理改用**脚本文件**执行，不再拼一长串带引号的 shell。
+     *
+     * 实测教训：app 里 `su -c "<几百字符的 case/regex>"` 的引号在多层拼接后会被破坏，
+     * su 侧 shell 直接语法错误退出（日志只有 usableSuPrefix，没有 kill），
+     * uid 0 的 node-bin 继续占 3080；而同样的逻辑写成脚本、只传路径就 100% 可杀。
+     */
+    private fun killScript(): java.io.File? = runCatching {
+        val f = java.io.File(ctx.cacheDir, "dsh-kill-orphan.sh")
+        val body = """
+            #!/system/bin/sh
+            # dsh-android: kill orphan engine node (cmdline) then free the port via ss.
+            # v2.3.5: full fd scan took ~13s as root; ss gives the pid directly.
+            PORT=${'$'}{1:-3080}
+            for p in /proc/[0-9]*; do
+              n=${'$'}{p#/proc/}
+              c=${'$'}(tr '\0' ' ' < "${'$'}p/cmdline" 2>/dev/null) || continue
+              case "${'$'}c" in
+                *dsh-engine/node-bin*)
+                  case "${'$'}c" in *lan-web-proxy*) ;; *) echo "kill ${'$'}n"; kill -9 "${'$'}n" 2>/dev/null;; esac
+                  ;;
+              esac
+            done
+            if ! ss -ltn 2>/dev/null | grep -q ":${'$'}PORT "; then
+              echo "port free"
+              exit 0
+            fi
+            for pid in ${'$'}(ss -ltnp 2>/dev/null | grep ":${'$'}PORT " | sed -n 's/.*pid=\([0-9]*\).*/\1/p'); do
+              echo "kill(port) ${'$'}pid"
+              kill -9 "${'$'}pid" 2>/dev/null
+            done
+            exit 0
+        """.trimIndent()
+        f.writeText(body)
+        f.setReadable(true, false)
+        f.setExecutable(true, false)
+        f
+    }.getOrNull()
+
     private fun reclaimPort() {
-        Log.w(TAG, "port ${EngineConfig.DEFAULT_PORT} in use — reclaiming (orphan engine node)")
-        // shell 脚本里的 $ 用 $ 拼接（Kotlin 会把 "$p" 当模板变量解析）
-        val d = "$"
-        val killCmd =
-            "for p in " + d + "(ls /proc | grep -E '^[0-9]+" + d + "'); do " +
-                "c=" + d + "(tr '\\0' ' ' < /proc/" + d + "p/cmdline 2>/dev/null) || continue; " +
-                "case \"" + d + "c\" in *files/usr/bin/node*|*dsh-engine/node-bin*) " +
-                "case \"" + d + "c\" in *lan-web-proxy*) continue;; esac; " +
-                "kill -9 " + d + "p 2>/dev/null;; esac; done; true"
-        // ① 同 uid（普通模式孤儿）
+        val port = EngineConfig.DEFAULT_PORT
+        Log.w(TAG, "port $port in use — reclaiming (orphan engine node)")
+        val script = killScript()
+        // ① 同 uid：直接 sh 脚本（普通模式孤儿）
         runCatching {
-            ProcessBuilder("/system/bin/sh", "-c", killCmd).start().waitFor()
+            val out = ProcessBuilder("/system/bin/sh", script?.absolutePath ?: "", port.toString())
+                .redirectErrorStream(true).start().inputStream.bufferedReader().use { it.readText() }
+            if (out.isNotBlank()) Log.i(TAG, "same-uid kill: ${out.trim().take(300)}")
         }
-        // ② su 兜底（Root 模式孤儿；su 不可用时 runSu 自己会静默返回 null）
-        Privilege.runSu(killCmd)
-        // ③ 等端口真正释放；仍占用则再补一轮 su 清场（可能是刚被拉起的新进程）
-        waitPortFree(1_800)
-        if (portInUse(400)) {
-            Log.w(TAG, "port still in use after first sweep — retrying via su")
-            Privilege.runSu(killCmd)
-            waitPortFree(1_800)
+        // ② root：su 只执行 `sh <脚本>`（不再拼引号）
+        runCatching {
+            val out = Privilege.runSu("sh ${script?.absolutePath} $port", timeoutMs = 15_000L)
+            if (!out.isNullOrBlank()) Log.i(TAG, "su kill: ${out.trim().take(300)}")
         }
-        if (portInUse(300)) {
-            Log.e(TAG, "port ${EngineConfig.DEFAULT_PORT} STILL in use after sweeps — next boot will likely fail")
+        var freed = waitPortFree(3_000)
+        var round = 1
+        while (!freed && round < 3) {
+            Log.w(TAG, "port $port still held after sweep #$round — retrying via su")
+            runCatching { Privilege.runSu("sh ${script?.absolutePath} $port", timeoutMs = 12_000L) }
+            freed = waitPortFree(3_000)
+            round++
         }
+        if (!freed) Log.e(TAG, "port $port STILL in use after $round sweeps — next boot will likely fail")
+        else Log.i(TAG, "port $port reclaimed after $round sweep(s)")
     }
 
     /** 轮询等端口释放，返回是否已空闲 */
