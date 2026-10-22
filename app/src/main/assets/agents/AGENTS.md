@@ -198,11 +198,10 @@ Only if a custom LAN URL is required, write a small node reverse proxy that list
 
 ## Showing the user something visual
 
-**Images in a reply go through the native `read_image` tool.** Pass the file path (a screenshot from
-`scr shot --save` / `appshot --out`, a generated PNG, a photo) to `read_image`; the harness turns it
-into a session attachment that is rendered inline for the user. Do not paste base64, do not print
-only a path or a `file://` URL, and do not rely on markdown image syntax pointing at a local file -
-those either fail to render or cannot be opened on the phone.
+**Images in a reply go through the native `read_image` tool.** When you want to show an image to the
+user, pass its file path to `read_image`; the harness turns it into a session attachment rendered
+inline. Do not paste base64, do not print only a path or a `file://` URL, and do not rely on markdown
+image syntax pointing at a local file - those do not render for the user.
 
 There is no display server. Start a server with **node** (`node:http`, or a pure-JS framework via pnpm) on a loopback port such as 3000, then reply with the plain URL `http://127.0.0.1:<port>` — the app opens it as a live preview when the user taps it. Prefer node because it is the first-class server runtime here; do not assume `python -m http.server` or busybox httpd is available.
 
