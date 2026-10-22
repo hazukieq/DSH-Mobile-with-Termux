@@ -1461,8 +1461,16 @@ document.getElementById('api').textContent = checks.map(function(c){
                     put("foregroundChanged", fgChanged)
                     if (nearest.isNotEmpty()) {
                         put("nearest", org.json.JSONArray(nearest))
-                        put("hint", "closest labels on screen; d: prefix means it is a contentDescription (use desc: not text:)")
                     }
+                    // P3-9：无论有没有候选都要给 hint，失败回执才可自解释
+                    put(
+                        "hint",
+                        if (nearest.isNotEmpty()) {
+                            "closest labels on screen; d: prefix means it is a contentDescription (use desc: not text:)"
+                        } else {
+                            "text not found; dump /screen or /scene once, then tap by the current label/rid or by listId+itemIndex"
+                        },
+                    )
                 }.let { 500 to it.toString() }
             }
         } catch (e: Exception) {
@@ -1597,7 +1605,9 @@ document.getElementById('api').textContent = checks.map(function(c){
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 ?: return 500 to """{"ok":false,"error":"bitmap_decode_failed"}"""
             val useCache = params["cache"] != "0"
-            val r = PpOcr.recognize(svc, bmp, tier, useCache)
+            val regionOnly = params["region"] in listOf("1", "true", "yes")
+            val ifChanged = params["ifChanged"] in listOf("1", "true", "yes")
+            val r = PpOcr.recognize(svc, bmp, tier, useCache, regionOnly, ifChanged)
             bmp.recycle()
             val arr = JSONArray()
             r.blocks.forEach { b ->
@@ -1607,8 +1617,9 @@ document.getElementById('api').textContent = checks.map(function(c){
                     put("conf", b.conf)
                 })
             }
-            return if (r.ok) 200 to JSONObject().put("ok", true).put("engine", "ppocr6-tiny")
-                .put("costMs", r.costMs).put("cached", r.cached)
+            return if (r.ok) 200 to JSONObject().put("ok", true).put("engine", "ppocr6-$tier")
+                .put("costMs", r.costMs).put("cached", r.cached).put("changed", r.changed)
+                .apply { r.region?.let { rg -> put("region", JSONArray().put(rg.left).put(rg.top).put(rg.right).put(rg.bottom)) } }
                 .put("lines", r.blocks.size).put("blocks", arr).toString()
             else 503 to JSONObject().put("ok", false).put("engine", "ppocr6-tiny")
                 .put("unavailable", r.unavailable).put("reason", r.reason).toString()
@@ -3200,7 +3211,12 @@ document.getElementById('api').textContent = checks.map(function(c){
         val id = runCatching { JSONObject(body).optString("id") }.getOrNull().orEmpty()
         if (id.isBlank()) return 400 to """{"ok":false,"error":"id required"}"""
         val hit = runCatching { svc.tapById(id) }.getOrNull()
-            ?: return 404 to """{"ok":false,"error":"no node with id '$id'"}"""
+            ?: return 404 to JSONObject().put("ok", false)
+                .put("error", "no node with id '$id'")
+                .put("failedAt", "tap-id")
+                .put("screenHash", runCatching { svc.dumpScreenCompact("all").hashCode() }.getOrDefault(0))
+                .put("hint", "dump /screen?format=json or /scene and use the current rid/index; view ids can change between screens")
+                .toString()
         val (cx, cy, via) = hit.first
         val r = hit.second
         return 200 to JSONObject().apply {
@@ -3457,7 +3473,11 @@ document.getElementById('api').textContent = checks.map(function(c){
             .put("steps", results)
             .put("elapsedMs", System.currentTimeMillis() - t0)
             .put("onFail", onFail)
-        if (failedAt >= 0) out.put("failedAt", failedAt)
+        if (failedAt >= 0) {
+            out.put("failedAt", failedAt)
+            out.put("screenHash", runCatching { svc.dumpScreenCompact("all").hashCode() }.getOrDefault(0))
+            out.put("hint", "inspect steps[failedAt]; re-read /scene, or retry with a looser expect/selector")
+        }
         if (returnScreens) out.put("beforeScreen", before)
             .put("afterScreen", runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault(""))
         return 200 to out.toString()
@@ -3482,7 +3502,11 @@ document.getElementById('api').textContent = checks.map(function(c){
             }
             Thread.sleep(200)
         }
-        return 200 to """{"ok":false,"error":"timeout","text":"$text","gone":$gone,"timeoutMs":$timeoutMs}"""
+        return 200 to JSONObject().put("ok", false).put("error", "timeout")
+            .put("failedAt", "wait-text").put("text", text).put("gone", gone).put("timeoutMs", timeoutMs)
+            .put("screenHash", runCatching { svc.dumpScreenCompact("all").hashCode() }.getOrDefault(0))
+            .put("hint", "text did not ${if (gone) "disappear" else "appear"} in time; check the page state or retry with a looser anchor")
+            .toString()
     }
 
     /** POST /scroll-edge —— 滚到顶/底（v1.2.141）：{direction: top|bottom} */

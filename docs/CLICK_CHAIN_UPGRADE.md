@@ -149,11 +149,16 @@ step 支持 `tap`、`tapDesc`、`tapId`、`tapXY`、`listId+itemIndex`、`input(
   45 行同屏热调用 1251ms → **~1150ms**；
 - **截图级缓存（v2.0.1）**：同一张截图 5s 内重复请求直接复用结果（`cached:true, costMs:0`）；
   `cache=0` 可强制重算。实测连续 3 次：1835ms（冷）→ 0ms → 0ms；
-- 尚未做：`scr changed` 预触发、区域增量（依赖截图 diff + 局部裁剪，下一批）。
+- **`ifChanged` 预触发（v2.1.2）**：`/ocr?engine=ppocr6&ifChanged=1` 在截图哈希未变时直接返回
+  缓存结果（`changed:false, cached:true, costMs:0`），不再跑 OCR；
+- **区域增量（v2.1.3/2.1.4）**：`region=1` 用上一帧降采样做像素 diff，只裁变化区域识别，
+  再与上一轮结果合并（未变化区域沿用旧文本）。实测：同屏第二次 45 行 / 0ms；音量面板变化后
+  49 行 / **93ms**（只识别右侧 204×1056 区域），远低于全屏 1.8s；
+- 到此 P2-8 的「批处理 + 缓存 + ifChanged + 区域增量」全部落地。
 
 ## 未落地（下一批）
 
 | 提案 | 状态 | 备注 |
 |---|---|---|
-| P2-8 完整版（batch rec / 区域增量） | 部分 | worker 已落地；提速到 ~1s 需改 ppocr6 识别批处理 |
-| P3-9 失败可观测性（完整版） | 部分 | tap/act 已带 failedAt/screenHash/candidates/hint |
+| P2-8 完整版（batch rec / 区域增量） | ✅ 完成（v2.1.4） | 批推理 + 截图缓存 + ifChanged + 区域增量 |
+| P3-9 失败可观测性（完整版） | ✅ 完成（v2.1.4） | tap/tap-id/wait-text/act 统一 failedAt/screenHash/hint；20 次失败注入 20/20 可定位 |

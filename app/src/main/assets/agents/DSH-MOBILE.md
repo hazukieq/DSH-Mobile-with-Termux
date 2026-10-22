@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v51 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v52 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of

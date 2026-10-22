@@ -41,6 +41,9 @@ object PpOcr {
         val reason: String = "",
         val costMs: Long = 0L,
         val cached: Boolean = false,
+        val changed: Boolean = true,
+        /** 区域增量 OCR 时实际识别的区域（全屏坐标），null = 全屏。 */
+        val region: android.graphics.Rect? = null,
     )
 
     fun script(ctx: Context): File = File(EngineConfig.engineRoot(ctx), "bin/ppocr6")
@@ -125,6 +128,12 @@ object PpOcr {
     /** v2.0.1（P2-8）：同一截图 5s 内重复请求直接复用结果（轮询/重复读屏时省掉整次 OCR）。 */
     private data class CacheEntry(val hash: Long, val at: Long, val blocks: List<Block>)
     private val cache = HashMap<String, CacheEntry>()
+    // v2.1.0（P2-8 区域增量）：保留上一帧降采样图做像素 diff
+    private var lastFrame: Bitmap? = null
+    /** 最近一次全屏/合并结果，用于区域增量时保留未变化区域的文本。 */
+    @Volatile private var lastBlocks: List<Block>? = null
+    private val LAST_W = 270
+    private val LAST_H = 600
 
     private fun fileHash(f: File): Long = runCatching {
         val crc = java.util.zip.CRC32()
@@ -207,16 +216,97 @@ object PpOcr {
     }
 
     /** 识别一张位图（写入 cache PNG 后调用脚本，解析 --json 输出）。 */
-    fun recognize(ctx: Context, bitmap: Bitmap, tier: String = "tiny", useCache: Boolean = true): Result {
+    /** 返回 (是否变化, 变化区域-全屏坐标)；首帧或无变化返回 null 区域。 */
+    private fun diffRegion(bitmap: Bitmap): Pair<Boolean, android.graphics.Rect?> {
+        val small = Bitmap.createScaledBitmap(bitmap, LAST_W, LAST_H, false)
+        val prev = lastFrame
+        lastFrame = small
+        if (prev == null) return true to null
+        val w = LAST_W; val h = LAST_H
+        val a = IntArray(w * h); val b = IntArray(w * h)
+        runCatching { prev.getPixels(a, 0, w, 0, 0, w, h) }
+        runCatching { small.getPixels(b, 0, w, 0, 0, w, h) }
+        var minX = w; var minY = h; var maxX = -1; var maxY = -1
+        var changedPx = 0
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            val pa = a[i]; val pb = b[i]
+            val dr = kotlin.math.abs((pa shr 16 and 0xFF) - (pb shr 16 and 0xFF))
+            val dg = kotlin.math.abs((pa shr 8 and 0xFF) - (pb shr 8 and 0xFF))
+            val db = kotlin.math.abs((pa and 0xFF) - (pb and 0xFF))
+            if (dr + dg + db > 90) {
+                changedPx++
+                if (x < minX) minX = x; if (x > maxX) maxX = x
+                if (y < minY) minY = y; if (y > maxY) maxY = y
+            }
+        }
+        if (changedPx == 0 || maxX < 0) return false to null
+        val sx = bitmap.width.toFloat() / w
+        val sy = bitmap.height.toFloat() / h
+        val margin = 24
+        val r = android.graphics.Rect(
+            (minX * sx).toInt() - margin, (minY * sy).toInt() - margin,
+            ((maxX + 1) * sx).toInt() + margin, ((maxY + 1) * sy).toInt() + margin,
+        )
+        r.intersect(0, 0, bitmap.width, bitmap.height)
+        return true to r
+    }
+
+    fun recognize(
+        ctx: Context, bitmap: Bitmap, tier: String = "tiny",
+        useCache: Boolean = true, regionOnly: Boolean = false, ifChanged: Boolean = false,
+        trackFull: Boolean = true,
+    ): Result {
+        if (regionOnly) {
+            val (changed, rect) = diffRegion(bitmap)
+            if (!changed) {
+                val blocks = cache[tier]?.blocks ?: lastBlocks ?: emptyList()
+                return Result(true, blocks = blocks, cached = true, changed = false)
+            }
+            if (rect != null && rect.width() > 8 && rect.height() > 8 &&
+                rect.width() < bitmap.width * 0.9 && rect.height() < bitmap.height * 0.9
+            ) {
+                val crop = Bitmap.createBitmap(bitmap, rect.left, rect.top, rect.width(), rect.height())
+                val r = recognize(ctx, crop, tier, useCache = false, trackFull = false)
+                crop.recycle()
+                if (r.ok) {
+                    val fresh = r.blocks.map {
+                        Block(it.text, it.left + rect.left, it.top + rect.top,
+                            it.right + rect.left, it.bottom + rect.top, it.conf)
+                    }
+                    // 合并：未变化区域沿用上一轮结果，变化区域用新识别结果覆盖。
+                    val prev = lastBlocks
+                    val merged = if (prev != null) {
+                        prev.filterNot { b ->
+                            b.cx in rect.left..rect.right && b.cy in rect.top..rect.bottom
+                        } + fresh
+                    } else fresh
+                    lastBlocks = merged
+                    return Result(true, blocks = merged, costMs = r.costMs, region = rect, changed = true)
+                }
+            }
+        }
+        return recognizeFull(ctx, bitmap, tier, useCache, ifChanged, trackFull)
+    }
+
+    private fun recognizeFull(
+        ctx: Context, bitmap: Bitmap, tier: String = "tiny",
+        useCache: Boolean = true, ifChanged: Boolean = false, trackFull: Boolean = true,
+    ): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
         val png = File(ctx.cacheDir, "ppocr6-${System.currentTimeMillis()}.png")
         runCatching { png.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
             .onFailure { return Result(false, reason = "write png failed: ${it.message}") }
-        return recognizeFile(ctx, png, tier, useCache).also { png.delete() }
+        val r = recognizeFile(ctx, png, tier, useCache, ifChanged, trackFull)
+        png.delete()
+        return r
     }
 
     /** 识别一个已存在的 PNG（供 root/Shizuku 截图回退复用）。 */
-    fun recognizeFile(ctx: Context, png: File, tier: String = "tiny", useCache: Boolean = true): Result {
+    fun recognizeFile(
+        ctx: Context, png: File, tier: String = "tiny",
+        useCache: Boolean = true, ifChanged: Boolean = false, trackFull: Boolean = true,
+    ): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
         if (!ready(ctx)) return Result(false, unavailable = true, reason = "python/onnxruntime not installed (call /ocr?engine=ppocr6&ensure=1)")
         if (!isTierDeployed(ctx, tier)) {
@@ -225,8 +315,8 @@ object PpOcr {
         val hash = if (useCache) fileHash(png) else 0L
         if (useCache) {
             cache[tier]?.let { c ->
-                if (c.hash == hash && System.currentTimeMillis() - c.at <= 5_000L) {
-                    return Result(true, blocks = c.blocks, costMs = 0L, cached = true)
+                if (c.hash == hash && (ifChanged || System.currentTimeMillis() - c.at <= 5_000L)) {
+                    return Result(true, blocks = c.blocks, costMs = 0L, cached = true, changed = false)
                 }
             }
         }
@@ -249,6 +339,7 @@ object PpOcr {
             }
             val res = Result(true, blocks = blocks, costMs = System.currentTimeMillis() - t0)
             if (useCache) cache[tier] = CacheEntry(hash, System.currentTimeMillis(), blocks)
+            if (trackFull) lastBlocks = blocks
             return res
         }
         return runCatching {
@@ -264,6 +355,7 @@ object PpOcr {
             }
             val blocks = parseBlocks(out)
             if (useCache) cache[tier] = CacheEntry(hash, System.currentTimeMillis(), blocks)
+            lastBlocks = blocks
             Result(true, blocks = blocks, costMs = System.currentTimeMillis() - t0)
         }.getOrElse { Result(false, reason = "ppocr6 run failed: ${it.message}", costMs = System.currentTimeMillis() - t0) }
     }
