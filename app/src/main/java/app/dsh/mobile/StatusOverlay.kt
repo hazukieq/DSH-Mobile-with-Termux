@@ -45,8 +45,9 @@ object StatusOverlay {
      */
     // v1.2.157 用户反馈：44dp 的球在展开成面板时"旁边延展、整体内缩"（球比面板高）。
     // 改为 26dp 紧凑圆点：展开后是自然的变大，观感平滑；中间状态点大小不变（DOT_DP）。
-    // v2.2.0：恢复早期注释里的 52dp 原尺寸（此前被压到 48dp，用户反馈"按钮被改小了"）。
-    private const val COLLAPSED_BALL_DP = 52
+    // v2.2.1（用户要求）：折叠态圆球改小到 36dp；展开态尺寸不受影响（展开走 wrap_content，
+    // 只有折叠时才强制这个最小正圆，DOT_DP 也不动）。
+    private const val COLLAPSED_BALL_DP = 36
 
     /**
      * 状态点直径（dp）—— **折叠态与展开态用同一个值**。
