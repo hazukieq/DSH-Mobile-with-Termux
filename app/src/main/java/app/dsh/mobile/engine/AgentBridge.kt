@@ -3260,30 +3260,49 @@ document.getElementById('api').textContent = checks.map(function(c){
 
         var ocrEngine = "none"
         var ocrMs = 0L
+        var ocrCached = false
+        var ocrChanged = true
+        var ocrRegion: JSONArray? = null
         if (wantOcr) {
             val t1 = System.currentTimeMillis()
             val boxes = ArrayList<Box>()
-            val forced = params["engine"]?.lowercase()
-            if (forced != "ppocr6") {
-                val ml = runCatching { ScreenOcr.recognize(svc, false, 0.5f) }.getOrNull()
-                if (ml != null && !ml.unavailable && ml.blocks.isNotEmpty()) {
-                    ocrEngine = "mlkit"
-                    ml.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, 0.0)) }
-                }
-            }
-            if (boxes.isEmpty() && (forced == "ppocr6" || PpOcr.ready(ctx))) {
+            val enginePref = params["engine"]?.lowercase()
+            val tier = (params["tier"] ?: "tiny").lowercase()
+            // v2.1.6：默认走 PP-OCRv6 的区域增量（region=1），agent 无感享受增量；
+            // engine=mlkit 可强制 ML Kit，region=0 关闭增量。
+            val usePp = enginePref == "ppocr6" ||
+                (enginePref == null && PpOcr.ready(ctx) && PpOcr.isTierDeployed(ctx, tier))
+            if (usePp) {
                 val shot = runCatching { svc.screenshotBase64() }.getOrNull()
                 if (shot != null) {
                     val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
                     val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     if (bmp != null) {
-                        val r = PpOcr.recognize(ctx, bmp)
+                        val regionOnly = params["region"] !in listOf("0", "false", "no")
+                        val r = PpOcr.recognize(
+                            ctx, bmp, tier,
+                            useCache = params["cache"] != "0",
+                            regionOnly = regionOnly,
+                            ifChanged = params["ifChanged"] in listOf("1", "true", "yes"),
+                        )
                         bmp.recycle()
                         if (r.ok) {
-                            ocrEngine = "ppocr6-tiny"
+                            ocrEngine = "ppocr6-$tier"
+                            ocrCached = r.cached
+                            ocrChanged = r.changed
+                            r.region?.let { rg ->
+                                ocrRegion = JSONArray().put(rg.left).put(rg.top).put(rg.right).put(rg.bottom)
+                            }
                             r.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, it.conf)) }
                         }
                     }
+                }
+            }
+            if (boxes.isEmpty() && enginePref != "ppocr6") {
+                val ml = runCatching { ScreenOcr.recognize(svc, false, 0.5f) }.getOrNull()
+                if (ml != null && !ml.unavailable && ml.blocks.isNotEmpty()) {
+                    ocrEngine = "mlkit"
+                    ml.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, 0.0)) }
                 }
             }
             ocrMs = System.currentTimeMillis() - t1
@@ -3320,6 +3339,9 @@ document.getElementById('api').textContent = checks.map(function(c){
             put("count", out.length())
             put("timings", perf)
             put("ocrEngine", ocrEngine)
+            put("ocrCached", ocrCached)
+            put("ocrChanged", ocrChanged)
+            ocrRegion?.let { put("ocrRegion", it) }
             put("scale", JSONArray().put(base.optInt("width")).put(base.optInt("height")))
         }.toString()
     }

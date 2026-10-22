@@ -69,7 +69,13 @@ POST /tap
 
 - OCR 行按提案规则合并：同一 y 带 ±18px、间距 < 0.8 字高；
 - OCR 框落在可点 a11y 节点 bounds 内时继承 `clickable/a11yIndex`（hint:*near-clickable*）；
-- `timings` 分开报无障碍与 OCR 耗时，`ocrEngine` 说明用了哪个引擎。
+- `timings` 分开报无障碍与 OCR 耗时，`ocrEngine` 说明用了哪个引擎；
+- v2.1.6 起 `/scene` 的 OCR 默认走 **PP-OCRv6 + region=1 增量**（agent 无感）：
+  - 同屏无变化：`ocrCached:true, ocrChanged:false`，OCR 只付截图成本；
+  - 局部变化：`ocrRegion:[l,t,r,b]`，只识别变化区域并与上一轮合并成完整文本；
+  - 覆盖参数：`engine=mlkit` 强制 ML Kit、`region=0` 关闭增量、`cache=0` 强制重算。
+  实测：第二次同屏 `ocr:266ms`（含截图），音量面板变化 `ocr:380ms / region [868,724,1072,1780]`，
+  全屏冷启动 2709ms（只第一次）。
 
 ### P1-4 PP-OCRv6 tiny 本地兜底（v1.8.2）
 
