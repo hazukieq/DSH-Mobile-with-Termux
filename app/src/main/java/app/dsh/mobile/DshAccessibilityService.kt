@@ -1095,6 +1095,35 @@ class DshAccessibilityService : AccessibilityService() {
                 count++
             }
         }
+        // v1.8.2（提案 P1-6）：给滚动列表内的可点行标 listId/itemIndex。
+        // 文本重复（同一 UP 名出现 4 次）时，坐标会随滚动全变，但 (listId,itemIndex)
+        // 稳定，Agent 可以按位置点，而不是拿上一屏坐标。
+        runCatching {
+            data class ListBox(val left: Int, val top: Int, val right: Int, val bottom: Int, val id: String, val counter: IntArray)
+            val lists = ArrayList<ListBox>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optBoolean("scrollable") && !o.optBoolean("clickable")) {
+                    val b = o.optJSONArray("bounds")
+                    if (b != null && b.length() >= 4) {
+                        lists.add(ListBox(b.optInt(0), b.optInt(1), b.optInt(2), b.optInt(3), "L$i", intArrayOf(0)))
+                    }
+                }
+            }
+            if (lists.isNotEmpty()) {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    if (!o.optBoolean("clickable")) continue
+                    val cx = o.optInt("x"); val cy = o.optInt("y")
+                    val hit = lists.firstOrNull { li ->
+                        cx in li.left..li.right && cy in li.top..li.bottom
+                    } ?: continue
+                    o.put("listId", hit.id)
+                    o.put("itemIndex", hit.counter[0])
+                    hit.counter[0]++
+                }
+            }
+        }
         return JSONObject()
             .put("ok", true)
             .put("width", resources.displayMetrics.widthPixels)

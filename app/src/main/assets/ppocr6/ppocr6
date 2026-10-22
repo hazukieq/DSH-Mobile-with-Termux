@@ -1,0 +1,225 @@
+#!/data/data/com.termux/files/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+ppocr6 —— PP-OCRv6 (ONNX Runtime, 纯 CPU) 本地 OCR，输出文字 + 可点中心坐标
+
+模型：PaddlePaddle/PP-OCRv6_{tiny,small}_det_onnx + _rec_onnx（hf-mirror 下载）
+依赖：python-onnxruntime、numpy、scipy、Pillow（均已在 Termux 装好）
+
+用法:
+  ppocr6 <图片> [--tier tiny|small] [--json] [--min-conf 0.5] [--filter 正则] [--top N]
+"""
+import argparse, json, math, os, re, sys, time
+
+import numpy as np
+import warnings
+warnings.filterwarnings('ignore')
+from PIL import Image
+from scipy import ndimage
+
+MDIR = os.environ.get("PPOCR6_DIR", "/data/user/0/com.termux/files/usr/share/ppocr6")
+
+# ---------------- 会话 ----------------
+_cache = {}
+
+def session(tier, kind):
+    key = (tier, kind)
+    if key in _cache:
+        return _cache[key]
+    import onnxruntime as ort
+    ort.set_default_logger_severity(3)
+    path = os.path.join(MDIR, f"{kind}_{tier}.onnx")
+    if not os.path.exists(path):
+        sys.exit(f"ppocr6: 缺模型 {path}")
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = max(1, min(4, (os.cpu_count() or 4)))
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    # 缓存优化后的模型，第二次起省掉图优化时间
+    opt = path + ".ort"
+    s = None
+    try:
+        if os.path.exists(opt):
+            s = ort.InferenceSession(opt, sess_options=so, providers=["CPUExecutionProvider"])
+        else:
+            so.optimized_model_filepath = opt
+            s = ort.InferenceSession(path, sess_options=so, providers=["CPUExecutionProvider"])
+            so.optimized_model_filepath = ""
+    except Exception:
+        s = ort.InferenceSession(path, sess_options=so, providers=["CPUExecutionProvider"])
+    _cache[key] = s
+    return s
+
+# ---------------- 字典 ----------------
+def load_charset(tier):
+    path = os.path.join(MDIR, f"rec_{tier}.yml")
+    txt = open(path, encoding="utf-8").read()
+    m = re.search(r"character_dict:\n((?:  - .*\n)+)", txt)
+    if not m:
+        sys.exit("ppocr6: rec yml 里没找到 character_dict")
+    chars = []
+    for line in m.group(1).splitlines():
+        v = line[4:]
+        if len(v) >= 2 and v[0] == "'" and v[-1] == "'":
+            v = v[1:-1].replace("''", "'")
+        chars.append(v)
+    return ["<blank>"] + chars + [" "]
+
+# ---------------- 检测 ----------------
+MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+def det_preprocess(img_bgr, round_to=32):
+    h, w = img_bgr.shape[:2]
+    nh = int(math.ceil(h / round_to) * round_to)
+    nw = int(math.ceil(w / round_to) * round_to)
+    im = Image.fromarray(img_bgr).resize((nw, nh), Image.BILINEAR)
+    a = np.asarray(im, dtype=np.float32) / 255.0
+    a = (a - MEAN) / STD
+    return np.ascontiguousarray(a.transpose(2, 0, 1)[None])
+
+def det_postprocess(prob, thresh=0.2, box_thresh=0.45, unclip=1.4, max_cand=3000):
+    """prob: (H,W) 概率图 -> [(x0,y0,x1,y1,score)]"""
+    mask = prob > thresh
+    lab, n = ndimage.label(mask)
+    if n == 0:
+        return []
+    objs = ndimage.find_objects(lab)
+    boxes = []
+    for i, sl in enumerate(objs, start=1):
+        if sl is None:
+            continue
+        y0, y1 = sl[0].start, sl[0].stop
+        x0, x1 = sl[1].start, sl[1].stop
+        if (y1 - y0) < 3 or (x1 - x0) < 3:
+            continue
+        # 只用该连通域内的像素算平均分（Paddle 用 box mask）
+        comp = (lab[sl] == i)
+        score = float(prob[sl][comp].mean()) if comp.any() else 0.0
+        if score < box_thresh:
+            continue
+        # unclip：distance = area*ratio/perimeter（矩形近似）
+        w = x1 - x0
+        h = y1 - y0
+        peri = 2 * (w + h)
+        dist = w * h * unclip / peri if peri > 0 else 0
+        boxes.append([x0 - dist, y0 - dist, x1 + dist, y1 + dist, score])
+        if len(boxes) >= max_cand:
+            break
+    return boxes
+
+# ---------------- 识别 ----------------
+def rec_preprocess(crop_bgr, img_h=48, max_w=1600):
+    h, w = crop_bgr.shape[:2]
+    if h <= 1 or w <= 1:
+        return None
+    ratio = w / float(h)
+    nw = max(16, int(round(img_h * ratio)))
+    nw = min(nw, max_w)
+    nw = int(math.ceil(nw / 8) * 8)
+    im = Image.fromarray(crop_bgr).resize((nw, img_h), Image.BILINEAR)
+    a = np.asarray(im, dtype=np.float32) / 255.0
+    a = (a - 0.5) / 0.5
+    return np.ascontiguousarray(a.transpose(2, 0, 1)[None])
+
+def ctc_decode(out, charset):
+    """out: (T,C) logits -> (text, conf)"""
+    idx = out.argmax(axis=1)
+    prob = out.max(axis=1)
+    chars, confs = [], []
+    prev = -1
+    for t, k in enumerate(idx):
+        if k == prev:
+            continue
+        prev = k
+        if k == 0:
+            continue
+        if k < len(charset):
+            ch = charset[k]
+            if ch == "<blank>":
+                continue
+            chars.append(ch)
+            confs.append(float(prob[t]))
+    return "".join(chars), (float(np.mean(confs)) if confs else 0.0)
+
+# ---------------- 主流程 ----------------
+def run(image_path, tier="tiny", det_side=0, min_conf=0.35, top=0, filt=None, debug=False):
+    t0 = time.time()
+    img = Image.open(image_path).convert("RGB")
+    W, H = img.size
+    if det_side and max(W, H) > det_side:
+        sc = det_side / float(max(W, H))
+        img = img.resize((int(W * sc), int(H * sc)), Image.BILINEAR)
+    img_bgr = np.asarray(img)[:, :, ::-1].copy()   # RGB->BGR
+    h, w = img_bgr.shape[:2]
+
+    ds = session(tier, "det")
+    t1 = time.time()
+    x = det_preprocess(img_bgr)
+    prob = ds.run(None, {ds.get_inputs()[0].name: x})[0][0][0]
+    t_det = time.time() - t1
+    # 概率图缩回原尺寸
+    if prob.shape != (h, w):
+        prob = np.asarray(Image.fromarray(prob).resize((w, h), Image.BILINEAR), dtype=np.float32)
+
+    boxes = det_postprocess(prob)
+    if debug:
+        print(f"# det {t_det:.2f}s boxes={len(boxes)}", file=sys.stderr)
+
+    rs = session(tier, "rec")
+    charset = load_charset(tier)
+    items = []
+    t2 = time.time()
+    for x0, y0, x1, y1, score in boxes:
+        pad = 2
+        cx0 = max(0, int(x0) - pad); cy0 = max(0, int(y0) - pad)
+        cx1 = min(w, int(x1) + pad); cy1 = min(h, int(y1) + pad)
+        crop = img_bgr[cy0:cy1, cx0:cx1]
+        xin = rec_preprocess(crop)
+        if xin is None:
+            continue
+        out = rs.run(None, {rs.get_inputs()[0].name: xin})[0][0]
+        text, conf = ctc_decode(out, charset)
+        text = text.strip()
+        if not text or conf < min_conf:
+            continue
+        if filt and not re.search(filt, text):
+            continue
+        bx0 = max(0, int(x0)); by0 = max(0, int(y0))
+        bx1 = min(w, int(math.ceil(x1))); by1 = min(h, int(math.ceil(y1)))
+        items.append({
+            "text": text, "conf": round(conf, 3),
+            "x": int((bx0 + bx1) / 2), "y": int((by0 + by1) / 2),
+            "bbox": [bx0, by0, bx1, by1], "det": round(float(score), 3),
+        })
+    items.sort(key=lambda d: (d["y"], d["x"]))
+    t_rec = time.time() - t2
+    if top:
+        items = items[:top]
+    return {"image": image_path, "tier": tier, "size": [w, h], "count": len(items),
+            "sec_det": round(t_det, 2), "sec_rec": round(t_rec, 2),
+            "sec_total": round(time.time() - t0, 2), "items": items}
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("image")
+    ap.add_argument("--tier", default="tiny", choices=["tiny", "small", "medium"])
+    ap.add_argument("--det-side", type=int, default=0, help="检测前把最长边缩到该值（0=不缩）")
+    ap.add_argument("--min-conf", type=float, default=0.35)
+    ap.add_argument("--filter", default=None)
+    ap.add_argument("--top", type=int, default=0)
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--debug", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    a = ap.parse_args()
+    if a.help:
+        print(__doc__); return
+    r = run(a.image, a.tier, a.det_side, a.min_conf, a.top, a.filter, a.debug)
+    if a.json:
+        print(json.dumps(r, ensure_ascii=False, indent=1))
+    else:
+        for i, it in enumerate(r["items"], 1):
+            print(f"{i:>2} {it['text']} @{it['x']},{it['y']}  conf={it['conf']:.2f}  bbox={it['bbox']}")
+        print(f"# {r['count']} 行, det {r['sec_det']}s + rec {r['sec_rec']}s = {r['sec_total']}s", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()

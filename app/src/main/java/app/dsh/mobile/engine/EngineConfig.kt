@@ -1310,6 +1310,24 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
                 }.onFailure { Log.w(TAG, "agent gate $name deploy failed: ${it.message}") }
             }
             Log.i(TAG, "agent gates deployed (${AGENT_GATES.size}): ${AGENT_GATES.joinToString(" ")}")
+            // v1.8.2（点击链路提案 P1-4）：PP-OCRv6 tiny 兜底 —— 脚本放 bin、模型放 share。
+            // 只部署 tiny（6MB）；python/onnxruntime 由 /ocr?engine=ppocr6&ensure=1 显式安装。
+            runCatching {
+                val share = File(root, "share/ppocr6").apply { mkdirs() }
+                listOf("det_tiny.onnx", "rec_tiny.onnx", "rec_tiny.yml").forEach { name ->
+                    val bytes = ctx.assets.open("ppocr6/$name").use { it.readBytes() }
+                    val dst = File(share, name)
+                    if (!dst.isFile || dst.length() != bytes.size.toLong()) dst.writeBytes(bytes)
+                }
+                val scriptText = ctx.assets.open("ppocr6/ppocr6").use { it.readBytes().toString(Charsets.UTF_8) }
+                    .replace("\r\n", "\n").replace("\r", "\n")
+                val dst = File(bindir, "ppocr6")
+                if (runCatching { java.nio.file.Files.isSymbolicLink(dst.toPath()) }.getOrDefault(false) || !dst.isFile) dst.delete()
+                if (!dst.isFile || dst.readText() != scriptText) dst.writeText(scriptText)
+                dst.setReadable(true, false)
+                dst.setExecutable(true, false)
+                Log.i(TAG, "ppocr6 deployed: script=${dst.length()}B models=${share.list()?.size ?: 0}")
+            }.onFailure { Log.w(TAG, "ppocr6 deploy failed: ${it.message}") }
             // planner-daemon 已于 v1.2.167 移除（用户要求：AI 用自己的工具做无障碍）
 
     // LAN 反向代理脚本（v1.2.160）：与 daemon 同一套部署方式（assets → tools）。

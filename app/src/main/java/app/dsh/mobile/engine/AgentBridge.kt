@@ -14,6 +14,8 @@ import app.dsh.mobile.DshApp
 import app.dsh.mobile.OrientationMode
 import app.dsh.mobile.OrientationPrefs
 import app.dsh.mobile.R
+import app.dsh.mobile.PpOcr
+import app.dsh.mobile.ScreenOcr
 import app.dsh.mobile.StatusOverlay
 import org.json.JSONArray
 import org.json.JSONObject
@@ -497,6 +499,7 @@ object AgentBridge {
             method == "GET" && path == "/screen" -> screen(query)
             method == "GET" && path == "/ocr" -> ocr(query)
             method == "GET" && path == "/screen-changed" -> screenChanged()
+            method == "GET" && path == "/scene" -> scene(ctx, query)
             method == "POST" && path == "/pick" -> pick(body)
             method == "GET" && path == "/local/status" -> localStatus(ctx)
             method == "GET" && path == "/frame-diff" -> frameDiff()
@@ -958,7 +961,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     private val A11Y_REQUIRED_PATHS = A11Y_ACTION_PATHS + setOf(
         "/screen", "/ocr", "/screen-changed", "/pick", "/diff", "/interference",
         "/wait-text", "/screenshot", "/app-screenshot", "/frame-diff", "/frame-wait",
-        "/vision/track", "/vision/crop", "/vision/drag",
+        "/vision/track", "/vision/crop", "/vision/drag", "/scene",
     )
 
     /** 连续操作够几步才提示（太少会打扰，太多用户又看不到过程）。 */
@@ -1339,6 +1342,41 @@ document.getElementById('api').textContent = checks.map(function(c){
             }
 
             val index = if (obj.has("index")) obj.getInt("index") else -1
+            // v1.8.2（提案 P1-6）：按 (listId, itemIndex) 点击列表行 —— 坐标由 App 实时算，
+            // 滚动后也不会拿旧坐标点错。
+            val listId = obj.optString("listId").takeIf { it.isNotBlank() }
+            val itemIndex = if (obj.has("itemIndex")) obj.getInt("itemIndex") else -1
+            if (listId != null && itemIndex >= 0) {
+                val nodes = runCatching {
+                    JSONObject(svc.dumpScreenJson("all", ocrFallback = false)).optJSONArray("nodes")
+                }.getOrNull()
+                var target: JSONObject? = null
+                if (nodes != null) {
+                    for (i in 0 until nodes.length()) {
+                        val n = nodes.optJSONObject(i) ?: continue
+                        if (n.optString("listId") == listId && n.optInt("itemIndex", -1) == itemIndex) {
+                            target = n; break
+                        }
+                    }
+                }
+                val t = target ?: return 404 to JSONObject().put("ok", false)
+                    .put("error", "no node with listId=$listId itemIndex=$itemIndex")
+                    .put("failedAt", "tap")
+                    .put("hint", "re-read /screen?format=json and use the current listId/itemIndex; lists are re-numbered per screen")
+                    .toString()
+                val cx = t.optInt("x"); val cy = t.optInt("y")
+                val ok2 = svc.dispatchTap(cx.toFloat(), cy.toFloat())
+                return 200 to JSONObject().apply {
+                    put("ok", ok2)
+                    put("dispatched", ok2)
+                    put("via", "list")
+                    put("listId", listId)
+                    put("itemIndex", itemIndex)
+                    put("x", cx); put("y", cy)
+                    t.optJSONArray("bounds")?.let { put("bounds", it) }
+                    t.optString("text").takeIf { it.isNotBlank() }?.let { put("text", it) }
+                }.toString()
+            }
             val ok = when {
                 sel != null && index >= 0 -> {
                     // 按 index 选候选（歧义消解）
@@ -1474,8 +1512,43 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun ocr(query: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled for screenshot capture"}"""
         val params = parseQuery(query)
+        // v1.8.2（提案 P1-4）：PP-OCRv6 tiny 本地兜底（Termux python+onnxruntime）
+        if (params["engine"]?.lowercase() == "ppocr6") {
+            if (params["ensure"] in listOf("1", "true", "yes")) {
+                val err = PpOcr.ensureDeps(svc)
+                if (err != null) {
+                    return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
+                        .put("unavailable", true).put("reason", err).toString()
+                }
+            }
+            if (!PpOcr.ready(svc)) {
+                return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
+                    .put("unavailable", true)
+                    .put("reason", "ppocr6 deps missing: run /ocr?engine=ppocr6&ensure=1 (installs python + onnxruntime)")
+                    .put("deployed", PpOcr.deployed(svc)).toString()
+            }
+            val shot = svc.screenshotBase64()
+                ?: return 503 to """{"ok":false,"error":"screenshot_failed","reason":"accessibility screenshot unavailable"}"""
+            val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: return 500 to """{"ok":false,"error":"bitmap_decode_failed"}"""
+            val r = PpOcr.recognize(svc, bmp)
+            bmp.recycle()
+            val arr = JSONArray()
+            r.blocks.forEach { b ->
+                arr.put(JSONObject().apply {
+                    put("text", b.text); put("x", b.cx); put("y", b.cy)
+                    put("left", b.left); put("top", b.top); put("right", b.right); put("bottom", b.bottom)
+                    put("conf", b.conf)
+                })
+            }
+            return if (r.ok) 200 to JSONObject().put("ok", true).put("engine", "ppocr6-tiny")
+                .put("costMs", r.costMs).put("lines", r.blocks.size).put("blocks", arr).toString()
+            else 503 to JSONObject().put("ok", false).put("engine", "ppocr6-tiny")
+                .put("unavailable", r.unavailable).put("reason", r.reason).toString()
+        }
         val force = params["force"] in listOf("1", "true", "yes")
         val scale = params["scale"]?.toFloatOrNull() ?: 0.5f
         val r = app.dsh.mobile.ScreenOcr.recognize(svc, force, scale)
@@ -3076,6 +3149,136 @@ document.getElementById('api').textContent = checks.map(function(c){
             put("bounds", org.json.JSONArray().put(r.left).put(r.top).put(r.right).put(r.bottom))
             put("boundsCenter", org.json.JSONArray().put(cx).put(cy))
         }.toString()
+    }
+
+    /**
+     * GET /scene（v1.8.2，提案 P0-2）：无障碍节点 + OCR 的**单一合并视图**。
+     * query: ocr=0 关闭 OCR；engine=mlkit|ppocr6 指定 OCR 引擎（默认自动）。
+     * 返回 {ok,nodes:[{text,x,y,bounds,source,clickable,hint?,a11yIndex?}],timings,ocrEngine,scale}。
+     */
+    private fun scene(ctx: Context, query: String): Pair<Int, String> {
+        val svc = DshAccessibilityService.instance
+            ?: return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled"}"""
+        val params = parseQuery(query)
+        val wantOcr = params["ocr"] !in listOf("0", "false", "no")
+        val t0 = System.currentTimeMillis()
+        val baseCsv = withScreenTimeout("sceneA11y") { svc.dumpScreenJson("all", ocrFallback = false) }
+            ?: return 504 to """{"ok":false,"error":"accessibility node tree read timed out"}"""
+        val base = runCatching { JSONObject(baseCsv.getOrThrow()) }.getOrElse {
+            return 500 to """{"ok":false,"error":"bad a11y json: ${it.message}"}"""
+        }
+        val a11yMs = System.currentTimeMillis() - t0
+        val a11yNodes = base.optJSONArray("nodes") ?: JSONArray()
+        val out = JSONArray()
+        val clickables = ArrayList<JSONObject>()
+        for (i in 0 until a11yNodes.length()) {
+            val o = a11yNodes.optJSONObject(i) ?: continue
+            o.put("source", "a11y")
+            out.put(o)
+            if (o.optBoolean("clickable")) clickables.add(o)
+        }
+
+        var ocrEngine = "none"
+        var ocrMs = 0L
+        if (wantOcr) {
+            val t1 = System.currentTimeMillis()
+            val boxes = ArrayList<Box>()
+            val forced = params["engine"]?.lowercase()
+            if (forced != "ppocr6") {
+                val ml = runCatching { ScreenOcr.recognize(svc, false, 0.5f) }.getOrNull()
+                if (ml != null && !ml.unavailable && ml.blocks.isNotEmpty()) {
+                    ocrEngine = "mlkit"
+                    ml.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, 0.0)) }
+                }
+            }
+            if (boxes.isEmpty() && (forced == "ppocr6" || PpOcr.ready(ctx))) {
+                val shot = runCatching { svc.screenshotBase64() }.getOrNull()
+                if (shot != null) {
+                    val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
+                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bmp != null) {
+                        val r = PpOcr.recognize(ctx, bmp)
+                        bmp.recycle()
+                        if (r.ok) {
+                            ocrEngine = "ppocr6-tiny"
+                            r.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, it.conf)) }
+                        }
+                    }
+                }
+            }
+            ocrMs = System.currentTimeMillis() - t1
+            mergeOcrLines(boxes).forEach { line ->
+                val node = JSONObject().apply {
+                    put("text", line.text)
+                    put("x", line.cx); put("y", line.cy)
+                    put("bounds", JSONArray().put(line.left).put(line.top).put(line.right).put(line.bottom))
+                    put("center", JSONArray().put(line.cx).put(line.cy))
+                    put("source", "ocr")
+                    put("clickable", false)
+                }
+                // 落在某个可点 a11y 节点 bounds 内 → 继承 clickable/id（提案 hint:near-clickable）
+                val host = clickables.firstOrNull { a ->
+                    val b = a.optJSONArray("bounds") ?: return@firstOrNull false
+                    line.cx in b.optInt(0)..b.optInt(2) && line.cy in b.optInt(1)..b.optInt(3)
+                }
+                if (host != null) {
+                    node.put("clickable", true)
+                    node.put("hint", "near-clickable")
+                    node.put("a11yIndex", host.optInt("index"))
+                    host.optJSONArray("center")?.let { node.put("a11yCenter", it) }
+                } else {
+                    node.put("hint", "custom control (no a11y node); tap the center if it is a button")
+                }
+                out.put(node)
+            }
+        }
+
+        val perf = JSONObject().put("a11y", a11yMs).put("ocr", ocrMs)
+        return 200 to JSONObject().apply {
+            put("ok", true)
+            put("nodes", out)
+            put("count", out.length())
+            put("timings", perf)
+            put("ocrEngine", ocrEngine)
+            put("scale", JSONArray().put(base.optInt("width")).put(base.optInt("height")))
+        }.toString()
+    }
+
+    private data class Box(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val conf: Double) {
+        val cx: Int get() = (left + right) / 2
+        val cy: Int get() = (top + bottom) / 2
+        val h: Int get() = bottom - top
+    }
+
+    private data class Line(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int) {
+        val cx: Int get() = (left + right) / 2
+        val cy: Int get() = (top + bottom) / 2
+    }
+
+    /** 提案实测规则：同一 y 带（±18px）且横向间距 < 0.8 字高 → 合成一行。 */
+    private fun mergeOcrLines(boxes: List<Box>): List<Line> {
+        if (boxes.isEmpty()) return emptyList()
+        val sorted = boxes.sortedWith(compareBy({ it.cy }, { it.left }))
+        val lines = ArrayList<Line>()
+        var cur: MutableList<Box> = ArrayList()
+        fun flush() {
+            if (cur.isEmpty()) return
+            val left = cur.minOf { it.left }; val top = cur.minOf { it.top }
+            val right = cur.maxOf { it.right }; val bottom = cur.maxOf { it.bottom }
+            val text = cur.sortedBy { it.left }.joinToString(" ") { it.text.trim() }.trim()
+            if (text.isNotEmpty()) lines.add(Line(text, left, top, right, bottom))
+            cur = ArrayList()
+        }
+        for (b in sorted) {
+            if (cur.isEmpty()) { cur.add(b); continue }
+            val anchor = cur.first()
+            val sameBand = kotlin.math.abs(b.cy - anchor.cy) <= 18
+            val gap = b.left - cur.maxOf { it.right }
+            val maxH = maxOf(anchor.h, b.h).coerceAtLeast(8)
+            if (sameBand && gap < (0.8f * maxH).toInt()) cur.add(b) else { flush(); cur.add(b) }
+        }
+        flush()
+        return lines
     }
 
     /** POST /wait-text —— 等文本出现/消失（v1.2.141）：{text, gone?, timeoutMs?} */

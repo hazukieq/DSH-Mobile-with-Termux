@@ -53,12 +53,42 @@ POST /tap
 | `tap desc:"设置" expect 不存在文案（1500ms） | `verified:false`、`elapsedMs:1667`、`failedAt:tap`、`screenHash` |
 | `POST /a11y/enable`（无障碍关闭时） | `ok:true`、`opened:accessibility-settings` |
 
+### P0-2 `/scene` 单一合并视图（v1.8.2）
+
+`GET /scene`（`ocr=0` 可关 OCR；`engine=mlkit|ppocr6` 可指定引擎）返回统一节点列表：
+
+```json
+{"ok":true,"count":35,"ocrEngine":"mlkit",
+ "timings":{"a11y":27,"ocr":348},
+ "scale":[1080,2400],
+ "nodes":[
+   {"text":"引擎已就绪…","bounds":[0,105,653,215],"center":[326,160],"source":"a11y","clickable":false},
+   {"text":"同意及確認","bounds":[...],"source":"ocr","clickable":true,"hint":"near-clickable","a11yIndex":12}
+ ]}
+```
+
+- OCR 行按提案规则合并：同一 y 带 ±18px、间距 < 0.8 字高；
+- OCR 框落在可点 a11y 节点 bounds 内时继承 `clickable/a11yIndex`（hint:*near-clickable*）；
+- `timings` 分开报无障碍与 OCR 耗时，`ocrEngine` 说明用了哪个引擎。
+
+### P1-4 PP-OCRv6 tiny 本地兜底（v1.8.2）
+
+- 随 APK 内置 `assets/ppocr6/`：脚本 + `det_tiny.onnx` + `rec_tiny.onnx/yml`（约 6.3MB）；
+- 引擎启动时部署到 `$PREFIX/bin/ppocr6` 与 `$PREFIX/share/ppocr6/`；
+- `GET /ocr?engine=ppocr6`：依赖缺失时返回 `unavailable:true, reason`（含安装提示）；
+- `GET /ocr?engine=ppocr6&ensure=1`：执行 `pkg install -y python onnxruntime` 后重试（网络/体积较大，显式触发）；
+- `/scene` 在 ML Kit 不可用或 `engine=ppocr6` 时自动用 PP-OCRv6。
+
+### P1-6 listId / itemIndex（v1.8.2）
+
+- `/screen?format=json` 与 `/scene` 的节点：滚动容器内的可点行带 `listId` 与 `itemIndex`；
+- `POST /tap {"listId":"L12","itemIndex":3}`：App 实时重读节点树定位并点击，不依赖上一屏坐标；
+- 找不到时返回 404 + `failedAt:"tap"` + 重新读取的提示。
+
 ## 未落地（下一批）
 
 | 提案 | 状态 | 备注 |
 |---|---|---|
-| P0-2 `/scene` 合并 a11y+OCR | 待做 | 需要本地 OCR 引擎（见 P1-4） |
-| P1-4 内嵌 PP-OCRv6（onnx） | 待做 | 模型 6/31MB；需决定走 Termux onnxruntime 还是内置推理 |
-| P1-6 listId/itemIndex | 待做 | 依赖 bounds 已就绪 |
 | P2-7 `/act` 事务化 | 待做 | 可在 `loop run` 之上抽象 |
-| P2-8 OCR 批量/增量 | 待做 | 依赖 P1-4 |
+| P2-8 OCR 批量/增量 | 待做 | 依赖 P1-4 已就绪 |
+| P3-9 失败可观测性（完整版） | 部分 | tap 已带 failedAt/screenHash/candidates/hint |
