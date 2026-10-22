@@ -1414,6 +1414,11 @@ class MainActivity : Activity() {
         // 释放未完成的文件选择请求，否则 WebView 侧回调悬空
         pendingFileCallback?.let { runCatching { it.onReceiveValue(null) } }
         pendingFileCallback = null
+        // v2.3.1（用户反馈「App 退出后悬浮窗还在」）：Activity 真正结束（不是旋转/recreate）
+        // 时收起悬浮窗；引擎/服务仍活着时下次打开会重新显示。
+        if (isFinishing && !isChangingConfigurations) {
+            runCatching { StatusOverlay.hideAuto(this) }
+        }
         if (::webView.isInitialized) webView.destroy()
         super.onDestroy()
     }

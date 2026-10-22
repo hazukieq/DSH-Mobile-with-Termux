@@ -117,9 +117,11 @@ class EngineService : Service() {
             return
         }
         // v1.3.73 用户硬性要求：从最近任务划掉 = 正常退出，**绝不自动拉起**。
-        // 只有用户再次主动打开 App（MainActivity.onCreate）才会清除该标记。
-        Log.i(TAG, "task removed: marking user-exited, no auto-start")
+        // v2.3.1（用户反馈「App 退出后悬浮窗还在」）：划掉任务就是彻底退出，
+        // 不能只置标记把引擎/悬浮窗留后台——直接走和通知栏「退出」同一条清理路径。
+        Log.i(TAG, "task removed: exiting completely (engine + overlay)")
         setUserExited(this, true)
+        exitCompletely()
     }
 
     override fun onDestroy() {
@@ -129,6 +131,9 @@ class EngineService : Service() {
         stateJob = null
         stateScope.cancel()
         (application as DshApp).supervisor.stop()
+        // v2.3.1：服务销毁时兜底拆掉悬浮窗（进程可能还活着，窗口不会自动消失）。
+        runCatching { app.dsh.mobile.StatusOverlay.teardown(app.dsh.mobile.DshAccessibilityService.instance) }
+        runCatching { app.dsh.mobile.StatusOverlay.hideAuto(this) }
         super.onDestroy()
     }
 

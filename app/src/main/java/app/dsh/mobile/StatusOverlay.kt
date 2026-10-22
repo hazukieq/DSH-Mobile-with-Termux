@@ -764,9 +764,10 @@ object StatusOverlay {
     }
 
     fun onAccessibilityLost() {
-        if (windowTypeUsed == android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) {
-            hide(null)
-        }
+        // v2.3.1：无障碍服务被系统销毁/重启时，无论窗口是 a11y overlay 还是 app overlay，
+        // 都先收起——否则服务没了、app 窗口还挂在进程里（用户反馈「退出后悬浮窗还在」）。
+        // 服务重新连接时 DshAccessibilityService.onServiceConnected 会按开关重新 show。
+        hide(null)
     }
 
     private fun hideInternal(userHidden: Boolean) {
