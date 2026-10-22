@@ -198,10 +198,19 @@ Only if a custom LAN URL is required, write a small node reverse proxy that list
 
 ## Showing the user something visual
 
-**Images in a reply go through the native `read_image` tool.** When you want to show an image to the
-user, pass its file path to `read_image`; the harness turns it into a session attachment rendered
-inline. Do not paste base64, do not print only a path or a `file://` URL, and do not rely on markdown
-image syntax pointing at a local file - those do not render for the user.
+**Seeing vs showing are different.** `read_image` is model-facing: it returns the picture as a
+tool-result attachment (with an `attachmentId` like `sha256:<hex>`), but it does **not** put a picture
+into your assistant message. To actually show the image to the user, write a markdown image in the
+reply that points at the durable attachment object:
+
+```
+![](<dsh-home>/attachments/v1/objects/<first 2 hex chars>/<remaining 62 hex chars>)
+```
+
+Build that path from the `attachmentId` returned by `read_image` (`sha256:` + hex = 64 hex chars) and
+`$DSH_HOME` (for example `/data/user/0/com.termux/files/dsh-home`). Workspace/shared-storage paths
+(`/storage/emulated/0/...`) and `file://` URLs do not render in the client; base64 in the text does
+not either.
 
 There is no display server. Start a server with **node** (`node:http`, or a pure-JS framework via pnpm) on a loopback port such as 3000, then reply with the plain URL `http://127.0.0.1:<port>` — the app opens it as a live preview when the user taps it. Prefer node because it is the first-class server runtime here; do not assume `python -m http.server` or busybox httpd is available.
 
