@@ -606,21 +606,14 @@ object StatusOverlay {
                 })
                 return@main
             }
-            // 第一行：AI 上次做了什么
-            box.addView(TextView(ctx).apply {
-                text = last.action
-                textSize = 11f
-                setTextColor(0xFFB8C0CC.toInt())
-                maxLines = 2
-                ellipsize = android.text.TextUtils.TruncateAt.END
-            })
-            // 第二行：什么时候做的
+            // v2.4.7（用户反馈「点击动作显示在最底部会话区」）：
+            // 动作正文统一显示在思考链下方的动作行（overlayAction），详情区只保留
+            // 「上次动作发生在什么时候」，不再重复动作内容，也不再占用会话标题区。
             box.addView(TextView(ctx).apply {
                 val when_ = android.text.format.DateUtils.getRelativeTimeSpanString(last.at)
                 text = ctx.getString(R.string.overlay_last_action_at, when_)
                 textSize = 10f
                 setTextColor(0xFF7DD3FC.toInt())
-                setPadding(0, dp(ctx, 3), 0, 0)
             })
         }
     }
@@ -978,6 +971,11 @@ object StatusOverlay {
     fun setAction(text: String) {
         main {
             cancelIdleReset()
+            // v2.4.6（用户反馈「无障碍点击动作都不显示了」）：
+            // 动作行可见性 = expandLevel>=1 && working && text 非空。v2.3.7 把动作从
+            // setStatus（会置 working=true）挪到本方法后，本方法没有置 working，
+            // 于是纯动作（没有新的思考链更新）时动作行一直是 GONE。
+            working = true
             actionText?.text = text.take(200)
             actionText?.isSelected = true
             refreshActionVisibility()
