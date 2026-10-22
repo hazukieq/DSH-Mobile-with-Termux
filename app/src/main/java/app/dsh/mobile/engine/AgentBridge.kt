@@ -2713,6 +2713,11 @@ document.getElementById('api').textContent = checks.map(function(c){
                     obj.getDouble("x2").toFloat(), obj.getDouble("y2").toFloat(),
                     obj.optLong("durationMs", 300L),
                 )
+                "double_tap", "doubleTap" -> {
+                    obj.optJSONArray("xy")?.let {
+                        svc.dispatchDoubleTap(it.optDouble(0).toFloat(), it.optDouble(1).toFloat(), obj.optLong("gapMs", 90L))
+                    } ?: svc.dispatchDoubleTap(obj.getDouble("x").toFloat(), obj.getDouble("y").toFloat(), obj.optLong("gapMs", 90L))
+                }
                 "long_press" -> svc.dispatchLongPress(
                     obj.getDouble("x").toFloat(), obj.getDouble("y").toFloat(),
                     obj.optLong("durationMs", 600L),
@@ -3564,10 +3569,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                     val gap = st.optLong("gapMs", 90L).coerceIn(40L, 400L)
                     if (xy != null && xy.length() >= 2) {
                         val x = xy.optDouble(0).toFloat(); val y = xy.optDouble(1).toFloat()
-                        actionOk = svc.dispatchTap(x, y) && runCatching {
-                            Thread.sleep(gap)
-                            svc.dispatchTap(x, y)
-                        }.getOrDefault(false)
+                        actionOk = svc.dispatchDoubleTap(x, y, gap)
                     } else actionOk = false
                 }
                 st.has("input") -> {

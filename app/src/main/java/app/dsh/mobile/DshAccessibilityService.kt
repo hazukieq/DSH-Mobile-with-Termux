@@ -1836,6 +1836,32 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * 双击（v2.4.5，用户实测「双击并不生效」修复）。
+     *
+     * 旧实现是两次独立的 dispatchGesture（中间 Thread.sleep(90)）——系统会把第二个
+     * tap 当成一次新的单击（或直接丢弃），应用收不到 double-tap。正确做法是**一个
+     * GestureDescription 里放两个 stroke**，第二个 stroke 用 startTime=gap 偏移，
+     * 这样系统看到的是同一次手势里的两次按压。
+     */
+    internal fun dispatchDoubleTap(x: Float, y: Float, gapMs: Long = 90L): Boolean {
+        if (Build.VERSION.SDK_INT < 24) return false
+        val (sw, sh) = screenSize()
+        val cx = x.coerceIn(1f, sw - 2f)
+        val cy = y.coerceIn(1f, sh - 2f)
+        val pressMs = 50L
+        val gap = gapMs.coerceIn(40L, 300L)
+        val p1 = Path().apply { moveTo(cx, cy) }
+        val p2 = Path().apply { moveTo(cx, cy) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(p1, 0L, pressMs))
+            .addStroke(GestureDescription.StrokeDescription(p2, gap, pressMs))
+            .build()
+        markSelfAction()
+        expectSelfTouch()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    /**
      * 任意滑动/手势（无障碍 dispatchGesture，无需 Shizuku/Root 权限）。
      *
      * ⚠️ v1.2.68：坐标**先钳进屏幕**再建 Path。
