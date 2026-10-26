@@ -60,6 +60,15 @@ object StatusOverlay {
     private const val SNAP_MS = 180L
 
     @Volatile private var root: View? = null
+    /**
+     * v2.5.24：所有还挂在 WindowManager 上的视图（只在主线程读写）。
+     *
+     * 实测（vivo Pad 2.5.23）：屏幕上出现**两个**悬浮窗（110x110 圆球 + wrap 卡片），
+     * dumpsys 里是两条独立窗口。原因是 root 引用被清掉后旧 View 仍 attach 着，
+     * 此时再走一次 startOverlay 就又多挂一个——单靠 root 判空挡不住。
+     * 因此每次建窗口前先把遗留视图全部 removeView，隐藏时也一并清干净。
+     */
+    private val liveViews = ArrayList<View>()
     @Volatile private var params: WindowManager.LayoutParams? = null
     @Volatile private var statusText: TextView? = null
     @Volatile private var statusScroll: android.widget.ScrollView? = null
@@ -211,6 +220,9 @@ object StatusOverlay {
                 a11yText = view.findViewById(R.id.overlayA11y)
                 root = view; params = p
 
+                // 先清掉可能遗留的旧视图（见 liveViews 注释），再加新的
+                sweepLiveViews(w)
+                liveViews.add(view)
                 w.addView(view, p)
 
                 view.post {
@@ -597,6 +609,13 @@ object StatusOverlay {
     /** 窗口是否真的还挂在 WindowManager 上（Activity 销毁后 root 字段可能残留）。 */
     fun isAttached(): Boolean = runCatching { root?.isAttachedToWindow == true }.getOrDefault(false)
 
+    /** 把还挂着的旧视图全部摘掉（幂等；主线程调用）。 */
+    private fun sweepLiveViews(w: WindowManager) {
+        if (liveViews.isEmpty()) return
+        for (v in liveViews) runCatching { w.removeView(v) }
+        liveViews.clear()
+    }
+
     /** 丢弃已失效的 root 引用，让下一次 show() 重建窗口。 */
     fun dropStaleRoot() {
         main {
@@ -633,6 +652,7 @@ object StatusOverlay {
             runCatching {
                 wm?.removeView(r)
             }
+            wm?.let { sweepLiveViews(it) }
             root = null; params = null; statusText = null; statusDot = null
             statusScroll = null; a11yText = null
             hidden = userHidden
