@@ -96,10 +96,8 @@ Zu jeder Fähigkeit gibt es ein eigenes Dokument (Design-Abwägungen, Messwerte,
 | Dokument | Inhalt |
 |---|---|
 | [Barrierefreiheit & Gerätesteuerung](docs/ACCESSIBILITY.en.md) | Lesen/Tippen/Eingeben/Wischen über 21 Primitive; mehrschichtige Vision, Verifikation pro Schritt; gemessen ~1,45 s/Schritt |
-| [Designnotizen zur geschlossenen Schleife](docs/LOCAL_CLOSED_LOOP.md) | Design und Entwicklung der Entscheidungs-Engine auf dem Gerät |
 | [UI-Plugins für schmale Bildschirme](docs/NARROW_UI.en.md) | Seitenleiste über volle Breite / Einstellungen neu angeordnet / rechtes Panel bildschirmfüllend |
 | [LAN-WebUI](docs/LAN_WEBUI.en.md) | Reverse-Proxy, 6-stelliger Code, dauerhafte Erinnerung und Stopp-Kette |
-| [Spracheingabe](docs/VOICE_INPUT.en.md) | zwei Erkennungskanäle, Sende-Deduplizierung, Panel-Parking, bekanntes Problem |
 | [Benachrichtigungen & Hintergrund](docs/NOTIFICATIONS.en.md) | KI-Fortschritt, Aufgabenende, LAN-Erinnerung, sauberes Beenden |
 
 ## ⛔ Grenzen (bitte beachten)
@@ -194,7 +192,7 @@ Alternativ: Forke das Repository und lasse den Workflow **android-build** auf Gi
 1. Wähle beim ersten Start Anzeigeausrichtung und Berechtigungsmodus (im Zweifel **Normal**)
 2. Warte, bis die Laufzeit entpackt (mit echter Fortschrittsanzeige) und die Engine startet
 3. Starte ein Gespräch und gib dem Agenten Aufgaben; das Zahnradsymbol öffnet die Einstellungen; tippe auf jeden `127.0.0.1`-Link, den der Agent dir gibt, um sein Ergebnis anzusehen
-4. Spracheingabe und das schwebende Fenster sind immer verfügbar — kein Schalter nötig
+4. Das schwebende Statusfenster ist immer verfügbar — kein Schalter nötig (Spracheingabe hat derzeit keinen Einstieg)
 5. Damit der Agent den Bildschirm bedienen darf: aktiviere den Accessibility-Dienst **DSH Screen Tap** in den Systemeinstellungen (unter Android 13+ fragt das System „Vollständige Kontrolle über dein Gerät erlauben" — tippe auf **Allow**)
 
 ## ❓ FAQ

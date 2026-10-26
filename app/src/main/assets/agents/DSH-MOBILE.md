@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v64 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v65 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -51,7 +51,7 @@ Deleting under `/sdcard` or `/storage` goes through `rm`, which moves the file i
 
 The app is not "an accessibility app". The service (system label `DSH Mobile Helper (optional)`,
 zh `DSH Mobile 辅助（可选）`) is needed by exactly one family of capabilities — **observing or touching other apps' UI** — and the
-rest of the app must keep working when it is off. Full classification: `docs/A11Y-SCOPE.md`.
+rest of the app must keep working when it is off. Full classification: `docs/A11Y-SCOPE.md` in the fork repo (there is no docs/ directory on the device).
 
 **Needs the service** (gated: with it off these answer a structured `503 a11y_off` that names the
 reason; `GET /interference` is in the same gate set):
@@ -478,116 +478,39 @@ Notes:
 
 ### Background progress (notification / floating window)
 
-v1.3.68 adds a background progress layer that does **not** require accessibility:
+No accessibility needed. Settings → **后台进度提示** picks the display mode: 关闭 / 通知 / 悬浮窗
+(overlay is the default for installs that never chose). While a task runs in the background
+ProgressHub holds a 15-minute PARTIAL_WAKE_LOCK, released on foreground/done; if the WebView sandbox
+is reclaimed, onRenderProcessGone rebuilds it without restarting the engine.
 
-* a small injected client plugin (`mobile-progress`) watches the current session DOM (latest
-  thinking text / tool step / running state) and posts it through `DshNative.progress(json)`;
-* native `ProgressHub` shows it as a low-importance ongoing notification (default) or a floating
-  window; it only appears while the app is in the background (or for done/error), lockscreen
-  content is `VISIBILITY_PRIVATE` (status only, details hidden);
-* settings → **后台进度提示**: mode 关闭 / 通知 / 悬浮窗, plus permission rows
-  (notifications / overlay / accessibility) and a "预览一次" button. Floating window prefers
-  `TYPE_APPLICATION_OVERLAY` (SYSTEM_ALERT_WINDOW); it falls back to the accessibility window when
-  that permission is missing, and to the notification when neither is available;
-* `DshNative.openSettings()` opens the native settings page from the WebUI.
-* Background survival: settings → 后台保活 asks for battery-optimisation exemption, and the
-  后台进度提示 section also links to the vendor guidance (vivo/OPPO/Xiaomi background limits).
-  While a task runs in the background, ProgressHub holds a 15-minute PARTIAL_WAKE_LOCK (renewed
-  per update) so Doze is less likely to freeze the engine; it is released on foreground/done.
-  If the WebView sandbox is reclaimed by the system, onRenderProcessGone rebuilds the WebView and
-  reloads the engine URL without restarting the engine.
-* Never auto-start after a normal exit (v1.3.73, hard requirement): a persisted `user_exited`
-  flag is set by the notification's 退出 action and by removing the app from recents
-  (`onTaskRemoved`); while it is set, `EngineService.start()` and the accessibility keepalive
-  watchdog skip starting the engine. Only a fresh user launch of MainActivity (onCreate without
-  saved state) clears the flag and starts the engine again. If you (the agent) need to start it,
-  ask the user to open the app instead of calling the service.
-* Floating-window details (v1.3.75): the overlay starts as a small ball; tapping it expands a
-  rounded card whose body is a scrollable TextView (long thinking text wraps, and each update
-  auto-scrolls to the newest line; the card is capped at 232dp wide / 176dp tall). The title
-  line uses a marquee when it overflows. Automatic hide (foreground return) does not set the
-  user-hidden flag, so the next background update can show the window again.
-* Overlay refinements (v1.3.77): once the user expands the floating window it stays expanded
-  (remembered across hide/show and progress updates) and the body keeps auto-scrolling as new
-  thinking text arrives. Leaving the app pokes the WebUI (`window.__dshMobileProgressPoke`) so the
-  first snapshot appears immediately instead of waiting for the next poll. The overlay microphone
-  is driven by the accessibility service; without it the tap shows an explicit hint instead of
-  doing nothing.
-* The floating window is display-only now (v1.3.81): the microphone was removed from it. Voice
-  input still lives in the app: the accessibility service drives a voice panel (SpeechRecognizer,
-  or cloud ASR when configured), and MainActivity injects the recognised text into the WebUI
-  composer. The DSH engine also ships an optional experimental voice-input bundle for the WebUI;
-  it is not enabled by default.
-  The accessibility service entry is labelled "optional" and its description now states it is
-  only used for voice input and reading the current screen on request.
-* Live reasoning chain (v1.3.83): the mobile-progress plugin now posts the whole current-turn
-  reasoning chain (all 思考 blocks plus tool steps from the last user message onward) every
-  250ms while running, so the floating window updates in near real time instead of stepping.
-  A session is pinned: when several sessions are active, the first one shown stays pinned until
-  it reports done/error; other sessions' updates are ignored until then.
-* Overlay follow/liveness (v1.3.89): the overlay now follows whichever session the WebUI is
-  currently showing (the earlier "first active session" pinning was removed after it froze on a
-  stale background session). While a turn runs, the payload carries elapsed milliseconds and the
-  title line shows `· Ns`, so the card visibly ticks even when the reasoning text is momentarily
-  unchanged. Body height stays capped (132dp, internal scroll).
-* Structured chain (v1.3.93): the overlay body is no longer a raw text dump. The plugin walks the
-  current turn in DOM order and emits labelled lines - [工具] process title, [思考] reasoning,
-  [命令] tool call, [网页] fetch, [步骤] other steps, [提问] question cards, [回复] answer tail -
-  deduped and capped to the last 4000 chars (first partial line dropped).
-* Overlay window sizing (v1.3.96): on vivo, changing only child visibility left the window at the
-  previous (expanded) frame, so a collapsed ball kept a large transparent touch-blocking area.
-  The window LayoutParams width/height are now set explicitly (56dp square collapsed, wrap
-  expanded) and the view is re-attached on level changes; measured collapsed frame is 140x140.
-* Progress by engine events, not DOM (v1.3.100): the host half of mobile-progress subscribes to
-  the public plugin API from the open-source DSH repo - `ctx.on('agent/assistant-stream', ({agent,
-  frame}) => ...)` (StreamChunk: block-start/text-delta/reasoning-delta/tool-call-delta/block-end)
-  plus `ctx.on('session/event', (session, event) => ...)` for tool/call and tool/result - and POSTs
-  a labelled chain ([思考]/[工具]/[结果]/[回复]) to the Android AgentBridge `/overlay` endpoint
-  (X-DSH-Token from DSH_BRIDGE_TOKEN). Multiple attempts in one turn are merged; the chain is kept
-  after done; session titles are resolved natively from the engine projection cache. DOM scraping
-  in the browser half is now a placeholder only.
-* Completion reliability (v1.4.2): the overlay used to stall mid-chain when a turn ended,
-  because only the assistant-stream `end` frame triggered a final flush and an identical payload
-  could be deduplicated. The host plugin now also listens to `agent/status` and flushes a final
-  `done` state on `idle`, sends a 2.5s heartbeat while running (so long tool calls do not look
-  frozen), and the Android side never deduplicates done/error snapshots - the card keeps the full
-  chain and switches to 已完成 with elapsed time.
-* Overlay always on + edge docked (v1.4.4): the floating window is no longer hidden while the app
-  is in the foreground (notification still stays quiet); it keeps updating inside the app. It is
-  docked to the nearest screen edge by default (right edge on first show) and re-docks to the same
-  side after expanding/collapsing, so its width change never leaves it floating mid-screen.
-* Overlay default (v1.4.6): the default display mode is now 悬浮窗 instead of 通知 (only for installs
-  that never picked a mode; an explicit choice is kept). Selecting 悬浮窗 without the
-  SYSTEM_ALERT_WINDOW permission prompts the system grant page, and if the permission is still
-  missing the notification title says "悬浮窗未授权 · 点此去授权" instead of silently falling back.
-* Overlay appears immediately (v1.4.8): switching 显示方式 to 悬浮窗 (or opening the app while that
-  mode is active) now creates the window right away with an idle placeholder instead of waiting
-  for the next progress event; 预览一次 in overlay mode really shows the overlay. Choosing 通知
-  removes it, choosing 关闭 clears everything.
-* Overlay across apps (v1.5.3): the window must be created with the calling Activity token, not
-  applicationContext - with app context WMS marks the TYPE_APPLICATION_OVERLAY window hidden
-  (mLastHidden=true, isVisible=false) as soon as the app is not top, so it vanished over other
-  apps. The overlay also drops a stale root and re-creates the window when the Activity is gone.
-  Note: Android itself hides overlays over protected screens such as system Settings/permission
-  dialogs; that is platform behaviour, not a crash.
-* Separate notice area (v1.5.9): accessibility / automation status POSTed to the AgentBridge
-  (/overlay status+action) is no longer written into the reasoning chain. The overlay layout has a
-  dedicated bottom notice pill (@id/overlayNoticeBox) that shows those statuses for 8 seconds and
-  only while the card is expanded; the chain text keeps its own scroll area untouched.
-* The overlay window docks to a **left/right side edge** (right by default; after dragging it snaps
-  to the nearer side) while its vertical position stays where the user put it. When the
-  accessibility service is connected the window is hosted in the accessibility window.
-* Restart race with dshmarket (v1.6.4): dshmarket's "立即重启" kills the host and spawns its own
-  detached `dsh web`, while EngineSupervisor also restarts the managed engine - both fight for
-  port 3080 and the WebView shows ERR_CONNECTION_REFUSED. The supervisor now parses
-  /proc/net/tcp{,6} for LISTEN sockets on the engine port, kills processes holding it that are not
-  the managed child, and waits for the port to be free before spawning (also on unhealthy polls).
-  plugin-health.mjs is disposal-safe: the loader lookup is fully guarded (no bare ctx.loader),
-  every probe body runs in try/catch, and the poll timer is stopped from both the disposer and a
-  Cordis effect, so a disposed context can no longer crash the engine.
-* Overlay content completeness (v1.6.8): the chain text was silently capped at 1200 chars in
-  StatusOverlay and the expanded card had a drag gesture on the whole card, so finger swipes moved
-  the window instead of scrolling the body - long replies looked cut after a few lines. Caps are
-  now: 16000 chars end-to-end (plugin/hub/overlay), reasoning 1400, tool line 420, reply keeps its
-  last 4000 chars (the conclusion). In the expanded state only the action line and the status dot
-  are draggable/tappable; the body scrolls freely.
+* **Window**: collapsed = a ball (56 dp, measured 140x140 frame); expanded = a rounded card, 216 dp
+  wide, body capped at 132 dp with internal scroll. Created with the calling Activity token (app
+  context makes WMS mark it hidden when the app is not top); docks to the nearer **left/right** edge
+  and keeps the user's vertical position; re-docks after expand/collapse; Android hides it over
+  protected screens (system Settings, permission dialogs) by design. It is never auto-hidden while
+  the app is in the foreground; returning to the foreground does not set the user-hidden flag.
+* **Gestures**: tap the ball → expand (idle placeholder is `空闲 / 悬浮窗已开启`); tap the dot →
+  collapse; long press the dot → hide; drag the dot → move. The body only scrolls — no tap or drag
+  gesture on the text.
+* **Expanded card is three sections**: ① the reasoning/tool chain — `[思考] …`,
+  `[工具] 调用`, `[工具] 调用->完成` (or `->失败`), `[回复] …`, auto-scrolled to the newest line;
+  ② the **accessibility / app-action chain** — what the service actually did (`读屏点击/滑动/按键`,
+  `打开/跳转 <app>`), up to 4 lines, written by `POST /overlay {status,action}`, `POST /launch`,
+  `POST /open` → `StatusOverlay.setA11yAction()`, or directly `window.DshNative.a11y(line)`;
+  ③ session title + elapsed seconds (ticks every second while running, stops after done).
+* **Text budgets**: 16000 chars end-to-end (plugin / ProgressHub / overlay), single reasoning block
+  1400, tool line 420, reply keeps its last 4000 chars.
+* **Source of truth is engine events, not DOM**. The host plugin
+  (`assets/android-plugins/mobile-progress/index.js`) subscribes to the public DSH plugin API —
+  `agent/assistant-stream` (`block-start/text-delta/reasoning-delta/tool-call-delta/block-end`,
+  merged across attempts), `session/event` (`tool/call`, `tool/result`) and `agent/status`
+  (`idle` forces a final `done` flush) — and POSTs a labelled chain with `X-DSH-Token` to the
+  Android bridge `/overlay` (`kind/session/detail/elapsed`). 250 ms throttle, 2.5 s heartbeat while
+  running; done/error snapshots are never deduplicated, so the card always ends on 已完成 · Ns.
+  The browser half of the plugin is a placeholder only (`window.__dshMobileProgressPoke`).
+* **Never auto-start after a normal exit**: a persisted `user_exited` flag (set by the
+  notification's 退出 action and by `onTaskRemoved`) makes `EngineService.start()` and the
+  accessibility keep-alive watchdog skip starting the engine; only a fresh MainActivity launch
+  clears it. To start the engine, ask the user to open the app.
+* `DshNative.progress(json)`, `DshNative.a11y(line)`, `DshNative.openSettings()` are the WebUI-side
+  entry points; `POST /overlay {hide:true}` hides the window.

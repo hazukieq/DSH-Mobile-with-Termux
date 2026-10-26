@@ -83,8 +83,8 @@ The timings are measured: a single closed-loop step takes about **1.45 s** (1.13
 **Accessibility and background at a glance**
 A draggable floating status ball shows engine state and the latest action. From the third consecutive accessibility action, a notification updates with the current step; it disappears after 10 seconds without activity. The Agent can also send task-completion notifications. On exit, the app stops the engine and its separate child processes, closes the screen, and destroys the WebView to release about **380 MB** of runtime memory. See [docs/ACCESSIBILITY.en.md](docs/ACCESSIBILITY.en.md) and [docs/NOTIFICATIONS.en.md](docs/NOTIFICATIONS.en.md).
 
-**Voice input that still works in the background**
-Tap the floating-ball microphone to open an editable bottom panel; recognized text appears live and can be corrected before sending to the current conversation. Recognition prefers the system service, then a cloud OpenAI-compatible API; the open-source offline plugin [dsh-asr-service](https://github.com/Soodok/dsh-asr-service) is also available. Android-side timing drives the send path, so it works with the app in the background. WebUI input is read back and de-duplicated. On some devices, a brief 1–2 frame visual remnant may still appear at send time due to system composition. See [docs/VOICE_INPUT.en.md](docs/VOICE_INPUT.en.md).
+**Voice input (no entry point right now)**
+The recognition chain (system `SpeechRecognizer`, then a cloud OpenAI-compatible ASR) and the editable bottom panel still exist in the code, but nothing opens them: the floating-ball microphone was removed and the app no longer requests the record-audio permission. Treat voice as unavailable until an entry is wired back in.
 
 **Use the native WebUI from a computer over LAN**
 Settings → Extensions → **LAN WebUI access** exposes the phone's running WebUI at `http://<phone-IP>:3090` on the local network. Each enable generates a random **6-digit code**, copies it automatically, and displays it once. A persistent notification reminds you while access is on; its Stop button really stops the proxy, including in Normal mode, and exiting the engine stops it too. The app-layer proxy supplies the secure-context features the browser needs (random UUID, loopback checks, `/api` same-origin, and WebSocket upgrade) without modifying engine files. The upstream engine refuses `0.0.0.0` binding; LAN access is an explicit app-level switch. See [docs/LAN_WEBUI.en.md](docs/LAN_WEBUI.en.md).
@@ -112,12 +112,9 @@ Every capability has its own document (design trade-offs, measured numbers, trou
 | Document | What's inside |
 |---|---|
 | [Accessibility control](docs/ACCESSIBILITY.en.md) | read/tap/type/swipe/long-press/drag via 21 primitives; layered vision, per-step verification; measured ~1.45 s/step |
-| [Closed-loop design notes](docs/LOCAL_CLOSED_LOOP.md) | design and evolution of the on-device decision engine |
 | [Narrow-screen UI plugins](docs/NARROW_UI.en.md) | full-width sidebar / settings reflow / full-screen right panel (three client plugins) |
 | [LAN WebUI](docs/LAN_WEBUI.en.md) | reverse proxy, 6-digit code, persistent reminder and stop chain |
-| [Voice input](docs/VOICE_INPUT.en.md) | dual recognition channels, send de-dup, panel parking, known issue |
 | [Notifications & background](docs/NOTIFICATIONS.en.md) | AI progress, task completion, LAN reminder, clean exit |
-| [Complex-scenario field notes](docs/COMPLEX_SCENARIOS.md) | noisy pages, cross-app tasks, failure recovery, measured |
 | [Fast-path picker](docs/FAST_PATH_PICKER.md) | on-device UI element selection and discrimination |
 | [Terminal + Linux environment](docs/TERMINAL_AND_LINUX.en.md) | native PTY/VT100 terminal, proot distro install, the `linux` gate and dsh integration |
 
