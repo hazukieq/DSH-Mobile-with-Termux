@@ -92,8 +92,11 @@ dsh_http() {
     # 连不上有两种完全不同的处境，处置方式相反：
     #   A) 端口上有**别的进程**在 LISTEN —— 桥早就 bind 失败了（历史孤儿进程
     #      攥着继承来的监听 fd，见 OrphanReaper 顶部），等多久都没用，必须重启 App。
-    #   B) 端口真空着 —— 引擎/无障碍刚起来，等 2-3 秒重试就行。
+    #   B) 端口真空着 —— 引擎刚起来，等 2-3 秒重试就行。
     # 旧文案把两者混成「未监听」，于是 A 情况被反复误判成「无障碍没开」。
+    # ⚠️ 这里只说「引擎」：桥由**引擎进程**持有（EngineSupervisor → AgentBridge.start），
+    # 与无障碍服务无关。旧文案写「引擎/无障碍服务未就绪」，于是 AI 转告用户
+    # 「要开无障碍」——而用户关着无障碍照样能跑门脚本（见 docs/A11Y-SCOPE.en.md §3）。
     _hex=$(printf '%04X' "$DSH_BRIDGE_PORT" 2>/dev/null)
     _info=$(awk -v h=":$_hex" '$2 ~ h"$" && $4 == "0A" { print $8 " " $10; exit }' \
       /proc/net/tcp 2>/dev/null)
@@ -102,7 +105,8 @@ dsh_http() {
       echo "dsh:   多半是历史孤儿进程占着（AI 起的后台进程没被销毁，继承了监听 socket）" >&2
       echo "dsh:   处置：重启 App 本体（重启引擎没用）；新版本已从源头断掉这个泄漏" >&2
     else
-      echo "dsh: 端口当前无监听 —— 引擎/无障碍服务未就绪，等 2-3 秒重试" >&2
+      echo "dsh: 端口当前无监听 —— 引擎还没把桥拉起来（与无障碍无关），等 2-3 秒重试；" >&2
+      echo "dsh:   仍不通就看 'native status' 的 app/engine 字段，或重开 App 让引擎重启" >&2
     fi
     return 2
   fi
@@ -146,7 +150,7 @@ dsh_http() {
     echo "dsh: bridge=$DSH_BRIDGE_HOST:$DSH_BRIDGE_PORT" >&2
     echo "dsh: 可能原因与建议：" >&2
     echo "dsh:  1) 桥正在处理耗时请求（读屏/截图/批量动作）→ 稍后重试一次即可" >&2
-    echo "dsh:  2) 引擎/无障碍服务刚重启，桥尚未就绪 → 等 2-3 秒重试" >&2
+    echo "dsh:  2) 引擎刚重启，桥尚未就绪 → 等 2-3 秒重试" >&2
     echo "dsh:  3) 通知权限未授予（仅影响 notify）→ 到 App 设置里开通知权限" >&2
     echo "dsh:  可用 'scr dump' 快速探活；若同样超时说明桥确实没在跑" >&2
     return 3

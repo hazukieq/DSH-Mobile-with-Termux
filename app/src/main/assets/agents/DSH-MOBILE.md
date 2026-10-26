@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v61 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v62 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -24,7 +24,10 @@ Engine WebUI listens on `127.0.0.1:3080` (token-gated). Android native side adds
 
 - **Native terminal** (own activity, zsh by default) with extra keys, TUI mouse-wheel scrolling.
 - **Agent bridge** HTTP API on `127.0.0.1:3083` (token in `$PREFIX/.bridge-token`, header `X-DSH-Token`).
-- **Accessibility service** `DSH 屏幕点击` for screen dumps/taps (must be enabled by the user).
+- **Accessibility service** (system label `DSH Mobile Helper (optional)`; zh `DSH Mobile 辅助（可选）`;
+  settings section 屏幕点击（无障碍）) for reading other apps' UI and injecting input. The user must
+  enable it in system settings. Launching/hand-off/sharing/media/files/engine do **not** need it
+  (see "Accessibility scope" below).
 - **Foreground service** keeping the engine alive; hot-update of the engine layer.
 
 ## Native gate commands (already on PATH, prefer these)
@@ -32,7 +35,7 @@ Engine WebUI listens on `127.0.0.1:3080` (token-gated). Android native side adds
 | Command | Purpose |
 | --- | --- |
 | `notify [msg]` | system notification (use when a long task finishes) |
-| `scr dump` / `scr tap x y` / `scr tap-text text` | read UI hierarchy; tap by coordinates or text (needs accessibility) |
+| `scr dump` / `scr tap x y` / `scr tap-text text` | read UI hierarchy; tap by coordinates or text (needs the accessibility service) |
 | `say text` | speak through Android TTS |
 | `psx` / `killx` | list processes / kill by process name safely (does not match your own command line) |
 | `loop` | screen-action loop helper (`loop --help`) |
@@ -44,7 +47,67 @@ Engine WebUI listens on `127.0.0.1:3080` (token-gated). Android native side adds
 Deleting under `/sdcard` or `/storage` goes through `rm`, which moves the file into
 `/sdcard/dsh-trash` first; never bypass it (`/system/bin/rm`, `busybox rm`, `find -delete`).
 
-## Full native API: AgentBridge (63 endpoints)
+## Accessibility scope: what needs the service, what never does
+
+The app is not "an accessibility app". The service (system label `DSH Mobile Helper (optional)`,
+zh `DSH Mobile 辅助（可选）`) is needed by exactly one family of capabilities — **observing or touching other apps' UI** — and the
+rest of the app must keep working when it is off. Full classification: `docs/A11Y-SCOPE.md`.
+
+**Needs the service** (gated: with it off these answer a structured `503 a11y_off` that names the
+reason; `GET /interference` is in the same gate set):
+
+- read the UI tree: `GET /screen`, `GET /screen-changed`, `GET /diff`, `GET /scene`,
+  `POST /wait`, `POST /wait-text`, `POST /idle`, `GET /interference` (`scr dump`,
+  `scr changed`, `scr idle`, `scr find`, `scr interference`);
+- inject input: `POST /tap`, `POST /tap-id`, `POST /gesture`, `POST /key`, `POST /input`,
+  `POST /scroll-find`, `POST /scroll-center`, `POST /scroll-edge`, `POST /pick`,
+  `POST /vision/tap`, `POST /vision/drag` (`scr tap`, `scr key`, `scr input`, `loop run`);
+- screen pixels through the a11y API: `GET /screenshot`, `GET /frame-diff`, `POST /frame-wait`,
+  `POST /vision/crop`, `POST /vision/track` (`shot`, `scr shot`);
+- the a11y event caches: `GET /notif` (notification events), `GET /interference` (touch events);
+- composite drivers: `POST /batch`, `POST /act`, `POST /loop/run`.
+
+**Never needs the service** — do not ask the user to enable it for these, and do not treat a task
+as blocked because it is off:
+
+- launch / hand-off: `POST /launch`, `POST /launch-intent`, `POST /open`, `POST /activity`,
+  `POST /a11y/enable`, `scr launch`, `native open` (`/open`, `/activity` and `/overlay` may use
+  the service when it is on to verify a switch or dismiss an a11y overlay window, but never block
+  on it);
+- waiting for **this** app: `POST /wait-app com.termux` / `scr wait-app com.termux` (Activity
+  lifecycle). Waiting for another package is the one exception: `wait-app <other>` /
+  `POST /wait-app` with a foreign package returns `503 a11y_unavailable` without the service;
+- sharing and files: `POST /open/file`, `POST /open/folder`, `POST /open/share`,
+  `POST /share/text`, `POST /export`, `native share`, `native share-text`,
+  `native open-file|open-folder`, SAF/DocumentsProvider;
+- media, TTS, notifications: `POST /media/play`, `POST /media/pause`, `POST /media/resume`,
+  `POST /media/stop`, `GET /media/status`, `say`, `notify`, `POST /notify`, `POST /say`,
+  `POST /overlay` (progress overlay; SYSTEM_ALERT_WINDOW first, a11y window only as fallback);
+- app/engine control: `GET /status`, `GET /settings`, `GET /apps`, `GET /process`, `GET /diag`,
+  `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`,
+  `/webview/*`, `native status|settings|set`, `dsh-update`;
+- our own window: `GET /app-screenshot` (`appshot` — PixelCopy; no accessibility, no CDP);
+- memory bookkeeping: `GET /memory/list`, `GET /memory/stats`, `POST /memory/confirm`,
+  `POST /memory/clear`;
+- conditional: `GET /ocr` (privileged `screencap` via Shizuku/root, and the model
+  list/install/download branches, work without the service), `POST /memory/lookup` /
+  `POST /memory/store` (no screen read when the caller passes `dump`).
+
+**Classification rule** (also the maintenance rule): a capability needs accessibility if and only
+if it must read another app's UI tree/pixels, inject input into another app, or consume
+accessibility events. Launching (`startActivity`), intents, share sheets, `MediaPlayer`,
+`NotificationManager`, `TextToSpeech`, files/SAF and our own window are ordinary Android APIs —
+in v2.5.2 they were wrongly put behind the gate (so "open WeChat" answered `503 a11y_off` with the
+service off); that was a classification bug, **not** an Android restriction, fixed in 6fb665c and
+now enforced by `A11Y_DEPENDENT_REASONS` / `A11Y_INDEPENDENT_ACTIONS` in `AgentBridge.kt`.
+
+**Service off, per capability:** do the ordinary part first; for an a11y step either ask the user
+to enable the service (`POST /a11y/enable` opens the page; apps cannot enable it themselves) or
+route around it — user taps/reads, `/launch` + `wait-app com.termux` hand-off, `appshot` for our
+own window, `notify`/`say` for output. Never retry a non-retryable a11y error and never re-probe
+before each action: one `GET /status` at the start of a UI task is enough.
+
+## Full native API: AgentBridge (84 paths, 86 method+path pairs)
 
 Everything the app can do natively is exposed over `127.0.0.1:3083`; use
 `dsh-mobile bridge <GET|POST> <path> [json]` so the token is handled for you, e.g.
@@ -371,8 +434,10 @@ Rules for reliable WebUI automation:
 
 - Modes: `normal` (app sandbox), `shizuku` (adb identity via the `shz` gate), `root` (real su).
 - Without root you cannot modify `/system`, other apps' data, or mount anything.
-- Accessibility must be enabled for `/screen`, `/tap*`; ask the user to enable
-  `DSH 屏幕点击` in system settings (and allow restricted settings on Android 13+).
+- Accessibility is required only for reading/observing another app's UI and injecting input
+  (`/screen`, `/tap*`, `/screenshot`, `/batch`, `/loop/run`, ...); opening apps, sharing, media,
+  files and engine control work without it. Ask the user to enable `DSH Mobile Helper (optional)` in system
+  settings (and allow restricted settings on Android 13+) only when an a11y capability is wanted.
 - The engine survives in a foreground service; the WebView is an activity that may be
   recycled. For UI work, treat the WebView as the target and the engine as the backend.
 

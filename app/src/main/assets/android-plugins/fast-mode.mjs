@@ -85,7 +85,7 @@ const DESCRIPTION = [
   "step, so multi-step UI work runs several times faster.",
   "",
   "WHEN: turn it ON right before a multi-step UI task (anything that will read the",
-  "screen and act repeatedly, including delegating to the planner daemon). Turn it",
+  "screen and act repeatedly). Turn it",
   "OFF as soon as that task is finished. Use \"status\" to check.",
   "",
   "IMPORTANT: do NOT leave it on. Coding, writing, analysis and any task that",

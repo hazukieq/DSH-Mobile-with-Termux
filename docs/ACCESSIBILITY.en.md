@@ -4,6 +4,39 @@
 > it reads the screen, finds the target, taps precisely, knows whether the tap worked, and
 > switches route on failure.
 
+## Scope: only reading/injecting into another app's UI needs it
+
+Accessibility is a precondition for **one family of capabilities**, not a switch for the app. One
+test decides it:
+
+> Does the capability have to **read another app's UI tree or screen pixels**, **inject
+> gestures/keys/text into another app**, or **consume accessibility events**? Yes → it needs the
+> service. No → it does not.
+
+- **Needs it**: reading the screen (`/screen`, `/scene`, `/diff`, `/interference`), waiting
+  (`/wait`, `/wait-text`, `/idle`), tapping/keys/typing/scrolling (`/tap`, `/gesture`, `/key`,
+  `/input`, `/scroll-*`, `/pick`, `/vision/tap|drag`), accessibility screenshots and frame diffs
+  (`/screenshot`, `/frame-*`, `/vision/crop|track`), the notification event cache (`/notif`),
+  the composite drivers that run them (`/batch`, `/act`, `/loop/run`), and observing *another*
+  app's foreground state (`wait-app <other-package>`).
+- **Never needs it**: launching/jumping to an app (`/launch`, `/launch-intent`, `/open`,
+  `/activity`), waiting for *this* app to return (`wait-app com.termux` — our own Activity
+  lifecycle), the app's own window screenshot (`appshot`, PixelCopy), sharing and files
+  (`native share`, `/open/file|folder|share`), media playback, notifications, TTS,
+  engine/plugin/PTY/runtime control, and memory metadata operations. They keep working with the
+  service off.
+
+So ordinary chat, opening apps, sharing files, playing audio and the background engine do not
+depend on accessibility; only "the AI operating another app" does. When it is off, do the ordinary
+part first, then either ask the user to enable it (`POST /a11y/enable` opens the system page) or
+route around the a11y step (let the user tap/read, hand off with `/launch`, capture our own window
+with `appshot`, report with `notify`/`say`).
+
+The v2.5.2 incident was exactly this misclassification: `/launch`, `/launch-intent`, `/open` and
+`/app-screenshot` were treated as requiring accessibility, so "open WeChat" answered 503 with the
+service off. It was a gate-classification bug, **not** an Android limitation; fixed in 6fb665c.
+Full classification and maintenance rules: [A11Y-SCOPE.en.md](A11Y-SCOPE.en.md).
+
 ## 1. What it can do
 
 With the accessibility service enabled, the agent gains all of this — no root, no ADB:
@@ -16,9 +49,12 @@ With the accessibility service enabled, the agent gains all of this — no root,
 | **Swipe / scroll** | direction, distance and duration control; scroll-to-find and scroll-and-collect |
 | **Long-press / double-tap / pinch / drag** | long-press menus, double-tap to enter, map zoom, drag-to-reorder |
 | **Keys** | Back, Home, Enter and other system keys |
-| **Launch / Intent** | launch by package name; build an Intent to jump straight to a page |
 | **Wait** | wait for the UI to settle, for text to appear, for the page to finish loading — never a fixed sleep |
 | **Composition** | repeat N times, repeat until a condition, conditional branches (`when`), back-stack return, data collection |
+
+Launch / Intent, sharing, media, notifications and TTS are **not** accessibility capabilities (see
+the scope section above) — they use plain `startActivity` / Intent / system-service APIs. This section lists what the
+service *adds*, not a precondition you must satisfy before using the app.
 
 All of it is expressed as **21 action primitives**, dispatched once to a local closed-loop executor —
 not "think one step, call the cloud, think the next".

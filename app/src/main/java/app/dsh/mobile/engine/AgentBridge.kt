@@ -483,29 +483,42 @@ object AgentBridge {
         // 让用户随时知道它真的在干活（而不是界面自己变来变去像 bug）。
         // 只统计**动作类**端点（点击/输入/滑动/按键/启动…），读屏类不计入 ——
         // 否则每看一眼屏幕都算一步，通知会烦人。
-        if (method == "POST" && path in A11Y_ACTION_PATHS) noteA11yOperation(ctx, path)
+        // ⚠️ ACTING_PATHS 只影响通知计数，**不是**无障碍门禁集合（见 docs/A11Y-SCOPE.md）。
+        if (method == "POST" && path in ACTING_PATHS) noteA11yOperation(ctx, path)
         // v1.7.3：无障碍「已启用但未绑定」时先等 1.5s，再给出可区分的错误，
         // 避免 Agent 预检/动作拿到笼统的 503 就判定「无障碍没开」。
-        // v1.9.3：`/ocr?engine=ppocr6&ensure=1` 只是装依赖，不需要无障碍截图，
-        // 不应当因为服务未连接就被 503 挡住。
-        val ensureOnly = path == "/ocr" && parseQuery(query)["ensure"] in listOf("1", "true", "yes")
-        if (!ensureOnly && path in A11Y_REQUIRED_PATHS && !DshAccessibilityService.isConnected()) {
+        // v2.5.3（事故修复，见 docs/A11Y-SCOPE.md）：门禁**只查 A11Y_DEPENDENT_PATHS**，
+        // 即「读/写无障碍节点树 + 注入手势/按键/文本 + 无障碍截图 + 无障碍事件缓存」的并集；
+        // 集合里每个 handler 都必然拿 DshAccessibilityService.instance 才能完成主功能。
+        // 反例（v2.5.2 事故）：旧集合把 /launch、/launch-intent、/open、/app-screenshot 也算进去，
+        // 用户一关无障碍连「打开微信」「截自家界面」都得到 503 a11y_off —— 那是分类 bug，
+        // startActivity / Intent / PixelCopy 跟无障碍毫无关系。
+        // 条件依赖端点（/ocr /wait-app /memory/lookup /memory/store /overlay /activity /open）
+        // 故意不在这里：它们有不需要无障碍就能成功的路径，由 handler 自己判定。
+        if (path in A11Y_DEPENDENT_PATHS && !DshAccessibilityService.isConnected()) {
             val enabled = DshAccessibilityService.isEnabled(ctx)
             if (enabled) DshAccessibilityService.awaitConnection(1_500L)
             if (!DshAccessibilityService.isConnected()) {
                 val listed = !enabled && DshAccessibilityService.isListedButDisabled(ctx)
+                // 「为什么需要」逐路径写死在 A11Y_DEPENDENT_REASONS；这里只拼统一的「怎么开」。
+                // 不允许再回一句笼统的 a11y_off：用户和 Agent 都需要知道是读树、手势还是截图。
+                val why = A11Y_DEPENDENT_REASONS[path] ?: "needs the accessibility service"
+                val how = "enable 'DSH Mobile Helper (optional)' in Settings > Accessibility - the app cannot enable it itself; POST /a11y/enable opens that page"
                 val msg = when {
-                    enabled -> "accessibility service is enabled in system settings but not connected yet; retry in a moment, or toggle the service off/on in Settings > Accessibility if it persists"
-                    listed -> "accessibility was granted before but Android disabled the service (force-stop or app update); re-enable it in Settings > Accessibility -> DSH Screen Helper - the app cannot enable it itself. Bridge can open the page: POST /activity {\"name\":\"accessibility-settings\"}"
-                    else -> "accessibility service not enabled (enable 'DSH Screen Helper' in Settings > Accessibility)"
+                    enabled -> "$path $why; the service is enabled in system settings but not connected yet - retry in a moment, or toggle it off/on in Settings > Accessibility if it persists"
+                    listed -> "$path $why; Android disabled the previously granted service (force-stop or app update) - re-enable 'DSH Mobile Helper (optional)' in Settings > Accessibility; POST /a11y/enable opens that page"
+                    else -> "$path $why. To fix: $how"
                 }
                 return 503 to JSONObject()
                     .put("ok", false)
                     // v1.8.0（提案 P1-5）：err 用稳定 code，便于上层一次判断；人读文案放 reason。
                     .put("error", if (enabled) "a11y_connecting" else "a11y_off")
                     .put("code", if (enabled) "a11y_connecting" else "a11y_off")
+                    .put("endpoint", path)
+                    .put("because", why)
                     .put("reason", msg)
                     .put("message", msg)
+                    .put("how_to_fix", how)
                     .put("accessibility_enabled", enabled)
                     .put("accessibility_connected", false)
                     .put("accessibility_listed_but_disabled", listed)
@@ -818,7 +831,7 @@ object AgentBridge {
             200 to JSONObject()
                 .put("ok", true)
                 .put("opened", "accessibility-settings")
-                .put("hint", "enable the DSH Screen Helper / DSH Screen Control service, then retry")
+                .put("hint", "enable the DSH Mobile Helper (optional) service, then retry")
                 .toString()
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"cannot open accessibility settings: ${e.message}"}"""
@@ -973,10 +986,16 @@ document.getElementById('api').textContent = checks.map(function(c){
         return 200 to html
     }
 
-    // ---------- v1.2.182：长串无障碍操作的系统通知 ----------
+    // ---------- v1.2.182：长串无障碍操作的系统通知；v2.5.3：与无障碍门禁彻底解耦 ----------
 
-    /** 计入「AI 在操作设备」的动作类端点（读屏/查询类不计）。 */
-    private val A11Y_ACTION_PATHS = setOf(
+    /**
+     * 「AI 正在操作设备」的动作类端点 —— **只用于系统通知计数，不参与任何门禁判定**。
+     *
+     * 集合里有 /launch、/launch-intent、/open：它们**不需要**无障碍（只派发 Intent），
+     * 但确实是一次设备动作，让用户看到「AI 在动手」是有意义的。
+     * 反过来更重要：**进这个集合 ≠ 需要无障碍**，不要拿它当门禁集合用。
+     */
+    private val ACTING_PATHS = setOf(
         "/tap", "/tap-id", "/gesture", "/key", "/input",
         "/scroll-find", "/scroll-center", "/scroll-edge",
         "/launch", "/launch-intent", "/open", "/vision/tap", "/vision/drag",
@@ -984,15 +1003,99 @@ document.getElementById('api').textContent = checks.map(function(c){
     )
 
     /**
-     * v1.7.3：真正依赖无障碍服务的端点（读屏 + 动作 + 视觉 + 截图）。
-     * 进入路由前统一做「已启用但尚未连接」的短暂等待，而不是让每个端点各自 503。
+     * 真正依赖无障碍服务的端点 → 503 时给用户/Agent 的「为什么需要」。
+     * 分类规则与维护流程见 docs/A11Y-SCOPE.md。
+     *
+     * ## 不变式（违反任一条就是 bug；v2.5.2 事故正是破坏第 1 条）
+     * 1. 集合里每个端点的 handler 在服务不可用时**必然**做不了主功能：它要么读节点树、
+     *    要么注入手势/按键/文本、要么用无障碍截图 API、要么读无障碍事件缓存。
+     *    因此路由层统一前置门禁不会误伤。
+     *    **禁止**把「只派发 Intent / startActivity / 自家窗口 PixelCopy / 文件读写 /
+     *    首选项读写 / 打开系统设置页」的端点加进来 —— 这些跟无障碍无关。
+     * 2. 反过来，handler 无条件 `DshAccessibilityService.instance ?: 503` 的端点必须在这里；
+     *    漏放会让调用方拿到一句没有原因、没有开启方式的裸 503。
+     * 3. 条件依赖端点不进来（它们有不需要无障碍的成功路径，由 handler 自己判定）：
+     *    /open（svc 只用于读前台包名，缺了仍 200 + hint）、/wait-app（本包走 Activity 生命周期）、
+     *    /ocr（ppocr6 + Shizuku/root 可走特权 screencap；ensure/models/download 分支也不需要）、
+     *    /memory/lookup|store（body 带 dump 就不读屏）、/overlay（只是更新悬浮窗）、
+     *    /activity（a11y 只影响回执里的 bal_exempt 提示）。
+     * 4. 新增路由：先按 docs/A11Y-SCOPE.md 归类，再写 handler；要进门禁必须同时写 reason
+     *    （集合由本 map 派生，不写原因就进不来）。[A11Y_INDEPENDENT_ACTIONS] 是反例集，
+     *    启动时自检会 Log.e 点名重叠项。
      */
-    // /open 只「派发」给别的 App，本身不碰无障碍树；无障碍关着也该能用（只是读不到前台）。
-    private val A11Y_REQUIRED_PATHS = (A11Y_ACTION_PATHS - setOf("/open")) + setOf(
-        "/screen", "/screen-changed", "/pick", "/diff", "/interference",
-        "/wait-text", "/screenshot", "/app-screenshot", "/frame-diff", "/frame-wait",
-        "/vision/track", "/vision/crop", "/vision/drag",
+    private val A11Y_DEPENDENT_REASONS: Map<String, String> = mapOf(
+        // 读无障碍节点树
+        "/screen" to "reads the on-screen node tree",
+        "/screen-changed" to "subscribes to accessibility window/content-change events",
+        "/scene" to "dumps the node tree and captures the screen for OCR",
+        "/diff" to "diffs two accessibility node-tree snapshots",
+        "/wait-text" to "polls the node tree for text",
+        "/wait" to "polls the node tree until a condition holds",
+        "/idle" to "waits for accessibility events to go quiet",
+        "/pick" to "ranks on-screen a11y nodes and optionally taps one",
+        // 注入手势 / 按键 / 文本
+        "/tap" to "finds a node and injects a tap gesture",
+        "/tap-id" to "finds a node by id and injects a tap gesture",
+        "/gesture" to "injects a multi-point gesture",
+        "/key" to "injects a global key event (back/home/recents)",
+        "/input" to "focuses an editable node and injects text",
+        "/scroll-find" to "scrolls while searching the node tree",
+        "/scroll-center" to "scrolls a scrollable node into place",
+        "/scroll-edge" to "swipes until the scrollable node hits an edge",
+        // 屏幕图像（无障碍截图 API，不是 MediaProjection）
+        "/screenshot" to "takes a screen capture through the accessibility service",
+        "/frame-diff" to "captures screen frames to detect visual change",
+        "/frame-wait" to "captures screen frames until they change",
+        "/vision/crop" to "captures a screen region for vision analysis",
+        "/vision/track" to "captures frames to track a template",
+        "/vision/tap" to "captures the screen and injects a tap at the match",
+        "/vision/drag" to "captures the screen and injects a drag",
+        // 复合动作（内部同样读树/点/截图）
+        "/batch" to "runs a11y steps (tree reads, taps, screenshots) in one request",
+        "/loop/run" to "runs the local a11y executor loop (pick/act/verify)",
+        "/act" to "runs transactional a11y steps (tap/input/key/tree read)",
+        // 无障碍事件缓存（触摸干预计数、通知事件）
+        "/interference" to "reads the accessibility touch/window-event counters",
+        "/notif" to "reads the notification cache fed by accessibility notification events",
     )
+
+    /** 门禁集合本体由 [A11Y_DEPENDENT_REASONS] 派生：加路径必须同时写原因，避免只加不解释。 */
+    private val A11Y_DEPENDENT_PATHS: Set<String> get() = A11Y_DEPENDENT_REASONS.keys
+
+    /**
+     * 反例集：设备动作但**不需要**无障碍的端点。只用于启动自检，不参与门禁判定。
+     * 列的是 v2.5.2 事故端点与同类（Intent / startActivity / 自家窗口截图 / 设置页）。
+     */
+    private val A11Y_INDEPENDENT_ACTIONS = setOf(
+        "/launch", "/launch-intent", "/open", "/open/file", "/open/folder", "/open/share",
+        "/activity", "/app-screenshot", "/notify", "/say", "/share/text", "/overlay",
+        "/a11y/enable",
+    )
+
+    init {
+        // 分类自检：把「不需要无障碍」的端点塞进 A11Y_DEPENDENT_REASONS 会让
+        // 「无障碍一关就连启动 App 都 503」的事故复发。这里只告警不崩溃 —— 崩溃比误分类更糟。
+        val overlap = A11Y_DEPENDENT_REASONS.keys intersect A11Y_INDEPENDENT_ACTIONS
+        if (overlap.isNotEmpty()) {
+            Log.e(TAG, "a11y path classification conflict (see docs/A11Y-SCOPE.md): $overlap")
+        }
+    }
+
+    /**
+     * handler 内 `svc ?: return ...` 的兜底 503。
+     *
+     * 正常情况下路由层门禁已经拦下（并给出逐路径原因），只有「处理中途服务刚断开」的
+     * 竞态才会走到这里。仍然带上原因与开启方式，不让调用方拿到无法行动的裸错误。
+     */
+    private fun a11yGone(): Pair<Int, String> = 503 to JSONObject()
+        .put("ok", false)
+        .put("error", "a11y_off")
+        .put("code", "a11y_off")
+        .put("reason", "the accessibility service disconnected while handling this request; this endpoint needs it to read the UI tree, inject gestures/keys, or capture the screen")
+        .put("how_to_fix", "re-enable 'DSH Mobile Helper (optional)' in Settings > Accessibility; POST /a11y/enable opens that page")
+        .put("actionHint", "POST /a11y/enable opens the system accessibility page")
+        .put("retryable", true)
+        .toString()
 
     /** 连续操作够几步才提示（太少会打扰，太多用户又看不到过程）。 */
     private const val A11Y_NOTIF_THRESHOLD = 3
@@ -1230,7 +1333,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun screen(query: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled (enable 'DSH Screen Control' in system settings)"}"""
+            ?: return a11yGone()
         return try {
             val params = parseQuery(query)
             val filter = when (params["filter"]) {
@@ -1314,7 +1417,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     /** POST /tap → 坐标点击 / 按文本点击（text+desc 打分匹配，trim 忽略大小写）/ 按 desc 点击 */
     private fun tap(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         return try {
             val obj = JSONObject(body)
             // 悬浮窗（v1.2.57）：让用户实时看到 AI 正在执行什么动作
@@ -1615,7 +1718,16 @@ document.getElementById('api').textContent = checks.map(function(c){
                         .put("unavailable", true).put("reason", r.reason).toString()
                 }
             }
-            return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled for screenshot capture"}"""
+            // 条件依赖：默认靠无障碍截图；engine=ppocr6 + Shizuku/root 时上一段已尝试
+            // privileged screencap（ShotFallback）。走到这里说明两条路都不通。
+            return 503 to JSONObject()
+                .put("ok", false)
+                .put("error", "a11y_off")
+                .put("code", "a11y_off")
+                .put("reason", "OCR needs a screen capture: the default path uses the accessibility screenshot API, and the privileged screencap fallback (environment=ppocr6 + Shizuku/root) is not available either")
+                .put("how_to_fix", "enable 'DSH Mobile Helper (optional)' in Settings > Accessibility (POST /a11y/enable), or run with engine=ppocr6 and Shizuku/root so screencap can be used")
+                .put("retryable", true)
+                .toString()
         }
         // v1.8.2（提案 P1-4）：PP-OCRv6 tiny 本地兜底（Termux python+onnxruntime）
         if (params["engine"]?.lowercase() == "ppocr6") {
@@ -1737,7 +1849,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun pick(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val target = obj.optString("target").trim()
@@ -1782,7 +1894,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun frameDiff(): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val r = withScreenTimeout("frame-diff", 5_000) {
             app.dsh.mobile.Framer.captureAndDiff(svc)
         }?.getOrNull() ?: return 504 to """{"ok":false,"error":"frame capture timed out"}"""
@@ -1805,7 +1917,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun frameWait(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val timeoutMs = obj.optLong("timeoutMs", 5000L).coerceIn(300L, 30_000L)
@@ -1835,7 +1947,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun loopRun(ctx: Context, body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val r = withScreenTimeout("loop/run", 180_000L) {
             LocalLoopExecutor.run(ctx, svc, body)
         }
@@ -1920,7 +2032,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun visionCrop(ctx: Context, body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val id = obj.optString("id").ifBlank { "t${System.currentTimeMillis()}" }
@@ -2013,7 +2125,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun visionTrack(ctx: Context, body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val id = runCatching { JSONObject(body).optString("id") }.getOrDefault("")
         if (id.isBlank()) return 400 to """{"ok":false,"error":"field 'id' required"}"""
         if (loadTemplate(ctx, id) == null) return 404 to """{"ok":false,"error":"template '$id' not found (use /vision/crop first)"}"""
@@ -2033,7 +2145,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun visionTap(ctx: Context, body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val id = obj.optString("id")
@@ -2058,7 +2170,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun visionDrag(ctx: Context, body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val id = obj.optString("id")
@@ -2100,7 +2212,15 @@ document.getElementById('api').textContent = checks.map(function(c){
         var dump = obj.optString("dump")
         if (dump.isBlank()) {
             val svc = DshAccessibilityService.instance
-                ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+                // 条件依赖：给了 body.dump 就完全不碰无障碍；没给才需要读屏。
+                ?: return 503 to JSONObject()
+                    .put("ok", false)
+                    .put("error", "a11y_off")
+                    .put("code", "a11y_off")
+                    .put("reason", "computing the scene fingerprint needs a screen read; pass the node-tree dump in body.dump to skip it, or enable 'DSH Mobile Helper (optional)' in Settings > Accessibility")
+                    .put("how_to_fix", "add body.dump (text from /screen), or POST /a11y/enable and enable the service")
+                    .put("retryable", true)
+                    .toString()
             dump = withScreenTimeout("memory.dump") { svc.dumpScreenCompact("all") }
                 ?.getOrNull() ?: return 504 to """{"ok":false,"error":"screen read timed out"}"""
         }
@@ -2135,7 +2255,15 @@ document.getElementById('api').textContent = checks.map(function(c){
         var dump = obj.optString("dump")
         if (dump.isBlank()) {
             val svc = DshAccessibilityService.instance
-                ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+                // 条件依赖：给了 body.dump 就完全不碰无障碍；没给才需要读屏。
+                ?: return 503 to JSONObject()
+                    .put("ok", false)
+                    .put("error", "a11y_off")
+                    .put("code", "a11y_off")
+                    .put("reason", "computing the scene fingerprint needs a screen read; pass the node-tree dump in body.dump to skip it, or enable 'DSH Mobile Helper (optional)' in Settings > Accessibility")
+                    .put("how_to_fix", "add body.dump (text from /screen), or POST /a11y/enable and enable the service")
+                    .put("retryable", true)
+                    .toString()
             dump = withScreenTimeout("memory.dump") { svc.dumpScreenCompact("all") }
                 ?.getOrNull() ?: return 504 to """{"ok":false,"error":"screen read timed out"}"""
         }
@@ -2164,7 +2292,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     /** /screen-changed：事件驱动变化摘要（v1.2.113）——毫秒级，不 dump 整树 */
     private fun screenChanged(): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val text = runCatching { svc.changedSummary() }.getOrDefault("")
         return if (text.isBlank()) {
             200 to """{"ok":true,"changed":false,"events":[]}"""
@@ -2698,7 +2826,7 @@ document.getElementById('api').textContent = checks.map(function(c){
 
     private fun screenshot(query: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val caps = svc.serviceInfo?.capabilities ?: 0
         if (Build.VERSION.SDK_INT >= 30 &&
             caps and android.accessibilityservice.AccessibilityServiceInfo.CAPABILITY_CAN_TAKE_SCREENSHOT == 0
@@ -2750,7 +2878,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      *  tap: {"type":"tap","x":..,"y":..} */
     private fun gesture(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
             // 悬浮窗：让用户看到「正在滑动/长按」（此前只有 /tap 会通知，见 announceAction 注释）
             announceAction(
                 R.string.a11y_action_swipe,
@@ -2808,7 +2936,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      *  调用方应配合 /screen 检查前台是否仍在目标界面。 */
     private fun key(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
             // 悬浮窗：导航键也要显示（此前完全没有）
             announceAction(R.string.a11y_action_key, "key " + JSONObject(body).optString("action"))
         return try {
@@ -2828,7 +2956,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      *  同一条已验证路径，且整体包 try/catch。 */
     private fun wait(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         return try {
             val obj = JSONObject(body)
             val text = obj.optString("text").ifEmpty {
@@ -2871,7 +2999,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun diffScreen(): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val (added, removed) = svc.diffScreen()
         return 200 to JSONObject().apply {
             put("ok", true)
@@ -2890,7 +3018,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun scrollCenter(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         return try {
             val obj = JSONObject(body)
             val t = ((obj.optString("text").ifBlank { obj.optString("query") })).trim()
@@ -2920,7 +3048,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun input(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
             // 悬浮窗：输入文字也要显示（此前完全没有）
             announceAction(
                 R.string.a11y_action_input,
@@ -2954,7 +3082,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun scrollFind(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
             // 悬浮窗：滚动查找也要显示（此前完全没有）
             announceAction(
                 R.string.a11y_action_screen,
@@ -2998,7 +3126,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun idle(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         return try {
             val obj = runCatching { JSONObject(body) }.getOrElse { JSONObject() }
             val timeout = obj.optLong("timeoutMs", 3_000L).coerceIn(200L, 20_000L)
@@ -3026,7 +3154,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun batch(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
             // 悬浮窗：批量动作整体状态（每步的明细由 onAfterStep 更新动作行）
             announceAction(
                 R.string.a11y_action_screen,
@@ -3123,7 +3251,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun interference(query: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         return try {
             val params = parseQuery(query)
             val snap = svc.interferenceSnapshot()
@@ -3416,7 +3544,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                     "hint",
                     if (svc == null) {
                         "accessibility service is off, so the foreground package cannot be read; " +
-                            "the launch was dispatched but unverified. Enable DSH Screen Helper " +
+                            "the launch was dispatched but unverified. Enable DSH Mobile Helper " +
                             "to get before/after, or use /wait-app once it is on."
                     } else {
                         "foreground did not change: the target app may show an in-app/h5 page, " +
@@ -3467,7 +3595,15 @@ document.getElementById('api').textContent = checks.map(function(c){
         val self = pkg == ctx.packageName
         val svc = DshAccessibilityService.instance
         if (!self && svc == null) {
-            return 503 to """{"ok":false,"error":"a11y_unavailable","code":"a11y_unavailable","reason":"observing another app's foreground state needs the accessibility service (launching it never did); enable DSH Screen Helper, or use wait-app for ${ctx.packageName} which works without it","retryable":false}"""
+            // 条件依赖：本包用 Activity 生命周期判断（上面 self 分支），只有「观察别的 App」才需要 a11y。
+            return 503 to JSONObject()
+                .put("ok", false)
+                .put("error", "a11y_unavailable")
+                .put("code", "a11y_unavailable")
+                .put("reason", "observing another app's foreground state needs the accessibility service (launching it never did); use wait-app for ${ctx.packageName} to check this app instead, or enable 'DSH Mobile Helper (optional)' in Settings > Accessibility")
+                .put("how_to_fix", "wait for ${ctx.packageName} without a11y, or POST /a11y/enable and enable 'DSH Mobile Helper (optional)'")
+                .put("retryable", false)
+                .toString()
         }
         fun currentForeground(): String? =
             if (self) {
@@ -3532,7 +3668,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     /** POST /tap-id —— 按 resource-id 点击（v1.2.141）。比文本定位稳：不受界面语言、OCR 误差影响 */
     private fun tapId(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val id = runCatching { JSONObject(body).optString("id") }.getOrNull().orEmpty()
         if (id.isBlank()) return 400 to """{"ok":false,"error":"id required"}"""
         val hit = runCatching { svc.tapById(id) }.getOrNull()
@@ -3563,7 +3699,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun scene(ctx: Context, query: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val params = parseQuery(query)
         val wantOcr = params["ocr"] !in listOf("0", "false", "no")
         val t0 = System.currentTimeMillis()
@@ -3764,7 +3900,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun act(ctx: Context, body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"a11y_off","reason":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val steps = obj.optJSONArray("steps")
@@ -3940,7 +4076,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     /** POST /wait-text —— 等文本出现/消失（v1.2.141）：{text, gone?, timeoutMs?} */
     private fun waitText(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val text = obj.optString("text")
@@ -3966,7 +4102,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     /** POST /scroll-edge —— 滚到顶/底（v1.2.141）：{direction: top|bottom} */
     private fun scrollEdge(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val dir = runCatching { JSONObject(body).optString("direction", "bottom") }.getOrDefault("bottom")
         val n = runCatching { svc.scrollToEdge(forward = dir != "top") }.getOrDefault(0)
         return 200 to """{"ok":true,"direction":"$dir","swipes":$n}"""
@@ -3975,7 +4111,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     /** GET /notif —— 最近的通知（v1.2.141，来自无障碍通知事件缓存） */
     private fun notif(): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+            ?: return a11yGone()
         val arr = JSONArray()
         svc.recentNotifications().forEach { arr.put(it) }
         return 200 to JSONObject().put("ok", true).put("notifications", arr).toString()

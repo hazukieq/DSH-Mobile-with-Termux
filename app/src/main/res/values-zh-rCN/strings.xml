@@ -26,7 +26,6 @@
     <string name="menu_priv">运行权限模式</string>
     <string name="menu_priv_title">运行权限模式</string>
     <string name="menu_accessibility">屏幕点击（无障碍）</string>
-    <string name="accessibility_enable">去开启「DSH 屏幕点击」无障碍服务</string>
     <string name="priv_normal">普通</string>
     <string name="priv_shizuku">Shizuku</string>
     <string name="priv_root">Root</string>
@@ -35,7 +34,6 @@
     <!-- 无障碍服务（模拟屏幕点击） -->
     <string name="accessibility_label">DSH Mobile 辅助（可选）</string>
     <string name="accessibility_desc">DSH Mobile 的可选辅助：在你要求时读取当前屏幕内容并执行点击/滑动。不开启也能正常聊天、用文件和后台引擎。</string>
-    <string name="accessibility_hint">尚未开启无障碍服务——「模拟屏幕点击」不可用</string>
 
     <!-- 首次启动引导 Onboarding -->
     <string name="ob_title">欢迎使用 DSH Mobile</string>

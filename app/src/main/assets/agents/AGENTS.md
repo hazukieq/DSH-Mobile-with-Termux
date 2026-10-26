@@ -10,6 +10,15 @@ Source: this app is **DSH Mobile with Termux**, a fork of
 Fork repository: <https://github.com/hazukieq/DSH-Mobile-with-Termux>. Reports, patches and
 build instructions belong there; upstream App issues belong to Soodok's repository.
 
+## Accessibility boundary (one rule, before you classify any capability)
+
+A capability needs the accessibility service **only if it must read another app's screen/UI tree,
+inject input into another app, or consume accessibility events**. Everything else works with the
+service off: launching/jumping to an app, hand-off, sharing, media playback, notifications you
+post, TTS, files, engine/PTY/plugin control, and the app's own window screenshot. Never tell the
+user to enable accessibility for those, and never disable the rest of the toolset because it is
+off. The per-endpoint list and the "service is off" ladder are in "Accessibility readiness" below.
+
 ## Platform
 
 - The app's package name is `com.termux`, so the Termux prefix is **genuine**:
@@ -319,6 +328,67 @@ How to react:
 - `retryable:false` otherwise → never granted; same settings page.
 - Probe once at the start of a UI task, not before every action; the endpoints already retry the
   transient case internally.
+
+#### Which capabilities actually need it
+
+Judge by the mechanism, not by "this feels like automation": does the capability have to **read
+another app's UI tree/pixels, inject input into another app, or read accessibility events**?
+
+Need it (with the service off they answer the structured 503):
+
+- read the UI tree: `GET /screen`, `GET /screen-changed`, `GET /diff`, `GET /scene`,
+  `POST /wait`, `POST /wait-text`, `POST /idle`, `GET /interference`;
+- inject input: `POST /tap`, `POST /tap-id`, `POST /gesture`, `POST /key`, `POST /input`,
+  `POST /scroll-find`, `POST /scroll-center`, `POST /scroll-edge`, `POST /pick`,
+  `POST /vision/tap`, `POST /vision/drag` (and the `scr` gate wrappers behind them, e.g.
+  `scr tap`, `scr find`, `scr key`, `scr input`, `scr idle`, `scr interference`);
+- screen pixels through the a11y API: `GET /screenshot`, `GET /frame-diff`, `POST /frame-wait`,
+  `POST /vision/crop`, `POST /vision/track` (`shot`/`scr shot` capture the whole screen this way);
+- the a11y notification cache: `GET /notif`;
+- composite drivers that run the above: `POST /batch`, `POST /act`, `POST /loop/run`, and
+  `loop ...` on the CLI.
+
+Never need it (keep working; never ask the user to enable accessibility for them):
+
+- launch / hand-off: `POST /launch`, `POST /launch-intent`, `POST /open`, `POST /activity`,
+  `POST /a11y/enable` (it only opens the settings page), `scr launch`, `native open`. `/open`,
+  `/activity` and `/overlay` may *use* the service when it is on (to verify a switch / dismiss an
+  a11y overlay window) but never block on it - the start still goes through `startActivity`;
+- wait for **our own** app: `POST /wait-app com.termux` / `scr wait-app com.termux` (Activity
+  lifecycle). Waiting for *another* package does need the service: `wait-app <other-pkg>` /
+  `POST /wait-app` with a non-`com.termux` package answers `a11y_unavailable` when it is off;
+- sharing / files: `POST /open/file`, `POST /open/folder`, `POST /open/share`, `POST /share/text`,
+  `POST /export`, `native share`, `native share-text`, `native open-file|open-folder`;
+- media, TTS, notifications: `POST /media/play`, `POST /media/pause`, `POST /media/resume`,
+  `POST /media/stop`, `GET /media/status`, `say`, `notify`, `POST /notify`, `POST /say`,
+  `POST /overlay` (progress overlay; it may fall back to an a11y window but does not require it);
+- app/engine control: `GET /status`, `GET /settings`, `GET /apps`, `GET /process`, `GET /diag`,
+  `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`,
+  `/webview/*`, `native status|settings|set`, `dsh-update`;
+- our own window: `GET /app-screenshot` (`appshot` / `dsh-mobile appshot`, PixelCopy - no a11y,
+  no CDP);
+- memory bookkeeping: `GET /memory/list`, `GET /memory/stats`, `POST /memory/confirm`,
+  `POST /memory/clear`;
+- conditional: `GET /ocr` (privileged `screencap` via Shizuku/root works without a11y; model
+  list/install does too), `POST /memory/lookup` / `POST /memory/store` (skip the screen read when
+  the caller passes `dump`).
+
+#### When it is off: degrade per capability, never globally
+
+1. **Do the ordinary part first.** Launching the app, opening a URL/file, sharing, playing media,
+   notifying, TTS and reading our own UI all keep working - do not stall the whole task or report
+   "blocked" because accessibility is off.
+2. **For the a11y-dependent step, do one of two things**: (a) ask the user to enable
+   `DSH Mobile Helper (optional)` / zh `DSH Mobile 辅助（可选）` (offer `POST /a11y/enable` or
+   `native open accessibility-settings`; apps cannot enable it themselves), or (b) route around it - ask the user to do the tap/read
+   themselves and report back, use `POST /launch` + `POST /wait-app com.termux` for the app
+   hand-off, `GET /app-screenshot` for our own UI, `POST /notify`/`say` for output.
+3. **Say which capability is missing.** Name the endpoint/command and what needs the service
+   (e.g. "reading another app's screen needs accessibility; launching WeChat does not"). Never
+   describe a plain capability as an Android limitation.
+4. **Do not retry a non-retryable a11y error, and do not re-probe before every action.** One
+   `GET /status` at the start of a UI task is enough; the classification above and the details in
+   `$DSH_HOME/DSH-MOBILE.md` / `docs/A11Y-SCOPE.md` are the reference.
 
 **Anti-fraud-guarded apps: the default answer is NO.**
 WeChat（微信）/ QQ / banking and financial apps run real-time device-integrity checks (accessibility detection, gesture histograms, root detection): automating them gets accounts **banned**, sometimes permanently, and a mistimed tap can move money. Douyin（抖音）/ 小红书 and heavy-DRM apps are nearly as hostile. Refuse by default; for financial apps it is a flat no. If the user insists after you state the ban risk in one plain sentence — and only then — they must be watching live (never unattended), and the ban, account loss and any ToS violation are **theirs**; say that out loud before starting. Never help make injected input undetectable — that crosses from automation into fraud.

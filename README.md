@@ -66,9 +66,12 @@
 ### 4. Agent 的手机能力（原生层 + 能力桥）
 - 21 种动作原语：`tap / tap-id / tap_text / swipe / scroll / scroll_find / scroll_collect / repeat / repeat_until / double_tap / long_press / pinch / drag / back_to / input / key / launch / intent / set_switch / noop / collect`。
 - 多层视觉兜底：无障碍节点树 → OCR → 图标识别 → 帧差；逐步 PICK → ACT → VERIFY → RETRY（[docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)）。
-- 跨 App 跳转与回流：`POST /open` 直接送到微信/支付宝/浏览器（App Link、`weixin://`、`alipays://`、指定包/Activity，回执带真实前台 `before/after/changed`），`POST /wait-app` 等用户付完回到前台 —— 覆盖 MCP 下单后必须去别的 App 付款/授权这类流程（v2.5.2，`scr open` / `scr wait-app`）。
+- 跨 App 跳转与回流：`POST /open` 直接送到微信/支付宝/浏览器（App Link、`weixin://`、`alipays://`、指定包/Activity，回执带真实前台 `before/after/changed`），`POST /wait-app` 等用户付完回到前台 —— 覆盖 MCP 下单后必须去别的 App 付款/授权这类流程（v2.5.2，`scr open` / `scr wait-app`）。**跳转本身不需要无障碍**（`startActivity` 就是普通 API）；只有「观察别的 App 是否在前台」才需要。
+- **无障碍只服务于一件事**：读别的 App 的界面/像素、往别的 App 注入手势按键文字、读无障碍事件。启动/跳转/分享/媒体播放/通知/TTS/文件/引擎/PTY/插件、以及 App 自己窗口的截图（`appshot`，PixelCopy）**一律不需要**无障碍，关着也照常工作（完整清单：[docs/A11Y-SCOPE.md](docs/A11Y-SCOPE.md)）。
 - 系统集成：打开/分享到指定 App、接收外部分享进当前会话、SAF DocumentsProvider（文件管理器可见 `DSH Mobile`）、原生 MediaPlayer 播放音频、`trash` 删除、通知与 TTS（`say`）。
 - 能力桥只监听 `127.0.0.1:3083`，token 每次启动随机生成（[docs/android-agent-routes.md](docs/android-agent-routes.md)）。
+
+> 注意（v2.5.2 事故，已在 6fb665c 修复）：该版本曾把 `/launch`、`/launch-intent`、`/open`、`/app-screenshot` 误放进「需要无障碍」的门禁集合，导致无障碍关着时「打开微信」「截自家界面」也返回 `503 a11y_off`。那是门禁分类错误，不是 Android 限制；现在门禁集合只由 `A11Y_DEPENDENT_REASONS` 派生，并有 `A11Y_INDEPENDENT_ACTIONS` 自检兜底。
 
 ### 5. 语音（当前分叉状态）
 - 语音面板与识别链路（系统 `SpeechRecognizer` / 云端 OpenAI 兼容 ASR）代码保留。
@@ -95,6 +98,7 @@
 | [docs/PROGRESS_OVERLAY.md](docs/PROGRESS_OVERLAY.md) | 通知/悬浮窗进度、事件来源、notice 布局、贴边与文本上限 |
 | [docs/ENGINE_RESTART.md](docs/ENGINE_RESTART.md) | 重启路径、dshmarket 竞态修复、plugin-health 安全性 |
 | [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) | 无障碍动作原语、视觉兜底、验证闭环 |
+| [docs/A11Y-SCOPE.md](docs/A11Y-SCOPE.md) / [.en](docs/A11Y-SCOPE.en.md) | 哪些能力需要无障碍、哪些永远不需要、关着时怎么降级（分类以代码为准） |
 | [docs/NARROW_UI.md](docs/NARROW_UI.md) | 竖屏/平板 UI 客户端插件 |
 | [docs/TERMINAL_AND_LINUX.md](docs/TERMINAL_AND_LINUX.md) | 内置终端与可选 proot Linux |
 | [docs/LAN_WEBUI.md](docs/LAN_WEBUI.md) | 局域网访问原生 WebUI |
