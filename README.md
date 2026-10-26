@@ -72,11 +72,10 @@
 - 系统集成：打开/分享到指定 App、接收外部分享进当前会话、SAF DocumentsProvider（文件管理器可见 `DSH Mobile`）、原生 MediaPlayer 播放音频、`trash` 删除、通知与 TTS（`say`）。
 - 能力桥只监听 `127.0.0.1:3083`，token 每次启动随机生成（[docs/android-agent-routes.md](docs/android-agent-routes.md)）。
 
-> 注意（v2.5.2 事故，已在 6fb665c 修复）：该版本曾把 `/launch`、`/launch-intent`、`/open`、`/app-screenshot` 误放进「需要无障碍」的门禁集合，导致无障碍关着时「打开微信」「截自家界面」也返回 `503 a11y_off`。那是门禁分类错误，不是 Android 限制；现在门禁集合只由 `A11Y_DEPENDENT_REASONS` 派生，并有 `A11Y_INDEPENDENT_ACTIONS` 自检兜底。
+门禁集合只由 `A11Y_DEPENDENT_REASONS` 派生（`A11Y_INDEPENDENT_ACTIONS` 自检兜底），启动/跳转/截图这类能力与无障碍无关。
 
-### 5. 语音（当前分叉状态）
-- 语音面板与识别链路（系统 `SpeechRecognizer` / 云端 OpenAI 兼容 ASR）代码保留。
-- **本分叉已从悬浮窗移除麦克风入口**（v1.6.x），因此当前没有悬浮窗语音按钮；细节与后续计划见 [docs/VOICE_INPUT.md](docs/VOICE_INPUT.md)。
+### 5. 语音（当前没有入口）
+- 语音面板与识别链路（系统 `SpeechRecognizer` / 云端 OpenAI 兼容 ASR）代码保留，但**当前没有任何入口**：悬浮窗麦克风已移除，主界面也不再申请录音权限，所以功能不可达。
 
 ### 6. 网络、调试与可观测性
 - 局域网 WebUI：显式开关 + 随机 6 位验证码，电脑浏览器打开的是手机里的原生 UI（[docs/LAN_WEBUI.md](docs/LAN_WEBUI.md)）。
@@ -96,7 +95,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [docs/PROGRESS_OVERLAY.md](docs/PROGRESS_OVERLAY.md) | 通知/悬浮窗进度、事件来源、notice 布局、贴边与文本上限 |
+| [docs/PROGRESS_OVERLAY.md](docs/PROGRESS_OVERLAY.md) | 悬浮窗三段式展开卡片、事件来源、贴边与文本上限 |
 | [docs/ENGINE_RESTART.md](docs/ENGINE_RESTART.md) | 重启路径、dshmarket 竞态修复、plugin-health 安全性 |
 | [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md) | 无障碍动作原语、视觉兜底、验证闭环 |
 | [docs/PAYMENT-LINKS.md](docs/PAYMENT-LINKS.md) | 微信/支付宝支付跳转：支持哪些链接、调用序列、`wait-app` 回流、安全边界 |
@@ -105,7 +104,6 @@
 | [docs/TERMINAL_AND_LINUX.md](docs/TERMINAL_AND_LINUX.md) | 内置终端与可选 proot Linux |
 | [docs/LAN_WEBUI.md](docs/LAN_WEBUI.md) | 局域网访问原生 WebUI |
 | [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) | 通知体系与后台行为 |
-| [docs/VOICE_INPUT.md](docs/VOICE_INPUT.md) | 语音输入链路（含分叉的入口变更说明） |
 | [docs/android-agent-routes.md](docs/android-agent-routes.md) | 能力桥路由（agent 视角） |
 
 ---

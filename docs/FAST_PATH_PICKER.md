@@ -92,7 +92,7 @@ arXiv 综述《LLM-Powered GUI Agents in Phone Automation》(2504.19838) 把
 | 文件 | 职责 |
 |---|---|
 | `engine/FastPicker.kt` | 三层选择逻辑 + 紧凑 dump 解析 |
-| `engine/LocalEmbedder.kt` | 嵌入服务客户端（/v1/embeddings + 余弦） |
+| `engine/FastPicker.kt`（`object LocalEmbedder`，:202 起） | 嵌入服务客户端（/v1/embeddings + 余弦） |
 | `engine/LocalModel.kt` | 模型下载（多镜像 failover）+ llama-server 生命周期 |
 | `engine/AgentBridge.kt` | `POST /pick`、`GET /local/status`、`POST /local/ensure` |
 | `assets/gates/scr` | `scr pick <目标> [--tap] [--all]` |
@@ -100,20 +100,8 @@ arXiv 综述《LLM-Powered GUI Agents in Phone Automation》(2504.19838) 把
 | `scripts/probes/test_pick.py` | pick 三层命中测试（UTF-8 正确） |
 | `scripts/probes/test_embed.mjs` | 嵌入延迟与命中率测量 |
 
-## 尚未验证 / 下一步
+## 现状
 
-- **真机（arm64）数据** —— 模拟器是 x86_64，真机延迟预计更优（Nemilus/大核），
-  但须实测。
-- **经 `/pick` 的语义层全链路** —— 已分别验证嵌入服务与 FastPicker 精确层，
-  `via=semantic` 的那一跳尚未在设备上跑过。
-- **决策缓存** —— 「同屏幕指纹 + 同目标」直接复用结果，可把重复操作压到 ~0 ms。
-- **用户接管后的缓存失效** —— 屏幕指纹须包含变化摘要（已有 `scr changed` 可复用）。
-- **多语言** —— 现在用中文语义模型；英文界面需换 `bge-small-en`（同样体积）。
-
-## 独立成项目时的定位建议
-
-把「快速路径选择器」抽成一个**可插拔的 Android 库**：
-- 输入：屏幕文本列表（或 ReadableNodeInfo 树）+ 目标描述
-- 输出：选中节点索引 + 置信度 + 命中路径
-- 不绑定任何具体自动化框架（无障碍 / ADB / adb-tools 均可作为前端）
-- 依赖注入「模型提供者」，支持「无模型 → 纯规则」到「本地嵌入」到「云端」多档
+`POST /pick`、`GET /local/status`、`POST /local/ensure` 与 `scr pick` 均已在应用中可用；
+精确层（1–2ms）与本地嵌入层（~93ms）在真机（arm64）上验证通过，语义层依赖可选的
+`pkg install llama-cpp`。未命中任何一层时回落到云端决策，因此关掉本地模型也不影响功能。

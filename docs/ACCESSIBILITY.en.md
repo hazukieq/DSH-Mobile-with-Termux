@@ -95,8 +95,6 @@ tap coordinates carry a small random offset instead of a fixed signature.
 - **fast mode**: accessibility tasks only think on the **first** step; later steps pay no reasoning cost;
 - **dispatch once, execute locally**: long sequences run locally instead of one cloud round-trip per step;
 - **page-state detection**: the next step starts only when the page is genuinely ready — no idle sleeping;
-- **daemon fallback**: very long tasks are taken over by a background planner; three consecutive failed
-  rounds stop it, so it can't burn quota forever.
 
 ## 5. Compared with alternatives
 
@@ -138,5 +136,3 @@ tap coordinates carry a small random offset instead of a fixed signature.
 - **Anti-automation detection in some apps**: not guaranteed to pass everywhere — and we do not
   implement detection evasion.
 
-> For the deeper design and evolution notes see [LOCAL_CLOSED_LOOP.md](LOCAL_CLOSED_LOOP.md);
-> for field measurements see [COMPLEX_SCENARIOS.md](COMPLEX_SCENARIOS.md).

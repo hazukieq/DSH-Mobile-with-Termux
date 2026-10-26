@@ -118,7 +118,6 @@ v2.5.2 的事故正是把 `/launch`、`/launch-intent`、`/open`、`/app-screens
 - **fast mode**：无障碍任务只在**第一步**思考，后续步骤不再付推理成本（长任务省下大头）；
 - **一次下发、本地执行**：长序列在本地走完，不必每步一次云端往返；
 - **页面状态检测**：真正加载完成才唤起下一步，不做固定 sleep 的空等；
-- **daemon 兜底**：超长任务由后台规划进程接管，连续 3 轮失败自动停止，不会无限重试烧额度。
 
 ## 5. 和其他方案比
 
@@ -153,5 +152,3 @@ v2.5.2 的事故正是把 `/launch`、`/launch-intent`、`/open`、`/app-screens
 - **系统级权限弹窗**：仍需你手动点「允许」；
 - **部分应用的防自动化检测**：不保证 100% 通过（我们也不做规避检测的对抗）。
 
-> 更深入的设计与演进记录见 [LOCAL_CLOSED_LOOP.md](LOCAL_CLOSED_LOOP.md)、
-> 实测记录见 [COMPLEX_SCENARIOS.md](COMPLEX_SCENARIOS.md)。

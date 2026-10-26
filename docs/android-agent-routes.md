@@ -75,7 +75,7 @@ npm install -g @deepseek-ai/dsh
 
 **Costs.**
 
-- **~190 MB APK.** That is the price of shipping a Node.js runtime plus its dependency closure (dsh 0.2.0's dependency tree is 79 packages; runtime.zip is ~186 MB).
+- **~235 MB APK.** That is the price of shipping a Node.js runtime plus its dependency closure (dsh 0.2.1-rc.2, single arm64-v8a ABI).
 - **Not a general Linux userland.** `apt`/`pkg` natively cover the Termux repository (aarch64), but arbitrary Debian/Ubuntu packages still need a proot distro (route 1 or 3).
 - **The Android platform imposes limits no route can remove**: no Linux GUI desktop, and dsh's `bash` sandbox backend (bubblewrap) is typically unavailable on Android due to SELinux policy, so the agent may run with `danger-full-access` inside the app sandbox. This affects every route equally.
 
