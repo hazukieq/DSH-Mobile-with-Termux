@@ -483,7 +483,45 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
  * 返回实际用到的通道名，回执里的 `input` 字段可用来判断"点了没反应"是不是通道问题。
  * 每步都落一行 stderr，便于把"点不动"归因到具体动作（bug report 建议 7）。
  */
+/**
+ * 让 CDP 的输入域真正生效（2026-10-27 查资料后补）。
+ *
+ * 背景（查资料 + 真机实验确认，2026-10-27）：**Android WebView 不处理 CDP 合成输入**。
+ * Chrome 里 `Input.dispatchTouchEvent` 会转给 SyntheticGestureController 走底层注入，
+ * WebView 没有这条路径，调用回执是 ok 但页面收不到事件（Chromium 相关行为见
+ * issuetracker 35819848 / 35824183 的讨论）。所以这里做触摸/焦点/生命周期仿真只是
+ * 排除「页面没激活」这一层：实测三项都 ok，触摸依旧不生效——证明不是仿真没开，
+ * 而是 WebView 这条通道本来不通。真正的真触摸只能走系统输入（无障碍手势 / input tap）。
+ *
+ * 依次尝试（都不 promise 成功，只落日志，失败继续）：
+ *   Emulation.setTouchEmulationEnabled  -> 让 emulateTouchFromMouseEvent 产生 touch
+ *   Emulation.setFocusEmulationEnabled  -> 模拟「已聚焦且激活」的页面
+ *   Page.setWebLifecycleState active    -> 页面处于 active 生命周期
+ */
+const primedTargets = new Set();
+async function primeInputChannels(pick, target) {
+  const key = target.id || '?';
+  if (primedTargets.has(key)) return;
+  primedTargets.add(key);
+  const steps = [
+    ['Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 }],
+    ['Emulation.setFocusEmulationEnabled', { enabled: true }],
+    ['Page.setWebLifecycleState', { state: 'active' }],
+  ];
+  const log = [];
+  for (const [m, p] of steps) {
+    try {
+      await cdpCall(pick.name, target, m, p, 4000);
+      log.push(m.split('.')[1] + '=ok');
+    } catch (e) {
+      log.push(m.split('.')[1] + '=fail(' + String(e.message || e).slice(0, 40) + ')');
+    }
+  }
+  try { process.stderr.write('[cdp] prime ' + log.join(' ') + '\n'); } catch {}
+}
+
 async function dispatchTap(pick, target, x, y) {
+  await primeInputChannels(pick, target);
   const cx = Math.round(x), cy = Math.round(y);
   const log = (channel, extra) => {
     try { process.stderr.write('[cdp] tap ' + cx + ',' + cy + ' via ' + channel + (extra ? ' (' + extra + ')' : '') + '\n'); } catch {}

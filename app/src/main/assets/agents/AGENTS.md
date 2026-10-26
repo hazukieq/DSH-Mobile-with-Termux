@@ -540,10 +540,15 @@ The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button
 4. Settings is the `[role=dialog]` overlay (账号与余额 / 通用设置 / 模型 / 内置插件 / Agent 预设 …).
 
 Rules:
-- **Click channel** (v2.5.20, 2026-10-27 真机实测更正): `cdp click` / `cdp click-text` 默认走
-  **DOM click**（`el.click()`，交给 React 处理）——App 内的 CDP `Input.*` 触摸通道会「回执成功但
-  页面收不到事件」（同一段代码从宿主直连却正常），这是抽屉点不动的真因。需要真手势
-  （画布/地图/自定义 pointer 逻辑）加 `--touch`；`cdp tap <x> <y>` 始终是真触摸。
+- **Click channel** (v2.5.20/2.5.22, 2026-10-27 实测 + 查资料): `cdp click` / `cdp click-text`
+  默认走 **DOM click**（`el.click()`，交给 React 处理）。原因不是选择器问题，而是
+  **Android WebView 不处理 CDP 合成输入**：Chrome 里 `Input.dispatchTouchEvent` 会交给
+  SyntheticGestureController 做底层注入，WebView 没有这条路径，所以调用回执 ok、页面收不到
+  事件（Chromium issuetracker 35819848 / 35824183 有同类讨论）。v2.5.22 已实测把
+  `Emulation.setTouchEmulationEnabled` / `setFocusEmulationEnabled` / `Page.setWebLifecycleState(active)`
+  全部打开，触摸仍然不生效——可以确定不是「页面没聚焦」。
+  需要真手势（画布/地图/自定义 pointer）时：用无障碍手势 `scr tap <x> <y>`（真实系统输入），
+  或加 `--touch` 试 CDP 通道（可能是空转）。
   回执里的 `input` 字段会写 `dom-click` / `emulated-touch` / `emulated-touch+dom-click`（兜底）。
 - `cdp drawer` 会**自证**：点完轮询 `button[aria-label="收起侧边栏"]`，只有抽屉真出现才报
   `opened`；失败会先自动用 DOM click 兜底，再失败才 `ok:false, drawer:not_opened`（此时才需要
