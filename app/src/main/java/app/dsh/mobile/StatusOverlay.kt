@@ -445,11 +445,26 @@ object StatusOverlay {
         val collapsed = expandLevel == 0
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
         statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        // v2.5.9（用户实测 bug）：折叠期间 ScrollView 是 GONE，子 View 没被测量，
+        // capScrollHeight() 会把高度锁成 0/很小；再展开时窗口就"长出"一条很矮的滚动区。
+        // 展开的这一刻先交还 wrap_content，让内容自己量一遍，随后再 post 收紧到 132dp。
+        statusScroll?.let { sc ->
+            val lp = sc.layoutParams ?: return@let
+            if (!collapsed && lp.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
+                lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                sc.layoutParams = lp
+                sc.requestLayout()
+            }
+        }
         // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
         refreshActionVisibility()
         // v2.5.6：无障碍/打开应用动作链——折叠成球时隐藏，展开且有内容才显示
         a11yText?.visibility = if (!collapsed && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
-        statusScroll?.post { capScrollHeight() }
+        statusScroll?.post {
+            capScrollHeight()
+            // 展开后才刚完成第一次布局，再补一次收紧（v2.5.9）
+            statusScroll?.postDelayed({ capScrollHeight() }, 60L)
+        }
         root?.requestLayout()
         root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
 
@@ -739,8 +754,20 @@ object StatusOverlay {
         val sc = statusScroll ?: return
         val ctx = appCtx ?: return
         val maxPx = dp(ctx, 132)
-        val child = sc.getChildAt(0)
-        val desired = child?.measuredHeight ?: return
+        val child = sc.getChildAt(0) ?: return
+        // v2.5.9：折叠态下子 View 没被测量（measuredHeight=0），直接用会把滚动区压成 0。
+        // 宽度未知时按卡片正文最大宽度（216dp - 内边距）量一遍，保证拿到真实内容高度。
+        var desired = child.measuredHeight
+        if (desired <= 0 || child.width == 0) {
+            val w = (sc.width - sc.paddingLeft - sc.paddingRight)
+                .takeIf { it > 0 } ?: dp(ctx, 200)
+            child.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(w, android.view.View.MeasureSpec.AT_MOST),
+                android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
+            )
+            desired = child.measuredHeight
+        }
+        if (desired <= 0) return
         val target = if (desired > maxPx) maxPx else desired
         val lp = sc.layoutParams ?: return
         if (lp.height != target) {
