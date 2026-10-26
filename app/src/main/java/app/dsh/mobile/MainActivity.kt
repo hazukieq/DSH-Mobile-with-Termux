@@ -1936,10 +1936,24 @@ class MainActivity : Activity() {
             runCatching { ProgressHub.onJsProgress(ctx, payload) }
         }
 
-        /** v1.5.7：把无障碍/自动化状态写进悬浮窗的独立 notice 区（与思考链分离）。 */
+        /**
+         * 兼容旧调用名（v1.5.7 的 notice）：v2.5.6 起旧的 notice 小条已删除，
+         * 无障碍/自动化文案统一并入工具链下方的动作链。
+         */
         @android.webkit.JavascriptInterface
         fun notice(text: String) {
-            runCatching { StatusOverlay.setNotice(text) }
+            runCatching { StatusOverlay.setA11yAction(text) }
+        }
+
+        /**
+         * v2.5.6：把「无障碍/打开应用」动作追加到悬浮窗第④段动作链。
+         *
+         * 与工具链分开：插件/门禁在做读屏点击、启动或跳转别的 App 时调这里，
+         * 用户一眼能分清「AI 在调工具」和「App 真的在点/在跳」。
+         */
+        @android.webkit.JavascriptInterface
+        fun a11y(line: String) {
+            runCatching { StatusOverlay.setA11yAction(line) }
         }
 
         /** 打开原生设置页（v1.3.70）：WebUI 侧可用来直达后台进度等设置。 */

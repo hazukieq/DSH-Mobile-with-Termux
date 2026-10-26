@@ -384,10 +384,7 @@ Sie können auch ohne Update fortfahren, die Oberfläche wird dann aber nicht an
     <string name="setting_mic_sub">Spracheingabe (Spracherkennung) · tippen Sie auf Autorisieren</string>
     <string name="mic_granted">Autorisiert</string>
     <string name="mic_denied">Nicht autorisiert · tippen Sie auf Aktivieren</string>
-        <string name="overlay_no_last_action">Noch keine Aktion aufgezeichnet</string>
-    <string name="overlay_last_action_at">Letzte Aktion: %1$s</string>
-    <string name="overlay_no_sessions">Keine aktiven Sitzungen</string>
-    <string name="overlay_session_line">%1$s · %2$s</string>
+    <string name="overlay_a11y_open">Öffne %1$s</string>
     <string name="voice_no_session">Keine Unterhaltung zum Senden — zuerst eine öffnen</string>
     <string name="voice_opening_session">Unterhaltung wird geöffnet …</string>
     <string name="voice_session_timeout">Unterhaltung hat sich nicht geöffnet, erneut versuchen</string>
@@ -427,7 +424,6 @@ Sie können auch ohne Update fortfahren, die Oberfläche wird dann aber nicht an
     <string name="code_copied_hint">Code kopiert</string>
     <string name="code_copy">Kopieren</string>
     <string name="code_copied_toast">%1$s kopiert</string>
-    <string name="overlay_exit_daemon">Daemon beenden</string>
     <string name="splash_preparing">Laufzeit wird vorbereitet…</string>
     <string name="splash_starting">Engine wird gestartet…</string>
     <string name="splash_loading">Oberfläche wird geladen…</string>

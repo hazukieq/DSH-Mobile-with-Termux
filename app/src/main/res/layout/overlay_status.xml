@@ -4,8 +4,8 @@
 
   形态：
     ① 折叠态 —— 圆形状态点（26dp 球），不打扰
-    ② 展开态 —— 点击后变成圆角卡片：状态点 + 可滚动的实时内容 + 麦克风
-    ③ 详情态 —— 卡片追加最近动作与会话列表
+    ② 展开态 —— 点击后变成圆角卡片，四段式：
+         思考链 → 工具链 → 无障碍/打开应用动作链 → 会话标题 + 倒计时
 
   展开内容用 ScrollView 包住：后台思考文本可能很长，折行显示并自动滚到最新一行；
   动作行/标题过长时用跑马灯（marquee）滚动。
@@ -63,58 +63,72 @@
 
     </LinearLayout>
 
-    <!-- 动作行：标题/最近动作；过长跑马灯滚动 -->
+    <!-- 动作链（v2.5.5）：最近几条工具动作，多行显示；不再和思考链挤在同一段文字里 -->
     <TextView
         android:id="@+id/overlayAction"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="5dp"
         android:layout_marginStart="16dp"
         android:maxWidth="216dp"
-        android:textSize="11sp"
+        android:textSize="10.5sp"
         android:textColor="#FF9AA0A6"
-        android:singleLine="true"
-        android:ellipsize="marquee"
-        android:marqueeRepeatLimit="marquee_forever"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
+        android:lineSpacingExtra="1dp"
+        android:maxLines="4"
+        android:ellipsize="end"
         android:visibility="gone"
         android:text="" />
 
-    <!-- v1.5.7：无障碍/自动化 POST 的状态单独用这一块布局接，绝不覆盖上面的思考链 -->
-    <LinearLayout
-        android:id="@+id/overlayNoticeBox"
+    <!-- 无障碍 / 自动化 / 打开应用动作链（v2.5.6）：和工具链同样式，紧贴其下一行。
+         只显示「无障碍服务真正做的事」——读屏点击/滑动/按键、启动或跳转别的 App。 -->
+    <TextView
+        android:id="@+id/overlayA11y"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
+        android:layout_marginTop="3dp"
+        android:layout_marginStart="16dp"
+        android:maxWidth="216dp"
+        android:textSize="10.5sp"
+        android:textColor="#FF9AA0A6"
+        android:lineSpacingExtra="1dp"
+        android:maxLines="4"
+        android:ellipsize="end"
+        android:visibility="gone"
+        android:text="" />
+
+    <!-- 会话标题 + 倒计时（v2.5.5）：展开时单独一行，标题被省略而不是被秒数挤掉 -->
+    <LinearLayout
+        android:id="@+id/overlayFoot"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:layout_marginTop="6dp"
         android:layout_marginStart="16dp"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp"
         android:maxWidth="216dp"
-        android:background="@drawable/bg_overlay_notice"
         android:visibility="gone">
 
         <TextView
-            android:id="@+id/overlayNotice"
+            android:id="@+id/overlaySession"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxWidth="180dp"
+            android:singleLine="true"
+            android:ellipsize="middle"
+            android:textSize="11sp"
+            android:textColor="#FF9AA0A6"
+            android:text="" />
+
+        <TextView
+            android:id="@+id/overlayElapsed"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:maxWidth="200dp"
+            android:layout_marginStart="6dp"
+            android:singleLine="true"
             android:textSize="11sp"
-            android:textColor="#FFB8C4D0"
-            android:maxLines="3"
-            android:ellipsize="end"
+            android:textColor="#FF7DD3FC"
             android:text="" />
     </LinearLayout>
 
-    <!-- 详情态：活跃会话列表（容器由代码填充） -->
-    <LinearLayout
-        android:id="@+id/overlaySessions"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginTop="6dp"
-        android:visibility="gone" />
 </LinearLayout>

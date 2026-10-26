@@ -85,6 +85,39 @@ export function apply(ctx) {
     return it
   }
 
+  /** 动作链：工具名 + 一条短摘要（不暴露完整参数，手机宽度放不下也没意义）。 */
+  const TOOL_LABEL = {
+    bash: 'bash', shell: 'bash', read: 'read', write: 'write', edit: 'edit',
+    grep: 'grep', glob: 'glob', webfetch: 'web', websearch: 'search',
+    todowrite: 'todo', task: 'task', subagent: 'agent', list: 'list',
+  }
+
+  /** 从工具参数里挑一个最能说明「在动什么」的短片段（≤34 字）。 */
+  const argHint = (it) => {
+    const raw = String(it.args || '')
+    if (!raw) return ''
+    let v = ''
+    try {
+      const o = JSON.parse(raw)
+      v = String(o.command || o.file_path || o.path || o.pattern || o.query || o.url || o.prompt || '')
+    } catch (e) {
+      const m = raw.match(/"(?:command|file_path|path|pattern|query|url|prompt)"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+      if (m) v = m[1]
+      else v = raw.replace(/^[{\s]+/, '')
+    }
+    v = clean(v.replace(/[\r\n]+/g, ' '))
+    if (!v) return ''
+    if (v.length > 34) v = v.slice(0, 33) + '…'
+    return v
+  }
+
+  const actLine = (it) => {
+    const nm = TOOL_LABEL[String(it.name || '').toLowerCase()] || (it.name ? String(it.name).slice(0, 14) : 'tool')
+    const hint = argHint(it)
+    const tail = it.status ? ' → ' + it.status : ''
+    return '› ' + nm + (hint ? ' · ' + hint : '') + tail
+  }
+
   const render = (s) => {
     const lines = []
     for (const it of s.items) {
@@ -106,6 +139,23 @@ export function apply(ctx) {
     return tailJoin(lines)
   }
 
+  /** 悬浮窗三段区：思考链（最近一段推理）/ 动作链（最近几条工具）/ 其余进 detail。 */
+  const thinksOf = (s) => {
+    const think = s.items.filter((x) => x.t === 'think').map((x) => clean(x.text)).filter(Boolean)
+    return think.length ? think[think.length - 1].slice(-1200) : ''
+  }
+
+  const actsOf = (s) => {
+    const lines = []
+    for (const it of s.items) {
+      if (it.t !== 'tool' || !it.name) continue // 无名占位项不显示（会渲染成「› tool」噪音）
+      const line = actLine(it)
+      if (lines[lines.length - 1] === line) continue
+      lines.push(line)
+    }
+    return lines.slice(-6).join('\n')
+  }
+
   const flush = (s, kind) => {
     const detail = render(s)
     if (!detail) return
@@ -115,6 +165,8 @@ export function apply(ctx) {
       session: s.id,
       title: s.title || s.id.slice(-6),
       detail,
+      think: thinksOf(s),
+      acts: actsOf(s),
       elapsed: Date.now() - s.started,
     })
   }
@@ -211,20 +263,31 @@ export function apply(ctx) {
       const agent = ctx.agents?.get?.(session.id)
       if (!agent) return
       const s = stateOf(agent)
+      const claimTool = (callId) => {
+        // 优先按 callId 命中；流式先建的占位项 callId/name 可能都是空的 → 认领最后一条未命名的
+        let it = s.items.find((x) => x.t === 'tool' && callId && x.callId === callId)
+        if (!it) {
+          for (let i = s.items.length - 1; i >= 0; i--) {
+            const cand = s.items[i]
+            if (cand.t === 'tool' && !cand.name) { it = cand; break }
+          }
+        }
+        return it
+      }
       if (event.type === 'tool/call') {
         const callId = String(event.callId || '')
-        let it = s.items.find((x) => x.t === 'tool' && x.callId === callId)
+        let it = claimTool(callId)
         if (!it) it = pushItem(s, 'tool', { callId, name: '', args: '' })
+        if (callId) it.callId = callId
         it.name = event.name || it.name
         if (event.arguments) it.args = String(event.arguments)
         schedule(s)
       } else if (event.type === 'tool/result') {
         const callId = String(event.callId || '')
-        const it = s.items.find((x) => x.t === 'tool' && x.callId === callId)
-        if (it) {
-          it.status = event.message?.isError ? '失败' : '完成'
-          schedule(s)
-        }
+        let it = claimTool(callId)
+        if (!it) it = pushItem(s, 'tool', { callId, name: '', args: '' })
+        it.status = event.message?.isError ? '失败' : '完成'
+        schedule(s)
       } else if (event.type === 'turn/start') {
         s.started = Date.now()
         s.finished = false

@@ -3243,6 +3243,12 @@ document.getElementById('api').textContent = checks.map(function(c){
                     detail,
                     obj.optString("session"),
                     obj.optLong("elapsed"),
+                    // v2.5.5：悬浮窗三段式的 ①② 段（思考链 / 动作链）
+                    think = obj.optString("think"),
+                    acts = obj.optJSONArray("acts")?.let { arr ->
+                        (0 until arr.length()).mapNotNull { arr.optString(it)?.takeIf { l -> l.isNotBlank() } }
+                            .joinToString("\n")
+                    } ?: obj.optString("acts"),
                 )
                 return 200 to """{"ok":true,"structured":true}"""
             }
@@ -3251,7 +3257,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 obj.optString("status").takeIf { it.isNotBlank() },
                 obj.optString("action").takeIf { it.isNotBlank() },
             ).joinToString(" · ")
-            if (notice.isNotBlank()) StatusOverlay.setNotice(notice)
+            if (notice.isNotBlank()) StatusOverlay.setA11yAction(notice)
             if (obj.optBoolean("complete", false)) StatusOverlay.flashCompleteDefault()
             // v1.3.68：同一份进度也进入后台提示（通知/悬浮窗），不再依赖无障碍
             ProgressHub.onAgentProgress(
@@ -3266,6 +3272,11 @@ document.getElementById('api').textContent = checks.map(function(c){
         }
     }
 
+
+    /** v2.5.6：把「打开别人的 App」写进悬浮窗的无障碍/打开应用动作链（第 3 段）。 */
+    private fun noteOpen(ctx: Context, target: String) {
+        runCatching { StatusOverlay.setA11yAction(ctx.getString(R.string.overlay_a11y_open, target)) }
+    }
 
     /**
      * POST /launch → 启动任意 App（v1.2.59）。
@@ -3296,6 +3307,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 if (intent != null) {
                     intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     ctx.startActivity(intent)
+                    noteOpen(ctx, pkg)
                     return 200 to """{"ok":true,"launched":"$pkg"}"""
                 }
                 return 404 to """{"ok":false,"error":"no launchable activity for package '$pkg'"}"""
@@ -3318,6 +3330,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 if (intent != null) {
                     intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     ctx.startActivity(intent)
+                    noteOpen(ctx, matches[0].packageName)
                     return 200 to """{"ok":true,"launched":"${matches[0].packageName}"}"""
                 }
             }
@@ -3349,6 +3362,7 @@ document.getElementById('api').textContent = checks.map(function(c){
             }
             applyIntentExtras(intent, obj)
             ctx.startActivity(intent)
+            noteOpen(ctx, "Intent(" + act + ")")
             200 to """{"ok":true,"launched":"$act"}"""
         }.getOrElse { 500 to """{"ok":false,"error":"${it.message}"}""" }
     }
@@ -3375,6 +3389,7 @@ document.getElementById('api').textContent = checks.map(function(c){
             }
             applyIntentExtras(intent, obj)
             ctx.startActivity(intent)
+            noteOpen(ctx, component)
             200 to """{"ok":true,"launched":"$component","component":true,"backgroundLaunchMayBeBlocked":true,"hint":"Android may block background activity starts; if no UI appeared, open it from the app UI (top-bar gear) instead"}"""
         }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
     }
@@ -3475,6 +3490,8 @@ document.getElementById('api').textContent = checks.map(function(c){
         }
         val waited = android.os.SystemClock.elapsedRealtime() - startedAt
         val changed = after != null && before != null && after != before
+        // v2.5.6：跳转别的 App（微信/支付宝/浏览器…）→ 写进悬浮窗第④段动作链
+        noteOpen(ctx, launched)
         return 200 to JSONObject().apply {
             put("ok", true)
             put("launched", launched)

@@ -398,10 +398,7 @@
     <string name="setting_mic_sub">语音输入（语音识别）· 点击授权</string>
     <string name="mic_granted">已授权</string>
     <string name="mic_denied">未授权 · 点击授权</string>
-        <string name="overlay_no_last_action">还没有动作记录</string>
-    <string name="overlay_last_action_at">上次动作：%1$s</string>
-<string name="overlay_no_sessions">暂无活跃对话</string>
-    <string name="overlay_session_line">%1$s · %2$s</string>
+    <string name="overlay_a11y_open">打开 %1$s</string>
     <string name="voice_no_session">当前没有可发送的对话——请先打开一个</string>
     <string name="voice_opening_session">正在打开对话…</string>
     <string name="voice_session_timeout">对话未打开，请重试</string>
@@ -418,7 +415,6 @@
     <string name="code_copied_hint">验证码已复制</string>
     <string name="code_copy">复制</string>
     <string name="code_copied_toast">已复制 %1$s</string>
-    <string name="overlay_exit_daemon">退出 daemon</string>
     <string name="splash_preparing">正在准备运行环境…</string>
     <string name="splash_starting">正在启动引擎…</string>
     <string name="splash_loading">正在加载界面…</string>

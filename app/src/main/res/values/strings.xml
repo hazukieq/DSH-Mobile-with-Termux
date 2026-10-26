@@ -398,10 +398,7 @@ You can still continue without updating, but the interface will not display.</st
     <string name="setting_mic_sub">Voice input (speech recognition) · tap to grant</string>
     <string name="mic_granted">Granted</string>
     <string name="mic_denied">Not granted · tap to enable</string>
-        <string name="overlay_no_last_action">No action recorded yet</string>
-    <string name="overlay_last_action_at">Last action: %1$s</string>
-<string name="overlay_no_sessions">No active sessions</string>
-    <string name="overlay_session_line">%1$s · %2$s</string>
+    <string name="overlay_a11y_open">Open %1$s</string>
     <string name="voice_no_session">No conversation to send to — open one first</string>
     <string name="voice_opening_session">Opening conversation…</string>
     <string name="voice_session_timeout">Conversation did not open, try again</string>
@@ -418,7 +415,6 @@ You can still continue without updating, but the interface will not display.</st
     <string name="code_copied_hint">Code copied</string>
     <string name="code_copy">Copy</string>
     <string name="code_copied_toast">Copied %1$s</string>
-    <string name="overlay_exit_daemon">Exit daemon</string>
     <string name="splash_preparing">Preparing the runtime…</string>
     <string name="splash_starting">Starting the engine…</string>
     <string name="splash_loading">Loading the interface…</string>

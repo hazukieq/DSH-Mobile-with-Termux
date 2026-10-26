@@ -65,12 +65,19 @@ object StatusOverlay {
     @Volatile private var actionText: TextView? = null
     @Volatile private var statusScroll: android.widget.ScrollView? = null
     @Volatile private var statusDot: View? = null
-    @Volatile private var sessionsBox: LinearLayout? = null
-    @Volatile private var noticeBox: android.view.View? = null
-    @Volatile private var noticeText: TextView? = null
-    private val noticeHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var noticeClear: Runnable? = null
-    @Volatile private var noticeUntil = 0L
+    /** v2.5.5：三段式展开的第三段 —— 会话标题 + 倒计时。 */
+    @Volatile private var sessionText: TextView? = null
+    @Volatile private var elapsedText: TextView? = null
+    @Volatile private var footRow: android.view.View? = null
+
+    /** 第④段：无障碍 / 打开应用动作链（v2.5.6）。与上面的工具链分开，最多留最近 4 条。 */
+    @Volatile private var a11yText: TextView? = null
+    private val a11yLines = ArrayDeque<String>()
+    /** 倒计时基准（工作起始墙钟）；<=0 表示没有在跑的任务。 */
+    @Volatile private var startedAt = 0L
+    @Volatile private var ticking = false
+    /** 最近一次动作链文本（折叠/展开切换时用来恢复显隐，不重新排版）。 */
+    @Volatile private var actsText = ""
     /** 展开档位：0=折叠(仅圆点) / 1=状态+麦克风 / 2=再加动作+会话列表 */
     @Volatile private var expandLevel = 0
     @Volatile private var hidden = false
@@ -105,9 +112,6 @@ object StatusOverlay {
      * 只有这种情况才会在回空闲时自动收成球 —— 用户手动展开的档位绝不擅自改动。
      */
     @Volatile private var autoExpanded = false
-
-    /** 会话列表的自动刷新任务（档位 2 显示期间周期性刷新，见 refreshSessionList） */
-    @Volatile private var listRefresh: Runnable? = null
 
     /** 当前是否处于「聆听」状态（麦克风按钮的开关语义依赖它） */
     fun isListening(): Boolean = recording
@@ -155,17 +159,12 @@ object StatusOverlay {
         if (svc != null) {
             val w = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             startOverlay(svc.applicationContext, w, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
-            return true
+            return root != null
         }
         if (appOverlay) {
             val w = app.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             startOverlay(app, w, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
-            return true
-        }
-        if (svc != null) {
-            val w = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            startOverlay(svc.applicationContext, w, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
-            return true
+            return root != null
         }
         return false
     }
@@ -182,7 +181,6 @@ object StatusOverlay {
                 val status = view.findViewById<TextView>(R.id.overlayStatus)
                 val action = view.findViewById<TextView>(R.id.overlayAction)
                 val dot = view.findViewById<View>(R.id.overlayDot)
-                val sessions = view.findViewById<LinearLayout>(R.id.overlaySessions)
 
                 status.text = ctx.getString(R.string.overlay_idle)
                 dot.background.setTint(COLOR_IDLE)
@@ -212,9 +210,10 @@ object StatusOverlay {
                 statusScroll = view.findViewById<android.widget.ScrollView>(R.id.overlayScroll)
                 action.tag = "marquee"
                 action.isSelected = true
-                sessionsBox = sessions
-                noticeBox = view.findViewById(R.id.overlayNoticeBox)
-                noticeText = view.findViewById(R.id.overlayNotice)
+                sessionText = view.findViewById(R.id.overlaySession)
+                elapsedText = view.findViewById(R.id.overlayElapsed)
+                footRow = view.findViewById(R.id.overlayFoot)
+                a11yText = view.findViewById(R.id.overlayA11y)
                 root = view; params = p
 
                 w.addView(view, p)
@@ -293,19 +292,14 @@ object StatusOverlay {
             statusDot?.let { d ->
                 attachGesture(d, p, ctx, onClick = { collapseToBall() })
             }
-            // 状态文字：点一下 = 继续展开（循环）；长按 = 隐藏
-            statusTv?.let { tv ->
-                attachGesture(
-                    tv, p, ctx,
-                    onClick = { cycleExpandLevel() },
-                    onLongPress = { hide(DshAccessibilityService.instance) },
-                )
-            }
+            // v2.5.6：思考正文不再挂任何手势 —— 原 repo 的「点一下继续展开（循环档位）」
+            // 是残留交互，展开态点正文只会让人以为有第四段；正文现在纯滚动。
+            // 收起：点圆点或动作行；隐藏：长按动作行。
         } else {
             // 折叠态：整颗球都能点/拖；长按 = 隐藏
             attachGesture(
                 view, p, ctx,
-                onClick = { cycleExpandLevel() },
+                onClick = { expandPanel() },
                 onLongPress = { hide(DshAccessibilityService.instance) },
             )
         }
@@ -445,12 +439,11 @@ object StatusOverlay {
      *  1 展开：状态点 + 状态文字 + 麦克风按钮
      *  2 详情：在展开基础上 + 最近动作 + 活跃会话列表
      */
-    private fun cycleExpandLevel() {
+    private fun expandPanel() {
         autoExpanded = false   // 用户自己动的档位 → 不再自动收回
-        expandLevel = (expandLevel + 1) % 3
-        rememberedLevel = expandLevel
+        expandLevel = 1
+        rememberedLevel = 1
         applyExpandLevel()
-        if (expandLevel == 2) refreshSessionList()
     }
 
     /** 按当前档位应用可见性（所有控件都在同一窗口里，只切 visibility） */
@@ -466,13 +459,8 @@ object StatusOverlay {
         statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
         // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
         refreshActionVisibility()
-        // 离开详情档就停掉周期刷新（档位 2 期间由 refreshSessionList 自己续期）
-        if (expandLevel != 2) stopListRefresh()
-        sessionsBox?.visibility = if (expandLevel >= 2) View.VISIBLE else View.GONE
-        // v1.5.8：notice 只在展开态显示；折叠成球时不占地方
-        noticeBox?.visibility = if (expandLevel > 0 && noticeUntil > System.currentTimeMillis() &&
-            noticeText?.text?.isNotBlank() == true
-        ) View.VISIBLE else View.GONE
+        // v2.5.6：无障碍/打开应用动作链——折叠成球时隐藏，展开且有内容才显示
+        a11yText?.visibility = if (!collapsed && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
         statusScroll?.post { capScrollHeight() }
         root?.requestLayout()
         root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
@@ -557,14 +545,6 @@ object StatusOverlay {
             // 手柄必须绑在当前可见的那个上（否则点击落空 —— 实测踩坑）。
             bindHandle(v, params ?: return@let, ctx)
 
-            // v1.2.157：详情档显示「退出 daemon」按钮（有活跃任务才可见，轮询控制）
-            if (expandLevel >= 2) {
-                ensureDaemonButton(ctx)
-            } else {
-                cancelDaemonPoll()
-                daemonBtn?.visibility = View.GONE
-            }
-
             // ⚠️ 必须请求重新布局：改 visibility 不会自动重新测量，
             // 新显示的控件会保持 [0,0,0,0]（尺寸为 0 → 收不到触摸）。
             // 实测：level 1 时 status/mic 都是 vis=0 但 [0,0,0,0]，点麦克风完全无响应。
@@ -583,126 +563,6 @@ object StatusOverlay {
         statusDot?.let {
             Log.i(TAG, "  dot: vis=${it.visibility} [${it.left},${it.top},${it.right},${it.bottom}]")
         }
-    }
-
-    /**
-     * 详情档内容：**上一次 AI 做了什么 + 什么时候做的**（v1.2.88）。
-     *
-     * 主人要求：「下面展开之后，就直接显示 AI 上一次做了什么以及上一次 AI 是在什么时候做的」——
-     * 取代原来的「活跃会话列表」（那个的活跃时间一直不准，主人已明确说不管它了）。
-     *
-     * 数据来自 [app.dsh.mobile.engine.LastAction]（持久化，重启后仍能看到上次动作）。
-     */
-    private fun refreshSessionList() {
-        val ctx = appCtx ?: return
-        val box = sessionsBox ?: return
-        val last = app.dsh.mobile.engine.LastAction.read(ctx)
-        main {
-            box.removeAllViews()
-            if (last == null) {
-                box.addView(TextView(ctx).apply {
-                    text = ctx.getString(R.string.overlay_no_last_action)
-                    textSize = 11f
-                    setTextColor(0xFF9AA0A6.toInt())
-                })
-                return@main
-            }
-            // v2.4.7（用户反馈「点击动作显示在最底部会话区」）：
-            // 动作正文统一显示在思考链下方的动作行（overlayAction），详情区只保留
-            // 「上次动作发生在什么时候」，不再重复动作内容，也不再占用会话标题区。
-            box.addView(TextView(ctx).apply {
-                val when_ = android.text.format.DateUtils.getRelativeTimeSpanString(last.at)
-                text = ctx.getString(R.string.overlay_last_action_at, when_)
-                textSize = 10f
-                setTextColor(0xFF7DD3FC.toInt())
-            })
-        }
-    }
-
-    /** 停掉会话列表的周期刷新 */
-    private fun stopListRefresh() {
-        listRefresh?.let { runCatching { mainHandler.removeCallbacks(it) } }
-        listRefresh = null
-    }
-
-    /** 档位 2 显示期间每 3 秒重新读一次会话列表（离开档位即停） */
-    private fun scheduleListRefresh() {
-        stopListRefresh()
-        if (expandLevel != 2) return
-        val r = Runnable { refreshSessionList() }
-        listRefresh = r
-        mainHandler.postDelayed(r, 3_000L)
-    }
-
-    // ---------- daemon 控制按钮（v1.2.157 用户反馈：daemon 卡住时用户无法主动取消）----------
-    /** 详情档的「退出 daemon」按钮：有活跃/待帮助任务才显示，点击即 /daemon/stop */
-    @Volatile private var daemonBtn: android.widget.Button? = null
-    @Volatile private var daemonPoll: Runnable? = null
-
-    private fun ensureDaemonButton(ctx: Context) {
-        val v = root ?: return
-        if (daemonBtn == null) {
-            val b = android.widget.Button(ctx)
-            b.text = ctx.getString(R.string.overlay_exit_daemon)
-            b.textSize = 11f
-            b.setPadding(dp(ctx, 8), dp(ctx, 2), dp(ctx, 8), dp(ctx, 2))
-            b.setOnClickListener {
-                daemonBtn?.visibility = View.GONE
-                Thread {
-                    runCatching {
-                        val tok = app.dsh.mobile.engine.AgentBridge.currentToken() ?: return@Thread
-                        val c = (java.net.URL("http://127.0.0.1:3083/daemon/stop")
-                            .openConnection() as java.net.HttpURLConnection).apply {
-                            requestMethod = "POST"
-                            setRequestProperty("X-DSH-Token", tok)
-                            connectTimeout = 3000; readTimeout = 3000
-                        }
-                        c.inputStream.close()
-                    }
-                }.apply { isDaemon = true }.start()
-            }
-            daemonBtn = b
-            (v as? android.widget.LinearLayout)?.addView(b)
-        }
-        // v1.2.159 修 bug（用户反馈：daemon 不在活动时按钮也亮着）：
-        // 此前这里**立即置 VISIBLE**，而轮询线程在拿不到 token 时会提前 return、
-        // 从不回写可见性 → 按钮永久亮着。现在：先隐藏，只由轮询结果决定显隐。
-        daemonBtn?.visibility = View.GONE
-        scheduleDaemonPoll()
-    }
-
-    private fun cancelDaemonPoll() {
-        daemonPoll?.let { runCatching { mainHandler.removeCallbacks(it) } }
-        daemonPoll = null
-    }
-
-    /** 每 2 秒问一次桥：daemon 有没有在跑任务 → 控制按钮显隐 */
-    private fun scheduleDaemonPoll() {
-        cancelDaemonPoll()
-        val r = Runnable {
-            daemonPoll = null
-            val b = daemonBtn ?: return@Runnable
-            Thread {
-                val active = runCatching {
-                    val tok = app.dsh.mobile.engine.AgentBridge.currentToken()
-                    if (tok == null) false else {
-                        val c = (java.net.URL("http://127.0.0.1:3083/daemon/status")
-                        .openConnection() as java.net.HttpURLConnection).apply {
-                        setRequestProperty("X-DSH-Token", tok)
-                        connectTimeout = 2000; readTimeout = 2000
-                    }
-                        val body = c.inputStream.bufferedReader().readText()
-                        org.json.JSONObject(body).optBoolean("active", false)
-                    }
-                }.getOrDefault(false)
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    if (expandLevel >= 2) b.visibility = if (active) View.VISIBLE else View.GONE
-                    if (expandLevel >= 2) scheduleDaemonPoll()
-                }
-            }.apply { isDaemon = true }.start()
-        }
-        daemonPoll = r
-        mainHandler.postDelayed(r, 2_000L)
     }
 
     fun hide(svc: AccessibilityService?) {
@@ -771,7 +631,7 @@ object StatusOverlay {
                 wm?.removeView(r)
             }
             root = null; params = null; statusText = null; actionText = null; statusDot = null
-            statusScroll = null
+            statusScroll = null; a11yText = null
             hidden = userHidden
             Log.i(TAG, if (userHidden) "overlay hidden by user" else "overlay hidden (auto)")
         }
@@ -779,20 +639,15 @@ object StatusOverlay {
 
     /**
      * 引擎退出时的彻底清理（v1.2.157，用户实测反馈修复）：
-     * 退出引擎后悬浮窗仍在后台——球还挂着、`listRefresh` 每 3 秒继续读会话列表
-     * （引擎已死 → 每次都失败重试）、`idleReset` 定时器也在排着 → 进程持续活跃耗电。
-     * 这里一次清干净：停周期刷新、取消回空闲、移除窗口视图、状态复位。
+     * 退出引擎后悬浮窗仍在后台——球还挂着、`idleReset` 定时器还在排着
+     * → 进程持续活跃耗电。这里一次清干净：取消回空闲、移除窗口视图、状态复位。
      */
     fun teardown(svc: AccessibilityService?) {
         main {
-            stopListRefresh()
             cancelIdleReset()
             working = false
             expandLevel = 0
             autoExpanded = false
-            cancelDaemonPoll()
-            runCatching { daemonBtn?.let { (root as? android.widget.LinearLayout)?.removeView(it) } }
-            daemonBtn = null
             hide(svc)
             Log.i(TAG, "overlay torn down (engine exited)")
         }
@@ -864,9 +719,16 @@ object StatusOverlay {
      * 绕过了档位规则 —— 折叠态下球会被那行字撑成椭圆（实测）。
      */
     private fun refreshActionVisibility() {
+        val expanded = expandLevel >= 1
+        // 动作链：展开态 + 有内容就显示（结束时也保留最后一条，方便回看刚做了什么）
         val a = actionText ?: return
-        a.visibility =
-            if (expandLevel >= 1 && working && a.text.isNotEmpty()) View.VISIBLE else View.GONE
+        a.visibility = if (expanded && a.text.isNotEmpty()) View.VISIBLE else View.GONE
+        // 第三段：会话标题 + 倒计时
+        // 无障碍/打开应用动作链（第④段）：展开态且有内容才显示
+        a11yText?.visibility = if (expanded && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
+        val foot = footRow ?: return
+        val hasFoot = sessionText?.text?.isNotEmpty() == true || elapsedText?.text?.isNotEmpty() == true
+        foot.visibility = if (expanded && hasFoot) View.VISIBLE else View.GONE
     }
 
     /** 排一个「holdMs 后回空闲」，可被后续任何新状态取消 */
@@ -906,28 +768,31 @@ object StatusOverlay {
     }
 
     /**
-     * v1.5.7：无障碍/自动化 POST 的状态走**独立布局**（卡片底部的小条），
-     * 不再调用 setStatus/setAction 覆盖思考链。
+     * 追加一条「无障碍/打开应用」动作（v2.5.6）。
+     *
+     * 与 AI 的工具链分开显示：这里是 App 真的对外做的事——读屏点击/滑动/按键、
+     * 启动或跳转别的 App（微信/支付宝/浏览器…）。连续相同行不重复，只留最近 4 条。
      */
-    fun setNotice(text: String) {
-        val ctx = appCtx ?: return
-        val box = noticeBox ?: return
-        val tv = noticeText ?: return
-        val t = text.trim()
+    fun setA11yAction(line: String) {
+        val t = line.trim().replace(Regex("\\s+"), " ")
+        if (t.isEmpty()) return
         main {
-            if (t.isEmpty()) {
-                box.visibility = View.GONE
-                return@main
-            }
-            tv.text = t
-            noticeUntil = System.currentTimeMillis() + 8_000L
-            box.visibility = if (expandLevel > 0) View.VISIBLE else View.GONE
-            noticeClear?.let { noticeHandler.removeCallbacks(it) }
-            val r = Runnable { runCatching { box.visibility = View.GONE; noticeUntil = 0L } }
-            noticeClear = r
-            noticeHandler.postDelayed(r, 8_000L)
+            if (a11yLines.isNotEmpty() && a11yLines.last() == t) return@main
+            a11yLines.addLast(t)
+            while (a11yLines.size > 4) a11yLines.removeFirst()
+            a11yText?.text = a11yLines.joinToString("\n") { "› " + it }
+            refreshActionVisibility()
             root?.requestLayout()
             root?.let { rv -> params?.let { pr -> wm?.updateViewLayout(rv, pr) } }
+        }
+    }
+
+    /** 新一轮开始或引擎重启时清空无障碍动作链 */
+    fun clearA11yChain() {
+        main {
+            a11yLines.clear()
+            a11yText?.text = ""
+            a11yText?.visibility = View.GONE
         }
     }
 
@@ -987,6 +852,86 @@ object StatusOverlay {
     }
 
     /**
+     * v2.5.5：动作链（展开态第二段）。
+     * 每行形如 `› bash · ls ~/Projects → 完成`，最多 4 行（布局里限制）。
+     * 与思考链**分开**，不再把 `[工具]` 标记塞进思考正文里。
+     */
+    fun setActionChain(text: String) {
+        val t = text.trim().take(600)
+        main {
+            cancelIdleReset()
+            working = true
+            actsText = t
+            actionText?.text = t
+            refreshActionVisibility()
+        }
+    }
+
+    /** v2.5.5：会话标题（展开态第三段左侧）。 */
+    fun setSession(title: String) {
+        val t = title.trim().take(80)
+        main {
+            sessionText?.text = t
+            refreshActionVisibility()
+        }
+    }
+
+    /**
+     * v2.5.5：倒计时（展开态第三段右侧）。
+     *
+     * 进度事件本身有节流/心跳（最长 2.5s 一次），只靠它刷新会看起来"卡住"；
+     * 这里按「工作起始墙钟」在本地每秒 tick，事件只负责校准基准。
+     *
+     * @param seconds 已运行秒数（来自插件 elapsed）
+     * @param running true=还在跑（继续 tick）；false=停止（完成/错误）
+     */
+    fun setElapsed(seconds: Long, running: Boolean) {
+        main {
+            if (seconds <= 0L && !running) {
+                startedAt = 0L
+                stopTicker()
+                elapsedText?.text = ""
+                refreshActionVisibility()
+                return@main
+            }
+            startedAt = System.currentTimeMillis() - seconds * 1000L
+            if (running) startTicker() else stopTicker()
+            updateElapsedText()
+        }
+    }
+
+    private fun updateElapsedText() {
+        val base = startedAt
+        if (base <= 0L) {
+            elapsedText?.text = ""
+            return
+        }
+        val secs = ((System.currentTimeMillis() - base) / 1000L).coerceAtLeast(0L)
+        elapsedText?.text = secs.toString() + "s"
+        refreshActionVisibility()
+    }
+
+    private val tickRunnable = object : Runnable {
+        override fun run() {
+            if (!ticking || startedAt <= 0L) return
+            updateElapsedText()
+            mainHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun startTicker() {
+        if (ticking) return
+        ticking = true
+        mainHandler.removeCallbacks(tickRunnable)
+        mainHandler.postDelayed(tickRunnable, 1000L)
+    }
+
+    private fun stopTicker() {
+        ticking = false
+        runCatching { mainHandler.removeCallbacks(tickRunnable) }
+    }
+
+    /**
      * 回到空闲态（灰色点 + 空闲文案）。
      *
      * ⚠️ v1.2.185（用户反馈「发送之后语音悬浮框收起时会闪一两下」）：
@@ -1008,6 +953,12 @@ object StatusOverlay {
                 statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
                 statusDot?.background?.setTint(COLOR_IDLE)
                 working = false
+                // v2.5.5：空闲时动作链/倒计时都清掉，只留会话标题（展开态仍能看出是哪个会话）
+                actsText = ""
+                actionText?.text = ""
+                startedAt = 0L
+                stopTicker()
+                elapsedText?.text = ""
                 refreshActionVisibility()
                 if (autoExpanded) {
                     autoExpanded = false
@@ -1033,6 +984,11 @@ object StatusOverlay {
                     statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
                     statusDot?.background?.setTint(COLOR_IDLE)
                     working = false
+                    actsText = ""
+                    actionText?.text = ""
+                    startedAt = 0L
+                    stopTicker()
+                    elapsedText?.text = ""
                     refreshActionVisibility()
                     expandLevel = 0
                     applyExpandLevel()
