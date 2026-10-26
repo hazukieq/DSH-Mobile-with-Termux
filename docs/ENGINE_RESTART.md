@@ -69,6 +69,9 @@ restart: the engine will stop/start by itself; do not run another restart
 
 - 引擎每次启动生成新 token，supervisor 从本次启动的 stdout/log 提取 `dsh web: …?token=…`；
 - `MainActivity` 检测 URL 变化后清 cookie/缓存并加载新地址；
+- **返回栈同时清空**（v2.5.11）：重启后第一次 `onPageFinished` 会 `clearHistory()`，否则按 BACK
+  会退回上一个 token 的引擎页或预览页（那些页面连的是已死的引擎，只有白屏）。实测日志
+  `webview history cleared after engine restart; canGoBack=false`，按 BACK 直接退出应用；
 - 若 WebView 显示 `ERR_CONNECTION_REFUSED`，先确认受管引擎是否健康，而不是反复点重启。
 
 ## 5. Agent 应该怎么做

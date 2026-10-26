@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var statusBar: TextView
     private var urlLoaded = false
+    /** 引擎重启后要清一次 WebView 返回栈（见 loadEngineUrlIfNeeded） */
+    private var clearHistoryOnLoad = false
     /** 已经加载过的引擎 URL（含 token）。引擎热更新/重启后 token 会变，据此重载 WebView。 */
     private var loadedWebUrl: String? = null
 
@@ -580,6 +582,14 @@ class MainActivity : Activity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (view == null) return
+                // 引擎重启（token 变了）→ 旧页面的返回栈必须作废：否则 BACK 会退回
+                // 上一个 token 的引擎页/预览页，那些页面连的是已死的引擎，表现为白屏。
+                // 放在最早处：任何分支 return 之前都要清。
+                if (clearHistoryOnLoad) {
+                    clearHistoryOnLoad = false
+                    runCatching { view.clearHistory() }
+                    Log.i("MainActivity", "webview history cleared after engine restart; canGoBack=${view.canGoBack()}")
+                }
                 // 环境自检：把 WebView 版本与关键 API 存在性写进日志，用户报障时一眼定位
                 view.evaluateJavascript(WEBVIEW_SELFCHECK_JS, null)
                 // v1.3.1 补丁（issue #17「选择横屏进入卡死」）：收遮罩必须放在
@@ -964,6 +974,7 @@ class MainActivity : Activity() {
         loadedWebUrl = url
         urlLoaded = true
         if (!firstLoad) {
+            clearHistoryOnLoad = true
             // 引擎重启后 token 变了：旧的 **cookie** 还留在 WebView 里，新引擎会把它
             // 当成无效会话并直接返回纯文本 "dsh web authentication required"
             // （0.2.1 实测：白屏 + 这段文字）。缓存和 cookie 都要清，再带新 token 打开。
