@@ -52,7 +52,7 @@ v2.5.3 的修复方式：
 | 状态 / 设置 / 引擎 | `GET /status`、`GET /settings`、`POST /settings`、`GET /apps`、`GET /process`、`GET /diag`、`GET /plugin/list`、`POST /plugin/install`、`POST /engine/restart`、`POST /notify`、`POST /say`、`GET /say`、`POST /overlay`、`GET /local/status`、`POST /local/ensure`、`GET /daemon/status`、`POST /daemon/stop` |
 | 文件 / 分享 / 媒体 | `POST /open/file`、`POST /open/folder`、`POST /open/share`、`POST /share/text`、`POST /media/play`、`POST /media/pause`、`POST /media/resume`、`POST /media/stop`、`GET /media/status`、`POST /export` |
 | 本 App 自己的窗口 | `GET /app-screenshot`（PixelCopy 抓本进程窗口，不要任何权限） |
-| PTY / 运行时 / WebView / 视觉列表 | `POST /pty/open`、`POST /pty/write`、`POST /pty/resize`、`POST /pty/kill`、`POST /pty/close`、`GET /pty/read`、`GET /runtime/status`、`GET /runtime/feed`、`POST /runtime/pull`、`POST /runtime/stage`、`POST /runtime/apply`、`POST /runtime/rollback`、`POST /webview/open`、`POST /webview/eval`、`POST /webview/action`、`GET /webview/status`、`GET /vision/list` |
+| PTY / 运行时 / 视觉列表 | `POST /pty/open`、`POST /pty/write`、`POST /pty/resize`、`POST /pty/kill`、`POST /pty/close`、`GET /pty/read`、`GET /runtime/status`、`GET /runtime/feed`、`POST /runtime/pull`、`POST /runtime/stage`、`POST /runtime/apply`、`POST /runtime/rollback`、`GET /vision/list` |
 | 记忆记账（不读屏） | `GET /memory/list`、`GET /memory/stats`、`POST /memory/confirm`、`POST /memory/clear` |
 
 「不需要」也覆盖这些端点背后的普通 Android 行为：`startActivity`、`Intent`/App Link 派发、
@@ -125,7 +125,7 @@ SAF/DocumentsProvider 文件访问、读写本 App 设置。
 ## 8. 维护流程（新增/改动端点必须走）
 
 1. 先读 handler（以及它调用的 helper，可能跨 `DshAccessibilityService.kt`、`ScreenOcr.kt`、
-   `Framer.kt`、`VisionTracker.kt`、`WebAutomation.kt`、`ShotFallback.kt`），确认是否真的用了 svc。
+   `Framer.kt`、`VisionTracker.kt`、`ShotFallback.kt`），确认是否真的用了 svc。
 2. 判为依赖 → 在 `A11Y_DEPENDENT_REASONS` 加一条人读原因；判为不依赖/条件依赖 → 不进表。
 3. 同步更新本文 §2/§3/§5。
 4. 自检：

@@ -169,13 +169,6 @@
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <activity
-            android:name=".WebActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:hardwareAccelerated="true"
-            android:theme="@style/Theme.Dsh" />
-
-        <activity
             android:name=".VoiceServiceActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />

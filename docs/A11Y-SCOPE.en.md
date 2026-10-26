@@ -58,7 +58,7 @@ them, and do not stall a task because of them.
 | Status / settings / engine | `GET /status`, `GET /settings`, `POST /settings`, `GET /apps`, `GET /process`, `GET /diag`, `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `POST /notify`, `POST /say`, `GET /say`, `POST /overlay`, `GET /local/status`, `POST /local/ensure`, `GET /daemon/status`, `POST /daemon/stop` |
 | Files / share / media | `POST /open/file`, `POST /open/folder`, `POST /open/share`, `POST /share/text`, `POST /media/play`, `POST /media/pause`, `POST /media/resume`, `POST /media/stop`, `GET /media/status`, `POST /export` |
 | Our own window | `GET /app-screenshot` (PixelCopy of this process's window; needs no permission) |
-| PTY / runtime / WebView / vision registry | `POST /pty/open`, `POST /pty/write`, `POST /pty/resize`, `POST /pty/kill`, `POST /pty/close`, `GET /pty/read`, `GET /runtime/status`, `GET /runtime/feed`, `POST /runtime/pull`, `POST /runtime/stage`, `POST /runtime/apply`, `POST /runtime/rollback`, `POST /webview/open`, `POST /webview/eval`, `POST /webview/action`, `GET /webview/status`, `GET /vision/list` |
+| PTY / runtime / vision registry | `POST /pty/open`, `POST /pty/write`, `POST /pty/resize`, `POST /pty/kill`, `POST /pty/close`, `GET /pty/read`, `GET /runtime/status`, `GET /runtime/feed`, `POST /runtime/pull`, `POST /runtime/stage`, `POST /runtime/apply`, `POST /runtime/rollback`, `GET /vision/list` |
 | Memory bookkeeping (no screen read) | `GET /memory/list`, `GET /memory/stats`, `POST /memory/confirm`, `POST /memory/clear` |
 
 "Never needs it" also covers the plain-Android behaviour behind these endpoints: `startActivity`,
@@ -144,7 +144,7 @@ cause and how to fix it.
 ## 8. Maintenance flow (required for any endpoint add/change)
 
 1. Read the handler (and the helpers it calls — they may live in `DshAccessibilityService.kt`,
-   `ScreenOcr.kt`, `Framer.kt`, `VisionTracker.kt`, `WebAutomation.kt`, `ShotFallback.kt`) and
+   `ScreenOcr.kt`, `Framer.kt`, `VisionTracker.kt`, `ShotFallback.kt`) and
    confirm whether it really uses `svc`.
 2. Dependent → add a human-readable reason to `A11Y_DEPENDENT_REASONS`; independent/conditional →
    keep it out of the table.

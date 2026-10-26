@@ -271,21 +271,6 @@ There is no display server. Start a server with **node** (`node:http`, or a pure
 
 Do not bind, proxy onto, or squat 3080 / 3083 — those are the engine's WebUI and the app's capability bridge. Binding either breaks the app silently. Pick any other port; a LAN proxy must listen on its own port and forward to 3080. If a scan shows them listening, that is the app itself — leave them alone. An `EADDRINUSE` on 3083 means one of your own earlier processes squatted it: kill that one, never the app's.
 
-## Embedded debug browser (WebActivity)
-
-For web debugging/automation the app ships a fully-permissive WebView activity:
-
-- Launch: `POST /activity {"name":"web","url":"https://…","desktop":false,"insecure":false,"ua":"…"}`
-  or `POST /webview/open` with the same fields (`file` can pre-set a file-input answer).
-- Control: `GET /webview/status` (url/title/progress/canGoBack…), `POST /webview/eval
-  {"js":"document.title"}`, `POST /webview/action {"action":"back|forward|reload|stop|close|clear"}`.
-- In-page bridge: `window.DshWeb.info() / open(url) / close() / currentUrl() / log(msg)`.
-- WebView DevTools is always enabled (`webview_devtools_remote_<app pid>`), so CDP-level DOM/network
-  automation works; JS, DOM storage, cookies, third-party cookies, media autoplay, mixed content and
-  file/content access are all enabled. Camera/mic/geolocation prompts are granted automatically.
-- SSL: localhost/127.0.0.1/*.local are allowed; other self-signed hosts require `"insecure":true`.
-- Downloads go through the system DownloadManager (visible in Downloads).
-
 ## Android powers: notifications and screen control
 
 The documented environment already puts `scr`, `loop`, `notify`, and `say` on your PATH; run them directly. They authenticate to the app bridge internally. There is normally no need to hunt for the bridge token, curl port 3083, inspect wrapper scripts, or list `$PREFIX/bin`. If a command really is missing, install it with `pkg install -y <name>` (see Using Termux).
@@ -364,7 +349,7 @@ Never need it (keep working; never ask the user to enable accessibility for them
   `POST /overlay` (progress overlay; it may fall back to an a11y window but does not require it);
 - app/engine control: `GET /status`, `GET /settings`, `GET /apps`, `GET /process`, `GET /diag`,
   `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`,
-  `/webview/*`, `native status|settings|set`, `dsh-update`;
+  `native status|settings|set`, `dsh-update`;
 - our own window: `GET /app-screenshot` (`appshot` / `dsh-mobile appshot`, PixelCopy - no a11y,
   no CDP);
 - memory bookkeeping: `GET /memory/list`, `GET /memory/stats`, `POST /memory/confirm`,

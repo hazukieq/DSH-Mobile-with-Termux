@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v62 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v63 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -85,7 +85,7 @@ as blocked because it is off:
   `POST /overlay` (progress overlay; SYSTEM_ALERT_WINDOW first, a11y window only as fallback);
 - app/engine control: `GET /status`, `GET /settings`, `GET /apps`, `GET /process`, `GET /diag`,
   `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`,
-  `/webview/*`, `native status|settings|set`, `dsh-update`;
+  `native status|settings|set`, `dsh-update`;
 - our own window: `GET /app-screenshot` (`appshot` — PixelCopy; no accessibility, no CDP);
 - memory bookkeeping: `GET /memory/list`, `GET /memory/stats`, `POST /memory/confirm`,
   `POST /memory/clear`;
@@ -107,7 +107,7 @@ route around it — user taps/reads, `/launch` + `wait-app com.termux` hand-off,
 own window, `notify`/`say` for output. Never retry a non-retryable a11y error and never re-probe
 before each action: one `GET /status` at the start of a UI task is enough.
 
-## Full native API: AgentBridge (84 paths, 86 method+path pairs)
+## Full native API: AgentBridge (80 paths, 82 method+path pairs)
 
 Everything the app can do natively is exposed over `127.0.0.1:3083`; use
 `dsh-mobile bridge <GET|POST> <path> [json]` so the token is handled for you, e.g.

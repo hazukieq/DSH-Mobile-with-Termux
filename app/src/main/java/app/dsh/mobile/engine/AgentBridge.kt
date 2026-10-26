@@ -11,8 +11,6 @@ import android.os.Build
 import android.util.Log
 import app.dsh.mobile.DshAccessibilityService
 import app.dsh.mobile.DshApp
-import app.dsh.mobile.WebActivity
-import app.dsh.mobile.WebAutomation
 import app.dsh.mobile.OrientationMode
 import app.dsh.mobile.OrientationPrefs
 import app.dsh.mobile.R
@@ -566,10 +564,6 @@ object AgentBridge {
             method == "GET" && path == "/settings" -> settingsGet()
             method == "POST" && path == "/settings" -> settingsSet(body)
             method == "POST" && path == "/activity" -> openActivity(body)
-            method == "POST" && path == "/webview/open" -> webviewOpen(ctx, body)
-            method == "POST" && path == "/webview/eval" -> webviewEval(body)
-            method == "POST" && path == "/webview/action" -> webviewAction(body)
-            method == "GET" && path == "/webview/status" -> 200 to WebAutomation.status().toString()
             method == "POST" && path == "/media/play" -> mediaPlay(ctx, body)
             method == "POST" && path == "/media/pause" -> mediaPause(ctx)
             method == "POST" && path == "/media/resume" -> mediaResume(ctx)
@@ -2542,55 +2536,12 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 之后 350ms 回读 [AppState.resumedActivityName]：如果前台 Activity 没变，说明系统以
      * BAL 拦下了后台启动（或用户切走了），回执会如实说明，而不是假 ok。
      */
-    /**
-     * v2.5.0：内嵌调试/自动化浏览器。
-     * POST /webview/open {"url":"...","desktop":false,"insecure":false,"ua":"..."}
-     */
-    private fun webviewOpen(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val url = obj.optString("url").ifBlank { "about:blank" }
-        val ok = WebAutomation.launch(
-            ctx, url,
-            desktop = obj.optBoolean("desktop", false),
-            insecure = obj.optBoolean("insecure", false),
-            ua = obj.optString("ua").takeIf { it.isNotBlank() },
-            filePath = obj.optString("file").takeIf { it.isNotBlank() },
-        )
-        return if (ok) 200 to JSONObject().put("ok", true).put("url", url)
-            .put("hint", "GET /webview/status, POST /webview/eval, POST /activity {name:web,url:...}").toString()
-        else 500 to """{"ok":false,"error":"cannot launch WebActivity"}"""
-    }
-
-    /** POST /webview/eval {"js":"...","timeoutMs":4000} → {ok,value} */
-    private fun webviewEval(body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val js = obj.optString("js")
-        if (js.isBlank()) return 400 to """{"ok":false,"error":"js required"}"""
-        val timeout = obj.optLong("timeoutMs", 4000L).coerceIn(200L, 20_000L)
-        val (ok, value) = WebAutomation.eval(js, timeout)
-        return if (ok) 200 to JSONObject().put("ok", true).put("value", value).toString()
-        else 504 to JSONObject().put("ok", false).put("error", value).toString()
-    }
-
-    /** POST /webview/action {"action":"back|forward|reload|stop|close|clear"} */
-    private fun webviewAction(body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val action = obj.optString("action")
-        if (action.isBlank()) return 400 to """{"ok":false,"error":"action required"}"""
-        val (ok, msg) = WebAutomation.action(action)
-        return if (ok) 200 to JSONObject().put("ok", true).put("action", action).toString()
-        else 400 to JSONObject().put("ok", false).put("error", msg).toString()
-    }
-
     private fun openActivity(body: String): Pair<Int, String> {
         val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val wanted = obj.optString("name").ifBlank { obj.optString("activity") }
-        if (wanted.isBlank()) return 400 to """{"ok":false,"error":"name required (main|settings|terminal|web|overlay-settings|accessibility-settings|<Class>)"}"""
+        if (wanted.isBlank()) return 400 to """{"ok":false,"error":"name required (main|settings|terminal|overlay-settings|accessibility-settings|<Class>)"}"""
 
         // 系统设置页（可选建议的落地入口）：打开系统界面，帮助用户授予悬浮窗/无障碍。
         // 这些**只是建议**：没授予也完整可用，走 notify / 用户切前台 的兜底。
@@ -2603,7 +2554,6 @@ document.getElementById('api').textContent = checks.map(function(c){
             "main", "home" -> app.dsh.mobile.MainActivity::class.java
             "settings" -> app.dsh.mobile.SettingsActivity::class.java
             "terminal", "term" -> app.dsh.mobile.term.TerminalActivity::class.java
-            "web", "webview", "browser" -> app.dsh.mobile.WebActivity::class.java
             else -> runCatching {
                 val full = if (wanted.contains('.')) wanted else "app.dsh.mobile.$wanted"
                 Class.forName(full).asSubclass(android.app.Activity::class.java)
@@ -2634,13 +2584,6 @@ document.getElementById('api').textContent = checks.map(function(c){
                 }
             }
             obj.optString("action").takeIf { it.isNotBlank() && cls != null }?.let { intent.action = it }
-            if (cls == app.dsh.mobile.WebActivity::class.java) {
-                obj.optString("url").takeIf { it.isNotBlank() }?.let { intent.putExtra("url", it) }
-                intent.putExtra("desktop", obj.optBoolean("desktop", false))
-                intent.putExtra("insecure", obj.optBoolean("insecure", false))
-                obj.optString("ua").takeIf { it.isNotBlank() }?.let { intent.putExtra("ua", it) }
-                obj.optString("file").takeIf { it.isNotBlank() }?.let { intent.putExtra("file", it) }
-            }
             ctx.startActivity(intent)
             // 等待「真的发生」：本 App 的页面看 resume 回调；系统页面看本 App 是否离开了前台。
             var resumedAfter: String? = if (alreadyOpen) cls!!.name else null
