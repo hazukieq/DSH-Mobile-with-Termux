@@ -44,6 +44,34 @@
              queryIntentServices(带 setComponent) 需要**包名级**可见性。
              缺它会表现为：语音服务页选不到插件、指定了也不生效。 -->
         <package android:name="app.dsh.asr" />
+        <!-- 跨 App 跳转/支付的可见性（v2.5.7）：不声明时 resolveActivity() 在 Android 11+
+             对「用户后装的微信/支付宝」返回 null，表现为 /open 报 no handler for uri。 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="weixin" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="alipays" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="alipayqr" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="intent" />
+        </intent>
+        <package android:name="com.tencent.mm" />
+        <package android:name="com.eg.android.AlipayGphone" />
     </queries>
 
     <application

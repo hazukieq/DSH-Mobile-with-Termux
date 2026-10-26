@@ -3424,7 +3424,7 @@ document.getElementById('api').textContent = checks.map(function(c){
         val action = obj.optString("action").ifBlank {
             if (uri.isNotBlank()) android.content.Intent.ACTION_VIEW else ""
         }
-        val waitMs = obj.optInt("waitMs", 900).coerceIn(0, 5000)
+        val waitMs = obj.optInt("waitMs", 2000).coerceIn(0, 8000)
         if (component.isBlank() && uri.isBlank() && pkg.isBlank()) {
             return 400 to """{"ok":false,"error":"need 'uri', 'package' or 'component'"}"""
         }
@@ -3449,24 +3449,48 @@ document.getElementById('api').textContent = checks.map(function(c){
                 applyIntentExtras(intent, obj)
                 startWithFlags(ctx, intent, obj, chooser = false)
             } else if (uri.isNotBlank()) {
-                val u = runCatching { android.net.Uri.parse(uri) }.getOrNull()
-                    ?: return 400 to """{"ok":false,"error":"bad uri: $uri"}"""
-                launched = uri
-                val intent = android.content.Intent().apply {
-                    if (action.isNotBlank()) this.action = action
-                    data = u
-                    if (target.isNotBlank()) setPackage(target)
+                // intent://...;#Intent;scheme=weixin;package=com.tencent.mm;end
+                // —— 网页/支付回调最常给的就是这种格式，先按 URI_INTENT_SCHEME 解析。
+                val intent: android.content.Intent
+                if (uri.startsWith("intent:", ignoreCase = true)) {
+                    intent = runCatching {
+                        android.content.Intent.parseUri(uri, android.content.Intent.URI_INTENT_SCHEME)
+                    }.getOrNull() ?: return 400 to
+                        """{"ok":false,"error":"bad intent uri: $uri"}"""
+                } else {
+                    val effective = paymentSchemeFor(uri)
+                    val u = runCatching { android.net.Uri.parse(effective) }.getOrNull()
+                        ?: return 400 to """{"ok":false,"error":"bad uri: $uri"}"""
+                    intent = android.content.Intent().apply {
+                        if (action.isNotBlank()) this.action = action
+                        data = u
+                    }
+                    if (effective != uri) Log.i(TAG, "open: rewrote $uri -> $effective")
                 }
+                if (target.isNotBlank()) intent.setPackage(target)
                 applyIntentExtras(intent, obj)
+                launched = uri
+                // 可见性只决定「能否提前解析」，不决定「能否启动」：
+                // 解析不到也先真启动一次，把 ActivityNotFoundException 变成可读的 404。
                 val resolved = runCatching {
                     ctx.packageManager.resolveActivity(
                         intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
                     )
                 }.getOrNull()
-                if (resolved == null && target.isBlank()) {
-                    return 404 to """{"ok":false,"error":"no handler for uri: $uri","hint":"pass package/targetPackage to target a specific app, or install the app first"}"""
+                try {
+                    startWithFlags(ctx, intent, obj, obj.optBoolean("chooser"))
+                } catch (e: android.content.ActivityNotFoundException) {
+                    return 404 to JSONObject().put("ok", false)
+                        .put("error", "no handler for uri: $uri")
+                        .put(
+                            "hint", "nothing on this phone can open that scheme; install the app " +
+                                "(WeChat for weixin://, Alipay for alipays://) or pass package/targetPackage"
+                        ).toString()
                 }
-                startWithFlags(ctx, intent, obj, obj.optBoolean("chooser"))
+                if (resolved == null) {
+                    // 没解析到但启动成功：多见于包可见性受限的自定义 scheme
+                    Log.i(TAG, "open: started $uri without a resolved handler (visibility)")
+                }
             } else {
                 val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
                     ?: return 404 to """{"ok":false,"error":"no launchable activity for package '$pkg'"}"""
@@ -3507,14 +3531,40 @@ document.getElementById('api').textContent = checks.map(function(c){
                             "the launch was dispatched but unverified. Enable DSH Mobile Helper " +
                             "to get before/after, or use /wait-app once it is on."
                     } else {
-                        "foreground did not change: the target app may show an in-app/h5 page, " +
-                            "a chooser dialog may be waiting, or Android blocked the start " +
-                            "(keep the app in the foreground and retry). Use `scr wait-app <pkg>` " +
-                            "before screenshotting."
+                        "foreground did not change within ${waitMs}ms: the target may still be " +
+                            "cold-starting (WeChat/Alipay take 2-4s), it may show an in-app/h5 " +
+                            "page, or a chooser is waiting. Retry with a larger waitMs or use " +
+                            "`scr wait-app <pkg>` before screenshotting."
                     }
                 )
             }
         }.toString()
+    }
+
+    /**
+     * 支付链接的 scheme 改写：支付宝的网页收款码/收款链接必须走 alipays:// 才会落到 App 里，
+     * 直接用 https:// 打开只会得到「请用支付宝扫码」的网页。
+     *
+     *   https://qr.alipay.com/<code>        -> alipays://platformapi/startapp?appId=20000067&url=<encoded>
+     *   https://render.alipay.com/p/...     -> 同上
+     *   https://mclient.alipay.com/...      -> 同上
+     *
+     * 微信支付链接（https://wx.tenpay.com/...）无法在微信内直接打开，保持原样交给浏览器；
+     * 微信自己的 deep link（weixin://wxpay/... 、weixin://dl/business/...）原样透传。
+     */
+    private fun paymentSchemeFor(uri: String): String {
+        val u = runCatching { android.net.Uri.parse(uri) }.getOrNull() ?: return uri
+        if (!u.scheme.equals("https", ignoreCase = true) &&
+            !u.scheme.equals("http", ignoreCase = true)
+        ) {
+            return uri
+        }
+        val host = u.host.orEmpty().lowercase()
+        val alipay = host == "qr.alipay.com" || host == "render.alipay.com" ||
+            host == "mclient.alipay.com" || host.endsWith(".alipay.com")
+        if (!alipay) return uri
+        return "alipays://platformapi/startapp?appId=20000067&url=" +
+            android.net.Uri.encode(uri)
     }
 
     private fun startWithFlags(
