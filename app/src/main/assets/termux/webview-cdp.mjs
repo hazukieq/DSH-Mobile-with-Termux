@@ -461,72 +461,313 @@ async function cmdEval(expr) {
 async function cdpTarget() {
   const pick = await findSocket() || die('no devtools socket; enable debugging and restart the app first');
   const target = firstPage(await listTargets(pick.name));
+  // 每条命令都落一行 target 摘要：WebView 重载后如果挂到了旧 page，
+  // 点击会「成功但页面没反应」，只靠坐标没法归因。
+  try {
+    process.stderr.write('[cdp] target ' + (target.id || '?') + ' ' + String(target.url || '').slice(0, 48) + '\n');
+  } catch {}
   return { pick, target };
 }
 
-/** Real mouse click at viewport coordinates (Input domain, not element.click()). */
-async function mouseClick(pick, target, x, y, { touch = false } = {}) {
-  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' });
-  if (touch) {
-    await cdpCall(pick.name, target, 'Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-    await cdpCall(pick.name, target, 'Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * 移动优先的点击通道（2026-10-27 修）。
+ *
+ * 背景：Android WebView 里页面是**触摸**语义的（移动 UI 的抽屉/会话行来自 React，真实手指
+ * 能导航，而纯鼠标事件只带 hover 高亮），所以 click 默认走触摸，按可靠度依次降级：
+ *   ① Input.dispatchTouchEvent（touchStart/touchEnd，带 id —— 缺 id 或上一次手势没收尾会报
+ *      "Must send a TouchStart first to start a new touch"）
+ *   ② Input.emulateTouchFromMouseEvent（DevTools 设备模拟用的老通道，WebView 支持）
+ *   ③ 纯鼠标事件（桌面站点/只想 hover 时用 --mouse 显式指定）
+ * 返回实际用到的通道名，回执里的 `input` 字段可用来判断"点了没反应"是不是通道问题。
+ * 每步都落一行 stderr，便于把"点不动"归因到具体动作（bug report 建议 7）。
+ */
+async function dispatchTap(pick, target, x, y) {
+  const cx = Math.round(x), cy = Math.round(y);
+  const log = (channel, extra) => {
+    try { process.stderr.write('[cdp] tap ' + cx + ',' + cy + ' via ' + channel + (extra ? ' (' + extra + ')' : '') + '\n'); } catch {}
+  };
+  // 顺序很重要（2026-10-27 真机实测）：Android WebView 的 dispatchTouchEvent 常被拒
+  // （"Must send a TouchStart first to start a new touch."，touchStart 也可能是半成功），
+  // 而 emulateTouchFromMouseEvent 稳定产生 pointerType=touch，抽屉/会话行会真正导航。
+  // 所以先用它，失败再试 dispatchTouchEvent，最后退纯鼠标。
+  try {
+    await cdpCall(pick.name, target, 'Input.emulateTouchFromMouseEvent', {
+      type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1, deltaX: 0, deltaY: 0,
+    });
+    await sleep(50);
+    await cdpCall(pick.name, target, 'Input.emulateTouchFromMouseEvent', {
+      type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1, deltaX: 0, deltaY: 0,
+    });
+    log('emulated-touch');
+    return 'emulated-touch';
+  } catch (e) {
+    try {
+      await cdpCall(pick.name, target, 'Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [{ x: cx, y: cy, id: 1, radiusX: 2, radiusY: 2, force: 1 }],
+      });
+      await sleep(50);
+      await cdpCall(pick.name, target, 'Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      log('touch', e.message);
+      return 'touch';
+    } catch (e2) {
+      try { await cdpCall(pick.name, target, 'Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] }); } catch {}
+      await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1 });
+      await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1 });
+      log('mouse', (e.message + ' / ' + e2.message).slice(0, 120));
+      return 'mouse';
+    }
   }
-  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
 }
+
+/** 纯鼠标点击（hover 菜单、桌面模式页面用；移动抽屉不响应鼠标的导航）。 */
+async function mouseOnlyClick(pick, target, x, y) {
+  const cx = Math.round(x), cy = Math.round(y);
+  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: cx, y: cy, button: 'none' });
+  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1 });
+  await cdpCall(pick.name, target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1 });
+}
+
+/** 点击入口：默认触摸（移动 UI），mouse=true 时退回纯鼠标。 */
+async function clickAt(pick, target, x, y, { mouse = false } = {}) {
+  if (mouse) { await mouseOnlyClick(pick, target, x, y); return 'mouse'; }
+  return await dispatchTap(pick, target, x, y);
+}
+
+
+const VISIBLE_JS = `(el) => {
+  if (!el || !el.isConnected) return null;
+  if (el.closest && el.closest('[aria-hidden="true"]')) return null;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return null;
+  if (el.closest && el.closest('#dshm-scrim, #dshm-info-scrim')) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return null;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  // 必须在视口内：否则坐标可能像 y=-3294 这样落在屏幕外，点了等于没点
+  if (r.bottom <= 0 || r.right <= 0 || r.top >= vh || r.left >= vw) return null;
+  return r;
+}`;
 
 const elementProbe = (selector) => `(() => {
   const el = document.querySelector(${JSON.stringify(selector)});
   if (!el) return null;
-  const r = el.getBoundingClientRect();
-  if (r.width < 2 || r.height < 2) return { visible: false };
-  return { visible: true, x: r.x + r.width / 2, y: r.y + r.height / 2,
+  const visible = (${VISIBLE_JS});
+  const r = visible(el);
+  if (!r) return { visible: false };
+  const cx = Math.min(Math.max(r.x + r.width / 2, 0), window.innerWidth - 1);
+  const cy = Math.min(Math.max(r.y + r.height / 2, 0), window.innerHeight - 1);
+  return { visible: true, x: cx, y: cy,
            tag: el.tagName, label: el.getAttribute('aria-label') || '', text: (el.textContent || '').trim().slice(0, 40) };
 })()`;
 
-async function cmdClick(selector, touch) {
-  if (!selector) die('usage: dsh-mobile cdp click <css-selector>');
+async function cmdClick(selector, mouse, { touch = false } = {}) {
+  if (!selector) die('usage: dsh-mobile cdp click <css-selector> [--mouse] [--touch]');
   const { pick, target } = await cdpTarget();
   const hit = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: elementProbe(selector), returnByValue: true });
   const info = hit.result && hit.result.value;
   if (!info) die('click: no element matches ' + selector);
   if (!info.visible) die('click: element is not visible: ' + selector);
-  await mouseClick(pick, target, info.x, info.y, { touch });
-  console.log(JSON.stringify({ ok: true, clicked: selector, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag, label: info.label, text: info.text, instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
+  // 默认 DOM click（2026-10-27 真机实测）：App 内的 CDP Input 通道会「回执成功但页面收不到
+  // 事件」——同一段代码从宿主直连同坐标却正常，抽屉点不动就是这么来的。DOM click 交给
+  // React 自己处理，确定性高；需要真手势（地图/画布/自定义 pointer 逻辑）时显式 --touch。
+  let input;
+  if (!touch && !mouse) {
+    const dexpr = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el || !el.click) return false; el.click(); return true; })()`;
+    const r = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: dexpr, returnByValue: true });
+    input = (r.result && r.result.value) ? 'dom-click' : await clickAt(pick, target, info.x, info.y, { mouse });
+  } else {
+    input = await clickAt(pick, target, info.x, info.y, { mouse });
+  }
+  console.log(JSON.stringify({ ok: true, clicked: selector, at: [Math.round(info.x), Math.round(info.y)], input, tag: info.tag, label: info.label, text: info.text, instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
 }
 
-async function cmdClickText(text, exact) {
-  if (!text) die('usage: dsh-mobile cdp click-text <text> [--exact]');
+async function cmdClickText(text, exact, mouse, { any = false, waitMs = 1500, touch = false } = {}) {
+  if (!text) die('usage: dsh-mobile cdp click-text <text> [--exact] [--any] [--wait-ms N] [--touch]');
   const { pick, target } = await cdpTarget();
   const expr = `(() => {
     const wanted = ${JSON.stringify(text)}; const exact = ${exact ? 'true' : 'false'};
-    const els = [...document.querySelectorAll('button,[role=menuitem],[role=menuitemradio],[role=option],[role=tab],a,[role=button],span,div')];
+    const ANY = ${any ? 'true' : 'false'};
+    const visible = (${VISIBLE_JS});
+    const CLICKABLE = 'button,[role=menuitem],[role=menuitemradio],[role=option],[role=tab],[role=button],a';
+    const els = [...document.querySelectorAll(CLICKABLE + ',span,div,label,li')];
     let best = null;
     for (const el of els) {
       const t = (el.textContent || '').trim();
       if (!t) continue;
       const ok = exact ? t === wanted : t.includes(wanted);
       if (!ok) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width < 4 || r.height < 4) continue;
-      const area = r.width * r.height;
-      if (!best || area < best.area) best = { area, x: r.x + r.width / 2, y: r.y + r.height / 2, tag: el.tagName, text: t.slice(0, 60) };
+      // 默认只接受「像按钮标签」的短文本：聊天气泡里引用同样的词时，textContent 会很长
+      // （实测 133 字），会把导航项挤掉。--any 关闭这个限制（要点正文里的一段话时用）。
+      if (!ANY && t.length > wanted.length + 60) continue;
+      const r = visible(el);
+      if (!r) continue;                       // 屏幕外 / 隐藏 / 被 scrim 盖住的一律跳过
+      // 优先点「可点击祖先」而不是里面那个 span：抽屉行就是 <button><span>文字</span></button>
+      const clickableEl = (el.closest && el.closest(CLICKABLE)) || el;
+      const cr = visible(clickableEl) || r;
+      const area = cr.width * cr.height;
+      // 打分（2026-10-27 修）：先说 aria-label 完全一致的（抽屉行的 aria-label 就是条目名），
+      // 再说文字长度贴近 wanted 的（避免匹配到含关键词的整段聊天气泡），最后才是面积。
+      const ariaExact = (clickableEl.getAttribute && clickableEl.getAttribute('aria-label') === wanted)
+        || (el.getAttribute && el.getAttribute('aria-label') === wanted);
+      const lenPenalty = Math.max(0, t.length - wanted.length) * 50;
+      const score = (ariaExact ? 0 : 100000) + lenPenalty + area / 100 + (clickableEl === el ? 500 : 0);
+      if (!best || score < best.score) {
+        best = { score, x: Math.min(Math.max(cr.x + cr.width / 2, 0), window.innerWidth - 1),
+                 y: Math.min(Math.max(cr.y + cr.height / 2, 0), window.innerHeight - 1),
+                 tag: clickableEl.tagName, text: t.slice(0, 60) };
+      }
     }
+    if (best) delete best.score;
     return best;
   })()`;
-  const hit = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: expr, returnByValue: true });
-  const info = hit.result && hit.result.value;
+  const deadline = Date.now() + Math.max(0, waitMs);
+  let info = null;
+  for (;;) {
+    const hit = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: expr, returnByValue: true });
+    info = hit.result && hit.result.value;
+    if (info || Date.now() >= deadline) break;
+    await sleep(120);   // 抽屉/面板可能是动画中或刚被流式渲染推翻，短暂重试而不是立刻放弃
+  }
   if (!info) die('click-text: nothing visible contains ' + JSON.stringify(text));
-  await mouseClick(pick, target, info.x, info.y);
-  console.log(JSON.stringify({ ok: true, clickedText: info.text, at: [Math.round(info.x), Math.round(info.y)], tag: info.tag, instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
+  // 默认 DOM click（理由同 cmdClick）：命中的是 React 按钮，真点一次 clic() 最稳。
+  let input;
+  if (!touch && !mouse) {
+    const dexpr = `(() => {
+      const wanted = ${JSON.stringify(text)}; const exact = ${exact ? 'true' : 'false'};
+      const ANY2 = ${any ? 'true' : 'false'};
+      const visible = (${VISIBLE_JS});
+      const CLICKABLE = 'button,[role=menuitem],[role=menuitemradio],[role=option],[role=tab],[role=button],a';
+      const els = [...document.querySelectorAll(CLICKABLE + ',span,div,label,li')];
+      let best = null;
+      for (const el of els) {
+        const t = (el.textContent || '').trim(); if (!t) continue;
+        const ok = exact ? t === wanted : t.includes(wanted); if (!ok) continue;
+        if (!ANY2 && t.length > wanted.length + 60) continue;
+        const ce = (el.closest && el.closest(CLICKABLE)) || el;
+        const r = ce.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) continue;
+        const aria = ce.getAttribute && ce.getAttribute('aria-label') === wanted;
+        const score = (aria ? 0 : 100000) + Math.max(0, t.length - wanted.length) * 50 + (r.width * r.height) / 100;
+        if (!best || score < best.score) best = { score, el: ce };
+      }
+      if (!best || !best.el.click) return false;
+      best.el.click();
+      return true;
+    })()`;
+    const r = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: dexpr, returnByValue: true });
+    input = (r.result && r.result.value) ? 'dom-click' : await clickAt(pick, target, info.x, info.y, { mouse });
+  } else {
+    input = await clickAt(pick, target, info.x, info.y, { mouse });
+  }
+  console.log(JSON.stringify({ ok: true, clickedText: info.text, at: [Math.round(info.x), Math.round(info.y)], input, tag: info.tag, instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
+}
+
+/**
+ * 打开抽屉（幂等）：`cdp click 'button[aria-label="菜单"]'` 是 **toggle** —— 抽屉已经开着时
+ * 再点一下就关掉，随后 click-text 只能匹配到页面正文（常见于连续两轮自动化）。
+ * 这里先看"收起侧边栏"按钮在不在，开着就直接返回 already_open。
+ */
+async function cmdDrawer() {
+  const { pick, target } = await cdpTarget();
+  const probe = `(() => {
+    const openBtn = document.querySelector('button[aria-label="收起侧边栏"]');
+    const visible = (${VISIBLE_JS});
+    if (openBtn && visible(openBtn)) return { open: true };
+    const m = document.querySelector('button[aria-label="菜单"]');
+    const r = m && visible(m);
+    return r ? { open: false, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) } : { open: false };
+  })()`;
+  const res = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: probe, returnByValue: true });
+  const info = res.result && res.result.value;
+  if (!info) die('drawer: probe failed');
+  if (info.open) {
+    console.log(JSON.stringify({ ok: true, drawer: 'already_open', verify: 'none' }));
+    return;
+  }
+  if (info.x === undefined) die('drawer: 菜单 button not found/visible');
+  const input = await clickAt(pick, target, info.x, info.y);
+  // 自证：等抽屉真的出现再报 opened。之前「点了」就报 opened，抽屉没开也照样说成功，
+  // 下游 click-text 会在关着的抽屉里找条目（真机 01:02 现场）。
+  const check = `(() => {
+    const b = document.querySelector('button[aria-label="收起侧边栏"]');
+    const r = b && b.getBoundingClientRect();
+    const ok = !!(b && r.width >= 2 && r.height >= 2 && r.right > 0 && r.left < innerWidth);
+    return { ok, ready: document.readyState, url: location.href.slice(0, 60) };
+  })()`;
+  let verify = null;
+  for (let i = 0; i < 10; i++) {
+    await sleep(80);
+    const r = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: check, returnByValue: true });
+    verify = r.result && r.result.value;
+    if (verify && verify.ok) break;
+  }
+  if (!verify || !verify.ok) {
+    // 兜底：CDP 的 Input 域在真机上偶尔「调用成功但页面收不到」（01:02 现场）。
+    // 直接派发 DOM click 给 React 按钮，抽屉一样会开——先保证导航可用，再谈事件真实性。
+    const domClick = `(() => {
+      const m = document.querySelector('button[aria-label="菜单"]');
+      if (!m) return { ok: false, why: 'no menu button' };
+      m.click();
+      return { ok: true };
+    })()`;
+    try {
+      await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: domClick, returnByValue: true });
+      for (let i = 0; i < 10; i++) {
+        await sleep(80);
+        const r = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: check, returnByValue: true });
+        verify = r.result && r.result.value;
+        if (verify && verify.ok) {
+          console.log(JSON.stringify({ ok: true, drawer: 'opened', at: [info.x, info.y], input: input + '+dom-click', verified: true,
+            note: 'CDP 触摸没生效，已用 DOM click 兜底' }));
+          return;
+        }
+      }
+    } catch (e) {}
+    console.log(JSON.stringify({ ok: false, drawer: 'not_opened', at: [info.x, info.y], input,
+      page: { url: (verify && verify.url) || null, ready: (verify && verify.ready) || null },
+      hint: '触摸与 DOM click 都没打开抽屉：确认 App 在前台、WebView 没在重载' }));
+    process.exit(1);
+  }
+  console.log(JSON.stringify({ ok: true, drawer: 'opened', at: [info.x, info.y], input, verified: true }));
+}
+
+/** 关掉抽屉/侧栏/信息浮层：逐个候选目标试触摸，命中即报。 */
+async function cmdClose() {
+  const { pick, target } = await cdpTarget();
+  const candidates = ['button[aria-label="收起侧边栏"]', '#dshm-scrim', '.dshm-info-scrim'];
+  const tried = [];
+  for (const sel of candidates) {
+    const probe = `(() => {
+      const el = document.querySelector(${JSON.stringify(sel)});
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      if (r.width < 2 || r.height < 2) return null;
+      const hit = cs.pointerEvents !== 'none' && cs.display !== 'none' && cs.visibility !== 'hidden';
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2, hit };
+    })()`;
+    const r = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: probe, returnByValue: true });
+    const info = r.result && r.result.value;
+    tried.push({ selector: sel, found: !!info, clickable: !!(info && info.hit) });
+    if (info && info.hit) {
+      const input = await clickAt(pick, target, info.x, info.y);
+      console.log(JSON.stringify({ ok: true, closed: sel, at: [Math.round(info.x), Math.round(info.y)], input, tried, verify: 'none' }));
+      return;
+    }
+  }
+  console.log(JSON.stringify({ ok: true, closed: null, nothing_open: true, tried, hint: 'drawer/info overlay is already closed (its scrims are pointer-events:none only when idle)' }));
 }
 
 async function cmdTap(x, y) {
   const px = Number(x), py = Number(y);
   if (!Number.isFinite(px) || !Number.isFinite(py)) die('usage: dsh-mobile cdp tap <x> <y>');
   const { pick, target } = await cdpTarget();
-  await mouseClick(pick, target, px, py, { touch: true });
-  console.log(JSON.stringify({ ok: true, tapped: [px, py], instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
+  // tap 就是"按屏幕坐标点一下"：一律真实触摸，失败自动降级（见 dispatchTap）。
+  const input = await dispatchTap(pick, target, px, py);
+  console.log(JSON.stringify({ ok: true, tapped: [Math.round(px), Math.round(py)], input, instant: true, verify: 'none', do_not: ['screenshot_immediately', 'retry_immediately'] }));
 }
 
 async function cmdType(text, selector) {
@@ -536,7 +777,7 @@ async function cmdType(text, selector) {
     const hit = await cdpCall(pick.name, target, 'Runtime.evaluate', { expression: elementProbe(selector), returnByValue: true });
     const info = hit.result && hit.result.value;
     if (!info || !info.visible) die('type: selector not visible: ' + selector);
-    await mouseClick(pick, target, info.x, info.y);
+    await clickAt(pick, target, info.x, info.y);
   }
   await cdpCall(pick.name, target, 'Input.insertText', { text });
   console.log(JSON.stringify({ ok: true, typed: text.length, selector: selector || null, instant: true, verify: 'none', do_not: ['screenshot_immediately'] }));
@@ -766,9 +1007,17 @@ try {
     case 'list': await cmdList(); break;
     case 'eval': await cmdEval(rest.join(' ')); break;
     case 'reload': await cmdReload(); break;
-    case 'click': await cmdClick(rest[0], rest.includes('--touch')); break;
-    case 'click-text': await cmdClickText(rest.filter(a => a !== '--exact').join(' '), rest.includes('--exact')); break;
+    case 'click': await cmdClick(rest.filter(a => !a.startsWith('--')).join(' ') || rest[0], rest.includes('--mouse'), { touch: rest.includes('--touch') }); break;
+    case 'click-text': {
+      const wi = rest.indexOf('--wait-ms');
+      const waitMs = wi >= 0 ? Number(rest[wi + 1]) : 1500;
+      await cmdClickText(rest.filter((a, i) => !a.startsWith('--') && !(wi >= 0 && i === wi + 1)).join(' '),
+        rest.includes('--exact'), rest.includes('--mouse'), { any: rest.includes('--any'), waitMs, touch: rest.includes('--touch') });
+      break;
+    }
     case 'tap': await cmdTap(rest[0], rest[1]); break;
+    case 'close': await cmdClose(); break;
+    case 'drawer': await cmdDrawer(); break;
     case 'type': {
       const selIdx = rest.indexOf('--selector');
       const sel = selIdx >= 0 ? rest[selIdx + 1] : null;

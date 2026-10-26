@@ -44,6 +44,9 @@ class MainActivity : Activity() {
     private var urlLoaded = false
     /** 引擎重启后要清一次 WebView 返回栈（见 loadEngineUrlIfNeeded） */
     private var clearHistoryOnLoad = false
+    /** 最近一次加载的引擎 URL 与时间（用于压掉健康抖动导致的重复重载） */
+    private var lastLoadUrl: String? = null
+    private var lastLoadAt = 0L
     /** 已经加载过的引擎 URL（含 token）。引擎热更新/重启后 token 会变，据此重载 WebView。 */
     private var loadedWebUrl: String? = null
 
@@ -970,6 +973,17 @@ class MainActivity : Activity() {
     private fun loadEngineUrlIfNeeded() {
         val url = (application as DshApp).supervisor.webUrl()
         if (loadedWebUrl == url) return
+        // 同一 URL 短时间内重复加载：引擎健康状态抖动（Stopped→Healthy）会让这里重入。
+        // 每次重载都会把 SPA 打回「新会话草稿」并丢掉侧边栏里的当前会话，用户表现为
+        // 「回不到刚才的会话」。3s 内的重复加载直接跳过（首次加载不受影响）。
+        val now = System.currentTimeMillis()
+        if (url == lastLoadUrl && now - lastLoadAt < 3_000L) {
+            Log.i("MainActivity", "skip duplicate engine load (<3s): $url")
+            loadedWebUrl = url
+            return
+        }
+        lastLoadUrl = url
+        lastLoadAt = now
         val firstLoad = loadedWebUrl == null
         loadedWebUrl = url
         urlLoaded = true

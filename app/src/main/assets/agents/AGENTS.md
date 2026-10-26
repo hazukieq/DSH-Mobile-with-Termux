@@ -531,7 +531,8 @@ pnpm.
 
 The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button is off-screen. Use:
 
-1. `dsh-mobile cdp click 'button[aria-label="菜单"]'` opens the drawer (mobile-ui app bar).
+1. `dsh-mobile cdp drawer` opens the drawer **idempotently** (the 菜单 button is a toggle — clicking it
+   twice closes the drawer, and then `click-text` matches page text instead of a nav item).
 2. Drawer buttons by aria-label: 新建会话 / 插件 / 插件市场 / 自动化任务 / 记忆系统 / 搜索会话 /
    视图选项 / 添加工作区; the account menu is `button[aria-label="账号菜单"]` at the drawer bottom.
 3. Account menu items are `[role=menuitem]`: 设置 / 意见反馈 / 退出登录 ->
@@ -539,10 +540,21 @@ The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button
 4. Settings is the `[role=dialog]` overlay (账号与余额 / 通用设置 / 模型 / 内置插件 / Agent 预设 …).
 
 Rules:
+- **Click channel** (v2.5.20, 2026-10-27 真机实测更正): `cdp click` / `cdp click-text` 默认走
+  **DOM click**（`el.click()`，交给 React 处理）——App 内的 CDP `Input.*` 触摸通道会「回执成功但
+  页面收不到事件」（同一段代码从宿主直连却正常），这是抽屉点不动的真因。需要真手势
+  （画布/地图/自定义 pointer 逻辑）加 `--touch`；`cdp tap <x> <y>` 始终是真触摸。
+  回执里的 `input` 字段会写 `dom-click` / `emulated-touch` / `emulated-touch+dom-click`（兜底）。
+- `cdp drawer` 会**自证**：点完轮询 `button[aria-label="收起侧边栏"]`，只有抽屉真出现才报
+  `opened`；失败会先自动用 DOM click 兜底，再失败才 `ok:false, drawer:not_opened`（此时才需要
+  怀疑 App 不在前台 / WebView 在重载）。
+- `dsh-mobile cdp drawer` / `cdp close` are the coordinate-free way in/out of the drawer
+  (`Escape` is not handled by this UI). `click-text` prefers a matching `aria-label` over a
+  longer text blob, so a chat message quoting the label no longer steals the hit.
 - Hashed class names change per build (`hHd-Xa_*`, `VOzbGW_panel`) - anchor on aria-label / role /
   text instead.
-- `element.click()` and synthetic KeyboardEvents do NOT drive this UI; use the helper's
-  `click / click-text / tap / type / key / scroll` (real Input events) or Playwright.
+- `element.click()` **能**驱动这个 UI（v2.5.20 实测：开抽屉、点导航项都有效，所以 `click`/
+  `click-text` 默认就用它）；synthetic KeyboardEvents 不行，打字仍用 helper 的 `type` / `key`。
 - Verify after each step (dialog present, text changed, or `appshot`); an element with x<0 means
   its panel is not open yet - open it first. Two failures -> ask the user which entry they mean.
 
