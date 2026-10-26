@@ -445,7 +445,19 @@ object AgentBridge {
                     obj.put("handoff", true)
                         .put("verify", "none")
                         .put("do_not", org.json.JSONArray().put("screenshot").put("poll").put("retry"))
-                        .put("hint", "Opened (hand-off). The user may interact and come back before you check - that is expected. Do not screenshot/poll/re-run to confirm; continue or wait for the user.")
+                    // /open 自己会在「没换前台」时给出更具体的原因（无障碍关着/选择器/BAL），别覆盖
+                    if (path == "/open") {
+                        if (!obj.has("hint")) {
+                            obj.put(
+                                "hint",
+                                "Opened (hand-off). To wait for the user coming back from another app " +
+                                    "(payment/OAuth), call POST /wait-app with the target package; " +
+                                    "do not screenshot in a loop and do not open it twice."
+                            )
+                        }
+                    } else {
+                        obj.put("hint", "Opened (hand-off). The user may interact and come back before you check - that is expected. Do not screenshot/poll/re-run to confirm; continue or wait for the user.")
+                    }
                 }
                 else -> {
                     obj.put("verify", "none")
@@ -464,7 +476,7 @@ object AgentBridge {
     )
 
     /** 打开页面端点（hand-off；/activity 自己带更详细的 hand-off 字段，不在此集合）。 */
-    private val OPEN_ACTION_PATHS = setOf("/launch", "/launch-intent")
+    private val OPEN_ACTION_PATHS = setOf("/launch", "/launch-intent", "/open")
 
     private fun route(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
         // v1.2.182（用户需求）：AI 进行「一大串」无障碍操作时发一条系统通知，
@@ -568,6 +580,8 @@ object AgentBridge {
             method == "POST" && path == "/overlay" -> overlay(ctx, body)
             method == "POST" && path == "/launch" -> launch(ctx, body)
             method == "POST" && path == "/launch-intent" -> launchIntent(ctx, body)
+            method == "POST" && path == "/open" -> openTarget(ctx, body)
+            method == "POST" && path == "/wait-app" -> waitApp(body)
             method == "POST" && path == "/tap-id" -> tapId(body)
             method == "POST" && path == "/wait-text" -> waitText(body)
             method == "POST" && path == "/scroll-edge" -> scrollEdge(body)
@@ -965,7 +979,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     private val A11Y_ACTION_PATHS = setOf(
         "/tap", "/tap-id", "/gesture", "/key", "/input",
         "/scroll-find", "/scroll-center", "/scroll-edge",
-        "/launch", "/launch-intent", "/vision/tap", "/vision/drag",
+        "/launch", "/launch-intent", "/open", "/vision/tap", "/vision/drag",
         "/loop/run",
     )
 
@@ -973,10 +987,12 @@ document.getElementById('api').textContent = checks.map(function(c){
      * v1.7.3：真正依赖无障碍服务的端点（读屏 + 动作 + 视觉 + 截图）。
      * 进入路由前统一做「已启用但尚未连接」的短暂等待，而不是让每个端点各自 503。
      */
-    private val A11Y_REQUIRED_PATHS = A11Y_ACTION_PATHS + setOf(
+    // /open 只「派发」给别的 App，本身不碰无障碍树；无障碍关着也该能用（只是读不到前台）。
+    private val A11Y_REQUIRED_PATHS = (A11Y_ACTION_PATHS - setOf("/open")) + setOf(
         "/screen", "/screen-changed", "/pick", "/diff", "/interference",
         "/wait-text", "/screenshot", "/app-screenshot", "/frame-diff", "/frame-wait",
         "/vision/track", "/vision/crop", "/vision/drag",
+        "/wait-app",
     )
 
     /** 连续操作够几步才提示（太少会打扰，太多用户又看不到过程）。 */
@@ -1005,7 +1021,7 @@ document.getElementById('api').textContent = checks.map(function(c){
         "/scroll-find", "/scroll-center", "/scroll-edge" -> ctx.getString(R.string.notif_a11y_op_scroll)
         "/input" -> ctx.getString(R.string.notif_a11y_op_input)
         "/key" -> ctx.getString(R.string.notif_a11y_op_key)
-        "/launch", "/launch-intent" -> ctx.getString(R.string.notif_a11y_op_launch)
+        "/launch", "/launch-intent", "/open" -> ctx.getString(R.string.notif_a11y_op_launch)
         "/loop/run" -> ctx.getString(R.string.notif_a11y_op_loop)
         else -> ctx.getString(R.string.notif_a11y_op_other)
     }
@@ -3292,6 +3308,202 @@ document.getElementById('api').textContent = checks.map(function(c){
             200 to """{"ok":true,"launched":"$component","component":true,"backgroundLaunchMayBeBlocked":true,"hint":"Android may block background activity starts; if no UI appeared, open it from the app UI (top-bar gear) instead"}"""
         }.getOrElse { 500 to """{"ok":false,"error":"startActivity failed: ${it.message}"}""" }
     }
+
+    /**
+     * POST /open —— 跳到别的 App / 打开 App 链接（v2.5.2）。
+     *
+     * 支付、OAuth 授权、分享这类「必须在别的 App 里完成」的步骤用它：MCP 下单拿到
+     * H5/Deep Link 后直接把用户送到微信/支付宝/浏览器对应页面，再用 /wait-app 等回流。
+     *
+     * 参数（都可用，按优先级）：
+     *  - component|activity: "pkg/cls" 显式 Activity（最确定）
+     *  - uri|url|data:         App Link / 自定义 scheme（weixin://、alipays://、https://…）
+     *  - package|pkg:          包名；与 uri 同时给等价于 setPackage（限定由谁处理）
+     *  - targetPackage:        同 package 的别名，只用于给 uri 限定处理者
+     *  - action:               默认 VIEW（有 uri）或 MAIN；显式覆盖
+     *  - extras / flags / chooser
+     *  - waitMs:               启动后等前台变化的毫秒（默认 900，0 关闭；≤5000）
+     *
+     * 回执里 before/after/changed 是真正的系统前台包名（需要无障碍）；
+     * 没变化时给 hint —— 不要靠截图猜测。
+     */
+    private fun openTarget(ctx: Context, body: String): Pair<Int, String> {
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val pkg = obj.optString("package").ifBlank { obj.optString("pkg") }.orEmpty()
+        val target = obj.optString("targetPackage")
+            .ifBlank { obj.optString("target") }.ifBlank { pkg }.orEmpty()
+        val component = obj.optString("component").ifBlank { obj.optString("activity") }.orEmpty()
+        val uri = obj.optString("uri").ifBlank { obj.optString("url") }
+            .ifBlank { obj.optString("data") }.orEmpty()
+        val action = obj.optString("action").ifBlank {
+            if (uri.isNotBlank()) android.content.Intent.ACTION_VIEW else ""
+        }
+        val waitMs = obj.optInt("waitMs", 900).coerceIn(0, 5000)
+        if (component.isBlank() && uri.isBlank() && pkg.isBlank()) {
+            return 400 to """{"ok":false,"error":"need 'uri', 'package' or 'component'"}"""
+        }
+        val svc = DshAccessibilityService.instance
+        val before = runCatching { svc?.foregroundPackage() }.getOrNull()
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val launched: String
+        try {
+            if (component.isNotBlank()) {
+                val name = runCatching {
+                    android.content.ComponentName.unflattenFromString(component)
+                }.getOrNull() ?: return 400 to """{"ok":false,"error":"bad component: $component"}"""
+                if (runCatching { ctx.packageManager.getActivityInfo(name, 0) }.isFailure) {
+                    return 404 to """{"ok":false,"error":"component not found: $component"}"""
+                }
+                launched = component
+                val intent = android.content.Intent().apply {
+                    this.component = name
+                    if (action.isNotBlank()) this.action = action
+                    if (uri.isNotBlank()) data = android.net.Uri.parse(uri)
+                }
+                applyIntentExtras(intent, obj)
+                startWithFlags(ctx, intent, obj, chooser = false)
+            } else if (uri.isNotBlank()) {
+                val u = runCatching { android.net.Uri.parse(uri) }.getOrNull()
+                    ?: return 400 to """{"ok":false,"error":"bad uri: $uri"}"""
+                launched = uri
+                val intent = android.content.Intent().apply {
+                    if (action.isNotBlank()) this.action = action
+                    data = u
+                    if (target.isNotBlank()) setPackage(target)
+                }
+                applyIntentExtras(intent, obj)
+                val resolved = runCatching {
+                    ctx.packageManager.resolveActivity(
+                        intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+                    )
+                }.getOrNull()
+                if (resolved == null && target.isBlank()) {
+                    return 404 to """{"ok":false,"error":"no handler for uri: $uri","hint":"pass package/targetPackage to target a specific app, or install the app first"}"""
+                }
+                startWithFlags(ctx, intent, obj, obj.optBoolean("chooser"))
+            } else {
+                val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
+                    ?: return 404 to """{"ok":false,"error":"no launchable activity for package '$pkg'"}"""
+                launched = pkg
+                if (action.isNotBlank()) intent.action = action
+                if (uri.isNotBlank()) intent.data = android.net.Uri.parse(uri)
+                applyIntentExtras(intent, obj)
+                startWithFlags(ctx, intent, obj, chooser = false)
+            }
+        } catch (e: Exception) {
+            return 500 to """{"ok":false,"error":"startActivity failed: ${e.message}"}"""
+        }
+        // 等前台变化：不截图、不猜，只读系统前台包名
+        var after = before
+        while (waitMs > 0 &&
+            android.os.SystemClock.elapsedRealtime() - startedAt < waitMs
+        ) {
+            Thread.sleep(120)
+            after = runCatching { svc?.foregroundPackage() }.getOrNull() ?: after
+            if (after != null && after != before) break
+        }
+        val waited = android.os.SystemClock.elapsedRealtime() - startedAt
+        val changed = after != null && before != null && after != before
+        return 200 to JSONObject().apply {
+            put("ok", true)
+            put("launched", launched)
+            put("before", before ?: JSONObject.NULL)
+            put("after", after ?: JSONObject.NULL)
+            put("changed", changed)
+            put("waitedMs", waited)
+            if (!changed) {
+                put(
+                    "hint",
+                    if (svc == null) {
+                        "accessibility service is off, so the foreground package cannot be read; " +
+                            "the launch was dispatched but unverified. Enable DSH Screen Helper " +
+                            "to get before/after, or use /wait-app once it is on."
+                    } else {
+                        "foreground did not change: the target app may show an in-app/h5 page, " +
+                            "a chooser dialog may be waiting, or Android blocked the start " +
+                            "(keep the app in the foreground and retry). Use `scr wait-app <pkg>` " +
+                            "before screenshotting."
+                    }
+                )
+            }
+        }.toString()
+    }
+
+    private fun startWithFlags(
+        ctx: Context,
+        intent: android.content.Intent,
+        obj: JSONObject,
+        chooser: Boolean,
+    ) {
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        obj.optJSONArray("flags")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                FLAG_NAMES[arr.optString(i).uppercase()]?.let { intent.addFlags(it) }
+            }
+        }
+        val toStart = if (chooser) {
+            android.content.Intent.createChooser(intent, null)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        } else intent
+        ctx.startActivity(toStart)
+    }
+
+    /**
+     * POST /wait-app —— 等某个 App 变成前台（或离开前台），用于「用户去微信/支付宝付款，
+     * 付完回来」这种跨 App 流程。返回真实前台包名与耗时，不做任何截图。
+     *  - package|pkg: 目标包名（必填）
+     *  - until: "=="（默认，等它到前台）/ "!="（等它离开前台）
+     *  - timeoutMs: 200..60000，默认 15000
+     */
+    private fun waitApp(body: String): Pair<Int, String> {
+        val svc = DshAccessibilityService.instance
+            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val pkg = obj.optString("package").ifBlank { obj.optString("pkg") }.orEmpty()
+        if (pkg.isBlank()) return 400 to """{"ok":false,"error":"package required"}"""
+        val until = obj.optString("until", "==")
+        val timeoutMs = obj.optInt("timeoutMs", 15000).coerceIn(200, 60000)
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        var fg: String? = runCatching { svc.foregroundPackage() }.getOrNull()
+        fun hit(f: String?): Boolean =
+            if (until == "!=") f != null && f != pkg else f == pkg
+        while (true) {
+            if (hit(fg)) {
+                return 200 to JSONObject().apply {
+                    put("ok", true)
+                    put("foreground", fg)
+                    put("target", pkg)
+                    put("until", until)
+                    put("waitedMs", android.os.SystemClock.elapsedRealtime() - startedAt)
+                }.toString()
+            }
+            if (android.os.SystemClock.elapsedRealtime() - startedAt >= timeoutMs) {
+                return 408 to JSONObject().apply {
+                    put("ok", false)
+                    put("error", "timeout waiting for foreground $until $pkg")
+                    put("foreground", fg ?: JSONObject.NULL)
+                    put("waitedMs", timeoutMs)
+                    put("hint", "the user may still be paying; ask them or use /idle + /screen. " +
+                        "Do not screenshot repeatedly in a loop.")
+                }.toString()
+            }
+            Thread.sleep(150)
+            fg = runCatching { svc.foregroundPackage() }.getOrNull() ?: fg
+        }
+    }
+
+    /** Intent flag 名字表（/open 的 flags 数组用字符串而不是魔法数字）。 */
+    private val FLAG_NAMES = mapOf(
+        "CLEAR_TOP" to android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP,
+        "CLEAR_TASK" to android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK,
+        "NEW_TASK" to android.content.Intent.FLAG_ACTIVITY_NEW_TASK,
+        "SINGLE_TOP" to android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP,
+        "NO_ANIMATION" to android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION,
+        "EXCLUDE_FROM_RECENTS" to android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
+        "RESET_TASK_IF_NEEDED" to android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+    )
 
     /** extras：{"extras":{"name":"text","count":3,"flag":true,"big":1234567890123}} */
     private fun applyIntentExtras(intent: android.content.Intent, obj: JSONObject) {

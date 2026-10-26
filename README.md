@@ -66,6 +66,7 @@
 ### 4. Agent 的手机能力（原生层 + 能力桥）
 - 21 种动作原语：`tap / tap-id / tap_text / swipe / scroll / scroll_find / scroll_collect / repeat / repeat_until / double_tap / long_press / pinch / drag / back_to / input / key / launch / intent / set_switch / noop / collect`。
 - 多层视觉兜底：无障碍节点树 → OCR → 图标识别 → 帧差；逐步 PICK → ACT → VERIFY → RETRY（[docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)）。
+- 跨 App 跳转与回流：`POST /open` 直接送到微信/支付宝/浏览器（App Link、`weixin://`、`alipays://`、指定包/Activity，回执带真实前台 `before/after/changed`），`POST /wait-app` 等用户付完回到前台 —— 覆盖 MCP 下单后必须去别的 App 付款/授权这类流程（v2.5.2，`scr open` / `scr wait-app`）。
 - 系统集成：打开/分享到指定 App、接收外部分享进当前会话、SAF DocumentsProvider（文件管理器可见 `DSH Mobile`）、原生 MediaPlayer 播放音频、`trash` 删除、通知与 TTS（`say`）。
 - 能力桥只监听 `127.0.0.1:3083`，token 每次启动随机生成（[docs/android-agent-routes.md](docs/android-agent-routes.md)）。
 

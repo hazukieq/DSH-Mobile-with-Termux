@@ -44,7 +44,7 @@ Engine WebUI listens on `127.0.0.1:3080` (token-gated). Android native side adds
 Deleting under `/sdcard` or `/storage` goes through `rm`, which moves the file into
 `/sdcard/dsh-trash` first; never bypass it (`/system/bin/rm`, `busybox rm`, `find -delete`).
 
-## Full native API: AgentBridge (61 endpoints)
+## Full native API: AgentBridge (63 endpoints)
 
 Everything the app can do natively is exposed over `127.0.0.1:3083`; use
 `dsh-mobile bridge <GET|POST> <path> [json]` so the token is handled for you, e.g.
@@ -55,7 +55,7 @@ Groups (see the actual handlers for params):
 - Screen/UI: `GET /screen`, `/screen-changed`, `/frame-diff`, `/diff`, `/screenshot`, `/ocr`,
   `POST /tap`, `/tap-id`, `/gesture`, `/key`, `/input`, `/scroll-find`, `/scroll-center`,
   `/scroll-edge`, `/wait`, `/wait-text`, `/idle`, `/interference`, `/launch`, `/launch-intent`,
-  `/batch`, `/loop/run`, `/pick`. `POST /launch` and `/launch-intent` accept
+  `/open`, `/wait-app`, `/batch`, `/loop/run`, `/pick`. `POST /launch` and `/launch-intent` accept
   `{"component":"pkg/cls"}` (plus optional `action`, `data`, `extras`); a missing component returns
   `{"ok":false,"error":"component not found: ..."}`, and a successful component start is flagged
   `backgroundLaunchMayBeBlocked` because Android may silently refuse background activity starts.
@@ -245,6 +245,34 @@ and do not screenshot to confirm. Overlay / accessibility are **optional suggest
 BAL exemptions, neither is required): `native open overlay-settings` or
 `native open accessibility-settings` opens the system page for the user; if they decline, just
 fall back to `--notify` or asking them to foreground the app, and do not ask again.
+
+### Jumping to another app (payments, OAuth, app links) — `/open` + `/wait-app`
+
+MCP flows often end where the app cannot continue alone: an order is created and the user has to
+pay inside WeChat / Alipay / a browser. Use `POST /open` (or `scr open <uri|pkg/cls|pkg>`) to hand
+the user over, then `POST /wait-app` (or `scr wait-app <pkg> [--gone] [sec]`) to wait for them to
+come back:
+
+- `{"uri":"https://…"}` — App Link / H5 payment page (default action `VIEW`; omit `package` so the
+  system picks WeChat or the browser). A URI with no handler returns 404 instead of a fake `ok`.
+- `{"uri":"weixin://dl/business/?t=…"}` / `{"uri":"alipays://platformapi/startapp?…"}` — deep links
+  (required for H5 pages that only render inside WeChat/Alipay).
+- `{"package":"com.tencent.mm"}` — plain app launch; `{"pkg":"wechat","label":…}` style label
+  matching stays on `/launch`.
+- `{"package":"com.tencent.mm","uri":"…"}` — set `setPackage`, i.e. "let WeChat handle this link".
+- extras: `component` (explicit activity), `action`, `extras`, `flags` (`CLEAR_TOP`…), `chooser`,
+  `waitMs` (0-5000, default 900).
+- The reply carries real system foreground values: `before`, `after`, `changed`, `waitedMs`; when
+  nothing changed it returns a `hint` (in-app/h5 page, chooser dialog, or a BAL-blocked start).
+- `wait-app` bodies: `{"package":"com.termux","until":"==","timeoutMs":60000}` (this app's package is
+  `com.termux`, not `app.dsh.mobile` - that is only the Kotlin namespace); `until:"!="`
+  waits for the app to leave (e.g. the user closed WeChat). Timeout is a 408 with the last known
+  foreground and a "do not screenshot in a loop" hint.
+
+Rules: do not screenshot/poll to confirm a payment page appeared — the foreground package is the
+evidence. Never type passwords/payment details for the user; the payment step is theirs. After
+`wait-app` says DSH is back in front, read the screen once (`scr dump`/`scr shot --save`) and
+report whatever the app shows (paid / failed / still waiting).
 
 ### Hand-off semantics (opening pages for the user)
 

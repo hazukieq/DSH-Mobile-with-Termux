@@ -16,6 +16,8 @@ fi
 #   search: find <text> [--tap] [--back] [--max N]        (v1.2.54)
 #           find-center <text> [--tap] [--max N]          (v1.2.82, 滚到居中)
 #   diff:   diff [--reset]                                (v1.2.82, 只回变化节点)
+#   cross:  open <uri|pkg/cls|pkg> [waitMs]               (v2.5.2, 跳到别的 App/链接)
+#           wait-app <pkg> [--gone] [sec]                 (v2.5.2, 等付款/授权回流)
 #   sync:   idle [ms] | wait <t> [gone] [ms]              (idle = v1.2.54)
 #   batch:  batch <json-file|->                           (v1.2.54, 多步一次执行)
 #   watch:  interference [since-ms]                       (v1.2.54, 人是否接管)
@@ -309,6 +311,37 @@ case "$1" in
     esac
     dsh_http POST /launch "$body" || exit 2
     ;;
+  open)
+    # open <uri|pkg/cls|pkg>  —— 跳到别的 App / App 链接（v2.5.2）
+    #   支付/授权用：scr open "https://..." · scr open "weixin://" · scr open "alipays://..."
+    #   等用户付完回来：scr wait-app com.tencent.mm --gone
+    [ -n "$2" ] || { echo "usage: scr open <uri|pkg/cls|pkg> [waitMs]" >&2; exit 64; }
+    case "$2" in
+      --app)   [ -n "$3" ] || exit 64; body="{\"package\":\"$(_dsh_json_escape "$3")\"}" ;;
+      *://*|*:*) body="{\"uri\":\"$(_dsh_json_escape "$2")\"}" ;;
+      */*)     body="{\"component\":\"$(_dsh_json_escape "$2")\"}" ;;
+      *.*)     body="{\"package\":\"$(_dsh_json_escape "$2")\"}" ;;
+      *)       echo "scr open: want uri (scheme://), pkg/cls or package" >&2; exit 64 ;;
+    esac
+    case "$body" in
+      *waitMs*) ;;
+      *) [ -n "$3" ] && case "$3" in ''|*[!0-9]*) ;; *) body="${body%\}},\"waitMs\":$3}" ;; esac ;;
+    esac
+    dsh_http POST /open "$body" || exit 2
+    ;;
+  wait-app)
+    # wait-app <pkg> [--gone] [sec]  —— 等某 App 到前台（或离开），用于付款回流
+    [ -n "$2" ] || { echo "usage: scr wait-app <package> [--gone] [sec]" >&2; exit 64; }
+    PKG="$2"; shift 2; GONE=false; SEC=15
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --gone) GONE=true; shift ;;
+        *) case "$1" in ''|*[!0-9]*) shift ;; *) SEC="$1"; shift ;; esac ;;
+      esac
+    done
+    UNTIL='=='; [ "$GONE" = true ] && UNTIL='!='
+    dsh_http POST /wait-app "{\"package\":\"$(_dsh_json_escape "$PKG")\",\"until\":\"$UNTIL\",\"timeoutMs\":$((SEC*1000))}" || exit 2
+    ;;
   *)
     cat >&2 <<'USAGE'
 usage: scr <command>
@@ -319,6 +352,8 @@ usage: scr <command>
           key <back|home|recents|notifications|quick_settings>
   type:   input <text> [--target <hint>] [--append]
   search: find <text> [--tap] [--back] [--max N]
+  cross:  open <uri|pkg/cls|pkg> [waitMs]  (jump to another app / app link)
+          wait-app <pkg> [--gone] [sec]     (wait until it is foreground / left)
   sync:   idle [ms] | wait <t> [gone] [ms]
   batch:  batch <json-file|->      (multi-step, one round trip)
   watch:  interference [since-ms]  (did the user take over?)
