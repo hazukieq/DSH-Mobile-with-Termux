@@ -63,23 +63,7 @@
 
     </LinearLayout>
 
-    <!-- 动作链（v2.5.5）：最近几条工具动作，多行显示；不再和思考链挤在同一段文字里 -->
-    <TextView
-        android:id="@+id/overlayAction"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="5dp"
-        android:layout_marginStart="16dp"
-        android:maxWidth="216dp"
-        android:textSize="10.5sp"
-        android:textColor="#FF9AA0A6"
-        android:lineSpacingExtra="1dp"
-        android:maxLines="4"
-        android:ellipsize="end"
-        android:visibility="gone"
-        android:text="" />
-
-    <!-- 无障碍 / 自动化 / 打开应用动作链（v2.5.6）：和工具链同样式，紧贴其下一行。
+    <!-- 无障碍 / 自动化 / 打开应用动作链（v2.5.6）：紧贴思考链下方。
          只显示「无障碍服务真正做的事」——读屏点击/滑动/按键、启动或跳转别的 App。 -->
     <TextView
         android:id="@+id/overlayA11y"

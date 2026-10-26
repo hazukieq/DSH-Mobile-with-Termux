@@ -3243,12 +3243,8 @@ document.getElementById('api').textContent = checks.map(function(c){
                     detail,
                     obj.optString("session"),
                     obj.optLong("elapsed"),
-                    // v2.5.5：悬浮窗三段式的 ①② 段（思考链 / 动作链）
+                    // v2.5.8：工具行已并回 detail（思考链）；这里只保留可选的「最近一段推理」
                     think = obj.optString("think"),
-                    acts = obj.optJSONArray("acts")?.let { arr ->
-                        (0 until arr.length()).mapNotNull { arr.optString(it)?.takeIf { l -> l.isNotBlank() } }
-                            .joinToString("\n")
-                    } ?: obj.optString("acts"),
                 )
                 return 200 to """{"ok":true,"structured":true}"""
             }

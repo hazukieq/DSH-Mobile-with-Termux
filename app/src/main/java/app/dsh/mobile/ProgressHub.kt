@@ -47,9 +47,8 @@ object ProgressHub {
         val session: String,
         val elapsed: Long,
         val at: Long,
-        /** v2.5.5：悬浮窗三段式 —— 思考链（最近一段推理）与动作链（最近几条工具），与 detail 分开存。 */
+        /** v2.5.8：工具行并回 detail（思考链），不再单独存一份动作链。 */
         val think: String = "",
-        val acts: String = "",
     )
 
     @Volatile private var last: Snapshot? = null
@@ -109,7 +108,6 @@ object ProgressHub {
             runCatching {
                 StatusOverlay.resetHidden()
                 StatusOverlay.setStatus(ctx.getString(R.string.overlay_idle))
-                StatusOverlay.setAction(ctx.getString(R.string.progress_overlay_ready))
             }
         }
     }
@@ -128,22 +126,6 @@ object ProgressHub {
         maybePublish(ctx, force = true)
     }
 
-    /** 从上报 JSON 里取「动作链」：数组或字符串都接受（插件发数组，旧版发字符串）。 */
-    private fun actsOf(o: JSONObject): String {
-        val arr = o.optJSONArray("acts")
-        if (arr != null && arr.length() > 0) {
-            val sb = StringBuilder()
-            for (i in 0 until arr.length()) {
-                val line = arr.optString(i).trim()
-                if (line.isEmpty()) continue
-                if (sb.isNotEmpty()) sb.append('\n')
-                sb.append(line)
-            }
-            return sb.toString().take(600)
-        }
-        return o.optString("acts").trim().take(600)
-    }
-
     /** JS Bridge 上报（字符串避免 Kotlin/JS 类型转换成本）。 */
     fun onJsProgress(ctx: Context, payload: String) {
         runCatching {
@@ -151,7 +133,7 @@ object ProgressHub {
             update(
                 ctx, o.optString("kind"), o.optString("title"), o.optString("detail"),
                 o.optString("session"), o.optLong("elapsed"),
-                think = o.optString("think"), acts = actsOf(o),
+                think = o.optString("think"),
             )
         }.onFailure { Log.w(TAG, "bad progress payload: ${it.message}") }
     }
@@ -186,7 +168,6 @@ object ProgressHub {
         session: String,
         elapsed: Long = 0,
         think: String = "",
-        acts: String = "",
     ) {
         val k = when (kind) {
             "thinking", "tool", "done", "error", "idle", "working" -> kind
@@ -197,7 +178,6 @@ object ProgressHub {
             k, title.trim().take(80), detail.trim().take(16000), sess, elapsed,
             System.currentTimeMillis(),
             think = think.trim().take(4000),
-            acts = acts.trim().take(600),
         )
         val prev = last
         // 新一轮开始 → 清掉上一轮的无障碍动作链（只在 working 的进入沿清一次）
@@ -208,8 +188,7 @@ object ProgressHub {
         }
         // done/error 永远发布：会话结束时内容可能与上一帧相同，但状态必须切到「完成」
         if (k != "done" && k != "error" && prev != null && prev.kind == s.kind &&
-            prev.detail == s.detail && prev.title == s.title && prev.acts == s.acts &&
-            prev.think == s.think && prev.elapsed / 1000L == s.elapsed / 1000L
+            prev.detail == s.detail && prev.title == s.title && prev.think == s.think && prev.elapsed / 1000L == s.elapsed / 1000L
         ) {
             return
         }
@@ -235,7 +214,7 @@ object ProgressHub {
                         sessionTitles[session] = t
                         last?.let { cur ->
                             if (cur.session == session) {
-                                update(ctx, cur.kind, t, cur.detail, session, cur.elapsed, cur.think, cur.acts)
+                                update(ctx, cur.kind, t, cur.detail, session, cur.elapsed, cur.think)
                             }
                         }
                     }
@@ -274,10 +253,10 @@ object ProgressHub {
             val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
             if (shown) {
                 runCatching {
-                    // 三段式（v2.5.5）：① 思考链 ② 动作链 ③ 会话标题 + 倒计时
+                    // v2.5.8：工具行已并回思考链（detail 即完整链路），只剩
+                    // ① 思考链（含 [工具] 行）② 无障碍/打开应用 ③ 会话标题 + 耗时
                     val think = snap.think.ifBlank { snap.detail }
                     StatusOverlay.setStatus(think.ifBlank { stateLabel(ctx, snap.kind) })
-                    StatusOverlay.setActionChain(snap.acts)
                     val secs = snap.elapsed / 1000L
                     val running = snap.kind == "thinking" || snap.kind == "tool" || snap.kind == "working"
                     StatusOverlay.setElapsed(secs, running)
@@ -408,8 +387,7 @@ object ProgressHub {
                 runCatching {
                     StatusOverlay.resetHidden()
                     StatusOverlay.setStatus(ctx.getString(R.string.progress_preview_text))
-                    StatusOverlay.setAction(ctx.getString(R.string.progress_overlay_ready))
-                }
+                    }
                 clearAll(ctx)
                 return
             }

@@ -85,39 +85,6 @@ export function apply(ctx) {
     return it
   }
 
-  /** 动作链：工具名 + 一条短摘要（不暴露完整参数，手机宽度放不下也没意义）。 */
-  const TOOL_LABEL = {
-    bash: 'bash', shell: 'bash', read: 'read', write: 'write', edit: 'edit',
-    grep: 'grep', glob: 'glob', webfetch: 'web', websearch: 'search',
-    todowrite: 'todo', task: 'task', subagent: 'agent', list: 'list',
-  }
-
-  /** 从工具参数里挑一个最能说明「在动什么」的短片段（≤34 字）。 */
-  const argHint = (it) => {
-    const raw = String(it.args || '')
-    if (!raw) return ''
-    let v = ''
-    try {
-      const o = JSON.parse(raw)
-      v = String(o.command || o.file_path || o.path || o.pattern || o.query || o.url || o.prompt || '')
-    } catch (e) {
-      const m = raw.match(/"(?:command|file_path|path|pattern|query|url|prompt)"\s*:\s*"((?:[^"\\]|\\.)*)"/)
-      if (m) v = m[1]
-      else v = raw.replace(/^[{\s]+/, '')
-    }
-    v = clean(v.replace(/[\r\n]+/g, ' '))
-    if (!v) return ''
-    if (v.length > 34) v = v.slice(0, 33) + '…'
-    return v
-  }
-
-  const actLine = (it) => {
-    const nm = TOOL_LABEL[String(it.name || '').toLowerCase()] || (it.name ? String(it.name).slice(0, 14) : 'tool')
-    const hint = argHint(it)
-    const tail = it.status ? ' → ' + it.status : ''
-    return '› ' + nm + (hint ? ' · ' + hint : '') + tail
-  }
-
   const render = (s) => {
     const lines = []
     for (const it of s.items) {
@@ -125,11 +92,11 @@ export function apply(ctx) {
         const t = clean(it.text)
         if (t) lines.push('[思考] ' + clip(t, 1400))
       } else if (it.t === 'tool') {
-        // v2.3.8（用户要求）：不显示具体指令/参数，只表达状态：
+        // v2.5.8（用户要求）：工具行并回思考链，格式固定为
         //   运行中 → [工具] 调用
-        //   结束   → [工具] 调用 → 完成 / 失败
-        // 工具名与参数对用户没有意义，还会占满滚动区、暴露实现细节。
-        lines.push('[工具] ' + (it.status ? '调用 → ' + it.status : '调用'))
+        //   结束   → [工具] 调用->完成 / [工具] 调用->失败
+        // 不再有独立的「工具链」区域。
+        lines.push(it.status ? '[工具] 调用->' + it.status : '[工具] 调用')
       } else if (it.t === 'reply') {
         const t = clean(it.text)
         // 回复用尾部：模型最后几行通常才是结论；只截前 N 字会出现「只有前几行」
@@ -137,23 +104,6 @@ export function apply(ctx) {
       }
     }
     return tailJoin(lines)
-  }
-
-  /** 悬浮窗三段区：思考链（最近一段推理）/ 动作链（最近几条工具）/ 其余进 detail。 */
-  const thinksOf = (s) => {
-    const think = s.items.filter((x) => x.t === 'think').map((x) => clean(x.text)).filter(Boolean)
-    return think.length ? think[think.length - 1].slice(-1200) : ''
-  }
-
-  const actsOf = (s) => {
-    const lines = []
-    for (const it of s.items) {
-      if (it.t !== 'tool' || !it.name) continue // 无名占位项不显示（会渲染成「› tool」噪音）
-      const line = actLine(it)
-      if (lines[lines.length - 1] === line) continue
-      lines.push(line)
-    }
-    return lines.slice(-6).join('\n')
   }
 
   const flush = (s, kind) => {
@@ -165,8 +115,6 @@ export function apply(ctx) {
       session: s.id,
       title: s.title || s.id.slice(-6),
       detail,
-      think: thinksOf(s),
-      acts: actsOf(s),
       elapsed: Date.now() - s.started,
     })
   }

@@ -540,7 +540,6 @@ dsh：%2$s
     <string name="progress_vendor_hint">厂商后台限制</string>
     <string name="progress_vendor_help">vivo/OPPO/小米还需要额外设置：设置 → 电池 → 后台耗电管理；或 i管家 → 应用管理 → 自启动 / 允许后台高耗电。否则即使忽略电池优化，系统仍可能清理 App。</string>
     <string name="progress_overlay_denied_title">悬浮窗未授权 · 点此去授权</string>
-    <string name="progress_overlay_ready">悬浮窗已开启</string>
     <string name="settings_a11y_enabled_not_connected">已开启（未连接）</string>
     <string name="settings_a11y_disabled_by_system">已授权但被系统停用（点此重开）</string>
 </resources>

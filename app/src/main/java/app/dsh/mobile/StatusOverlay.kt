@@ -62,7 +62,6 @@ object StatusOverlay {
     @Volatile private var root: View? = null
     @Volatile private var params: WindowManager.LayoutParams? = null
     @Volatile private var statusText: TextView? = null
-    @Volatile private var actionText: TextView? = null
     @Volatile private var statusScroll: android.widget.ScrollView? = null
     @Volatile private var statusDot: View? = null
     /** v2.5.5：三段式展开的第三段 —— 会话标题 + 倒计时。 */
@@ -77,7 +76,6 @@ object StatusOverlay {
     @Volatile private var startedAt = 0L
     @Volatile private var ticking = false
     /** 最近一次动作链文本（折叠/展开切换时用来恢复显隐，不重新排版）。 */
-    @Volatile private var actsText = ""
     /** 展开档位：0=折叠(仅圆点) / 1=状态+麦克风 / 2=再加动作+会话列表 */
     @Volatile private var expandLevel = 0
     @Volatile private var hidden = false
@@ -179,7 +177,6 @@ object StatusOverlay {
 
                 val view = LayoutInflater.from(ctx).inflate(R.layout.overlay_status, null)
                 val status = view.findViewById<TextView>(R.id.overlayStatus)
-                val action = view.findViewById<TextView>(R.id.overlayAction)
                 val dot = view.findViewById<View>(R.id.overlayDot)
 
                 status.text = ctx.getString(R.string.overlay_idle)
@@ -206,10 +203,8 @@ object StatusOverlay {
                 //  ② addView（先挂到 window，布局才有意义）
                 //  ③ 在 post 里应用初始档位 —— 此时已完成首次测量，
                 //     子 View 才有真实边界可绑手柄（否则绑到 [0,0,0,0] 的控件上）
-                statusText = status; actionText = action; statusDot = dot
+                statusText = status; statusDot = dot
                 statusScroll = view.findViewById<android.widget.ScrollView>(R.id.overlayScroll)
-                action.tag = "marquee"
-                action.isSelected = true
                 sessionText = view.findViewById(R.id.overlaySession)
                 elapsedText = view.findViewById(R.id.overlayElapsed)
                 footRow = view.findViewById(R.id.overlayFoot)
@@ -282,13 +277,6 @@ object StatusOverlay {
             // v1.6.7：展开态**不能**把整张卡片都装上拖动手势 —— 那会把手指滑动
             // 抢去拖窗口，ScrollView 收不到事件，长回复就只能看到前几行（用户实测）。
             // 现在只有「动作行/状态点」可以点收/拖动，正文区域完全交给 ScrollView 滚动。
-            actionText?.let { tv ->
-                attachGesture(
-                    tv, p, ctx,
-                    onClick = { collapseToBall() },
-                    onLongPress = { hide(DshAccessibilityService.instance) },
-                )
-            }
             statusDot?.let { d ->
                 attachGesture(d, p, ctx, onClick = { collapseToBall() })
             }
@@ -630,7 +618,7 @@ object StatusOverlay {
             runCatching {
                 wm?.removeView(r)
             }
-            root = null; params = null; statusText = null; actionText = null; statusDot = null
+            root = null; params = null; statusText = null; statusDot = null
             statusScroll = null; a11yText = null
             hidden = userHidden
             Log.i(TAG, if (userHidden) "overlay hidden by user" else "overlay hidden (auto)")
@@ -720,9 +708,6 @@ object StatusOverlay {
      */
     private fun refreshActionVisibility() {
         val expanded = expandLevel >= 1
-        // 动作链：展开态 + 有内容就显示（结束时也保留最后一条，方便回看刚做了什么）
-        val a = actionText ?: return
-        a.visibility = if (expanded && a.text.isNotEmpty()) View.VISIBLE else View.GONE
         // 第三段：会话标题 + 倒计时
         // 无障碍/打开应用动作链（第④段）：展开态且有内容才显示
         a11yText?.visibility = if (expanded && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
@@ -824,47 +809,16 @@ object StatusOverlay {
      * 由 LocalLoopExecutor 每步调用：状态行显示「执行中」，动作行显示当前那一步在做什么。
      */
     fun setDaemonAction(text: String) {
-        // v1.2.188（审查 P2）：daemon 新动作到达 → 取消待执行的"平滑收起"，
-        // 否则 60ms 窗口内会被 setIdle 的收尾覆盖成"空闲"。
-        cancelIdleReset()
-        main {
-            working = true
-            actionText?.text = fitText(text, 48)
-            refreshActionVisibility()
-        }
+        // v2.5.8：动作行已删除，daemon 的每步动作并入「无障碍/打开应用」动作链
+        setA11yAction(text)
     }
 
     fun setAction(text: String) {
-        main {
-            cancelIdleReset()
-            // v2.4.6（用户反馈「无障碍点击动作都不显示了」）：
-            // 动作行可见性 = expandLevel>=1 && working && text 非空。v2.3.7 把动作从
-            // setStatus（会置 working=true）挪到本方法后，本方法没有置 working，
-            // 于是纯动作（没有新的思考链更新）时动作行一直是 GONE。
-            working = true
-            actionText?.text = text.take(200)
-            actionText?.isSelected = true
-            refreshActionVisibility()
-            // 落盘（v1.2.88）：详情档要显示「上次做了什么 + 什么时候」，
-            // 进程重启后仍要能看到，所以每次动作都记一次时间戳
-            appCtx?.let { app.dsh.mobile.engine.LastAction.record(it, text) }
-        }
-    }
-
-    /**
-     * v2.5.5：动作链（展开态第二段）。
-     * 每行形如 `› bash · ls ~/Projects → 完成`，最多 4 行（布局里限制）。
-     * 与思考链**分开**，不再把 `[工具]` 标记塞进思考正文里。
-     */
-    fun setActionChain(text: String) {
-        val t = text.trim().take(600)
-        main {
-            cancelIdleReset()
-            working = true
-            actsText = t
-            actionText?.text = t
-            refreshActionVisibility()
-        }
+        // v2.5.8：动作行已删除 —— 无障碍/自动化动作统一写进专属动作链
+        setA11yAction(text)
+        // 落盘（v1.2.88）：详情档要显示「上次做了什么 + 什么时候」，
+        // 进程重启后仍要能看到，所以每次动作都记一次时间戳
+        appCtx?.let { app.dsh.mobile.engine.LastAction.record(it, text) }
     }
 
     /** v2.5.5：会话标题（展开态第三段左侧）。 */
@@ -953,9 +907,7 @@ object StatusOverlay {
                 statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
                 statusDot?.background?.setTint(COLOR_IDLE)
                 working = false
-                // v2.5.5：空闲时动作链/倒计时都清掉，只留会话标题（展开态仍能看出是哪个会话）
-                actsText = ""
-                actionText?.text = ""
+                // v2.5.8：空闲时倒计时清掉，只留会话标题（展开态仍能看出是哪个会话）
                 startedAt = 0L
                 stopTicker()
                 elapsedText?.text = ""
@@ -984,8 +936,6 @@ object StatusOverlay {
                     statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
                     statusDot?.background?.setTint(COLOR_IDLE)
                     working = false
-                    actsText = ""
-                    actionText?.text = ""
                     startedAt = 0L
                     stopTicker()
                     elapsedText?.text = ""
@@ -1020,7 +970,8 @@ object StatusOverlay {
                 working = true
                 statusText?.text = ctx.getString(R.string.overlay_listening)
                 statusDot?.background?.setTint(COLOR_RECORDING)
-                actionText?.text = partial.ifBlank { ctx.getString(R.string.overlay_speak_now) }
+                // v2.5.8：动作行已删除，实时识别结果直接显示在主体文字里
+                if (partial.isNotBlank()) statusText?.text = partial
                 refreshActionVisibility()
             } else {
                 setIdle()
@@ -1049,9 +1000,6 @@ object StatusOverlay {
             working = true
             s.text = summary
             statusDot?.background?.setTint(COLOR_DONE)
-            actionText?.let {
-                if (it.text.isEmpty()) it.text = appCtx?.getString(R.string.overlay_turn_done).orEmpty()
-            }
             refreshActionVisibility()
             // ⚠️ 必须可取消：这个 6 秒定时器若不被作废，会在「用户马上又让 AI 干活」时
             // 把新写入的「执行中」覆盖成「空闲」——主人实测反馈的正是这个现象。
