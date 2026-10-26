@@ -581,7 +581,7 @@ object AgentBridge {
             method == "POST" && path == "/launch" -> launch(ctx, body)
             method == "POST" && path == "/launch-intent" -> launchIntent(ctx, body)
             method == "POST" && path == "/open" -> openTarget(ctx, body)
-            method == "POST" && path == "/wait-app" -> waitApp(body)
+            method == "POST" && path == "/wait-app" -> waitApp(ctx, body)
             method == "POST" && path == "/tap-id" -> tapId(body)
             method == "POST" && path == "/wait-text" -> waitText(body)
             method == "POST" && path == "/scroll-edge" -> scrollEdge(body)
@@ -992,7 +992,6 @@ document.getElementById('api').textContent = checks.map(function(c){
         "/screen", "/screen-changed", "/pick", "/diff", "/interference",
         "/wait-text", "/screenshot", "/app-screenshot", "/frame-diff", "/frame-wait",
         "/vision/track", "/vision/crop", "/vision/drag",
-        "/wait-app",
     )
 
     /** 连续操作够几步才提示（太少会打扰，太多用户又看不到过程）。 */
@@ -3456,17 +3455,28 @@ document.getElementById('api').textContent = checks.map(function(c){
      *  - until: "=="（默认，等它到前台）/ "!="（等它离开前台）
      *  - timeoutMs: 200..60000，默认 15000
      */
-    private fun waitApp(body: String): Pair<Int, String> {
-        val svc = DshAccessibilityService.instance
-            ?: return 503 to """{"ok":false,"error":"accessibility service not enabled"}"""
+    private fun waitApp(ctx: Context, body: String): Pair<Int, String> {
         val obj = runCatching { JSONObject(body) }.getOrNull()
             ?: return 400 to """{"ok":false,"error":"invalid json"}"""
         val pkg = obj.optString("package").ifBlank { obj.optString("pkg") }.orEmpty()
         if (pkg.isBlank()) return 400 to """{"ok":false,"error":"package required"}"""
         val until = obj.optString("until", "==")
         val timeoutMs = obj.optInt("timeoutMs", 15000).coerceIn(200, 60000)
+        // 本 App 是否在前台，用自己的 Activity 生命周期判断 —— 不需要无障碍
+        // （startActivity 本来就不需要无障碍；只有观察“别的 App 是否在前台”才需要）。
+        val self = pkg == ctx.packageName
+        val svc = DshAccessibilityService.instance
+        if (!self && svc == null) {
+            return 503 to """{"ok":false,"error":"a11y_unavailable","code":"a11y_unavailable","reason":"observing another app's foreground state needs the accessibility service (launching it never did); enable DSH Screen Helper, or use wait-app for ${ctx.packageName} which works without it","retryable":false}"""
+        }
+        fun currentForeground(): String? =
+            if (self) {
+                if (AppState.resumedActivityName() != null) ctx.packageName else null
+            } else {
+                runCatching { svc?.foregroundPackage() }.getOrNull()
+            }
         val startedAt = android.os.SystemClock.elapsedRealtime()
-        var fg: String? = runCatching { svc.foregroundPackage() }.getOrNull()
+        var fg: String? = currentForeground()
         fun hit(f: String?): Boolean =
             if (until == "!=") f != null && f != pkg else f == pkg
         while (true) {
@@ -3490,7 +3500,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 }.toString()
             }
             Thread.sleep(150)
-            fg = runCatching { svc.foregroundPackage() }.getOrNull() ?: fg
+            fg = currentForeground() ?: fg
         }
     }
 

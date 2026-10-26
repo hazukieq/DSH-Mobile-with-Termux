@@ -262,12 +262,18 @@ come back:
 - `{"package":"com.tencent.mm","uri":"…"}` — set `setPackage`, i.e. "let WeChat handle this link".
 - extras: `component` (explicit activity), `action`, `extras`, `flags` (`CLEAR_TOP`…), `chooser`,
   `waitMs` (0-5000, default 900).
-- The reply carries real system foreground values: `before`, `after`, `changed`, `waitedMs`; when
-  nothing changed it returns a `hint` (in-app/h5 page, chooser dialog, or a BAL-blocked start).
+- The reply carries real system foreground values: `before`, `after`, `changed`, `waitedMs` when the
+  accessibility service is on; with it off the launch still happens (`ok:true`) and the fields are
+  `null` with an explanatory `hint`. **Launching another app never required accessibility** -
+  `startActivity` is an ordinary API; the a11y service is only an *observer* of other apps'
+  foreground state (Android exposes no other way to read that for third-party packages).
 - `wait-app` bodies: `{"package":"com.termux","until":"==","timeoutMs":60000}` (this app's package is
   `com.termux`, not `app.dsh.mobile` - that is only the Kotlin namespace); `until:"!="`
   waits for the app to leave (e.g. the user closed WeChat). Timeout is a 408 with the last known
   foreground and a "do not screenshot in a loop" hint.
+- `wait-app com.termux` works **without** accessibility (it reads our own Activity lifecycle);
+  waiting for another app (`com.tencent.mm`, browsers...) returns `503 a11y_unavailable` when the
+  service is off, because that observation genuinely needs it.
 
 Rules: do not screenshot/poll to confirm a payment page appeared — the foreground package is the
 evidence. Never type passwords/payment details for the user; the payment step is theirs. After
