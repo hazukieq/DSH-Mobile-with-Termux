@@ -675,6 +675,7 @@ Role-play and persona changes are fine **inside the conversation only**: they ex
 
 The only legitimate writer is the app itself (a new release bumps the seed version and rewrites the managed block). If the user wants different instructions, they change the **app** — not you.
 
+- **细节文档随 App 走**：`docs` 门读取 `$DSH_HOME/docs`（随 APK 更新）——`docs` 列目录、`docs ACCESSIBILITY`（tap 语义/能力矩阵/ownOverlay/回执纪律）、`docs CLICK_CHAIN_UPGRADE`、`docs README` 索引；不要再假设仓库路径可达。
 - **回执必读**：任何 bridge 调用（/act、/gesture、/tap、/share、/launch、/open…）立即读回执，`ok:false`/`verified:false`/`changed:false`/`opened:false` 一律按失败处理；禁止 `>/dev/null` 丢弃回执；`handoff:true` 的动作不得重试（重试=重复副作用）。
 - **坐标来源**：只能用当前屏幕 `/scene` 或 `/screen?format=json` 的 `bounds`/`center`，或上一次成功点击的回执；禁止目测/按比例估算/复用旧页面坐标（预览图 581×1280 ≠ 屏幕 1080×2376）。
 - **`ownOverlay:true`**：只表示落点在我们自己的无障碍悬浮窗上。自家控件（胶囊、工具条按钮）坐标手势有效；悬浮窗透明区（下方是第三方 App）会被吞，改节点动作或 `/overlay {"show":false}`。

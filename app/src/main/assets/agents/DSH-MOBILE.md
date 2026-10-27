@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v67 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v68 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -221,9 +221,16 @@ type|key|scroll`) return `instant:true`, `verify:"none"` and
 may be mid-animation or the user may have moved on. To verify a result: settle (`scr idle` or
 `cdp wait`) then read once. Screenshots are for evidence/diagnosis, not tap confirmation.
 
-Details that do not fit in this built-in doc: repo `docs/ACCESSIBILITY.md` (tap semantics, capability
-matrix, `ownOverlay`), `docs/CLICK_CHAIN_UPGRADE.md` (multi-step chains), `docs/` has an index at
-`docs/README.md`.
+Details that do not fit in this built-in doc ship **with the app** at `$DSH_HOME/docs` (refreshed from the
+APK on every update). Read them with the `docs` gate:
+
+```bash
+docs                      # list what is available
+docs ACCESSIBILITY        # tap semantics, capability matrix, ownOverlay; §10 receipt/coordinate rules
+docs CLICK_CHAIN_UPGRADE  # multi-step chains
+docs README               # index of everything
+docs testing/2026-10-27-tap-xy-regression   # field evidence for the v2.5.30 fix
+```
 
 ### Opening files with system apps (no desktop needed)
 

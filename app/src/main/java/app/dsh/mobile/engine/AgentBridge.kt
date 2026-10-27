@@ -1755,7 +1755,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     private fun yoloBench0(ctx: Context): Pair<Int, String> {
-        val model = java.io.File(ctx.cacheDir, "omni_icon_640.onnx")
+        val model = java.io.File(ctx.cacheDir, "omni_icon_640_int8.onnx")
         if (!model.exists()) runCatching {
             ctx.assets.open("models/omni_icon.onnx").use { i -> model.outputStream().use { o -> i.copyTo(o) } }
         }

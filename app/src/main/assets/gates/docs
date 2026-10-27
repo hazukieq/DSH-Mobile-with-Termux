@@ -1,0 +1,34 @@
+#!/system/bin/sh
+# docs — read the in-app detail documentation (v2.5.37)
+# Usage:
+#   docs                 list available docs
+#   docs ACCESSIBILITY   print one doc (name, with or without .md)
+#   docs --path          print the docs directory
+# Docs live in $DSH_HOME/docs and are refreshed from the APK on app update.
+HERE=${0%/*}
+. "$HERE/_dsh_http.sh" 2>/dev/null
+DSH_HOME=${DSH_HOME:-$HOME}
+DIR="$DSH_HOME/docs"
+case "$1" in
+  ""|--list|-l)
+    if [ ! -d "$DIR" ]; then echo "docs: not deployed yet ($DIR)"; exit 1; fi
+    echo "docs in $DIR:"
+    for f in "$DIR"/*.md; do
+      [ -f "$f" ] || continue
+      printf '  %-26s %5s lines  %s\n' "$(basename "$f")" "$(wc -l < "$f")" "$(head -1 "$f" | cut -c1-60)"
+    done
+    if [ -d "$DIR/testing" ]; then
+      echo "testing/:"
+      for f in "$DIR"/testing/*.md; do [ -f "$f" ] && printf '  %-26s %5s lines\n' "testing/$(basename "$f")" "$(wc -l < "$f")"; done
+    fi
+    ;;
+  --path|-p) echo "$DIR" ;;
+  *)
+    n=$1
+    case "$n" in *.md) ;; *) n="$n.md" ;; esac
+    f="$DIR/$n"
+    [ -f "$f" ] || f="$DIR/testing/$n"
+    if [ ! -f "$f" ]; then echo "docs: no such doc: $1"; exit 1; fi
+    cat "$f"
+    ;;
+esac

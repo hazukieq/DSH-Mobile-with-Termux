@@ -30,7 +30,7 @@ object TermuxDotfiles {
     private const val TRASH_CLI_MARKER = "DSH Mobile trash-cli"
     private const val APP_DOC_ASSET = "agents/DSH-MOBILE.md"
     private const val APP_DOC_MARKER = "dsh-mobile app doc v"
-    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v67 "
+    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v68 "
     private const val CDP_HELPER_ASSET = "termux/webview-cdp.mjs"
     private const val CDP_WRAPPER_ASSET = "termux/dsh-mobile.sh"
     private const val CDP_HELPER_MARKER = "DSH Mobile helper"
@@ -102,6 +102,7 @@ object TermuxDotfiles {
         deployRmWrapper(ctx)
         deployTrashCli(ctx)
         deployAppDoc(ctx)
+        deployDocs(ctx)
         deployCdpHelper(ctx)
         repairScriptModes(ctx)
     }
@@ -182,6 +183,15 @@ object TermuxDotfiles {
             writeSafe(dst, body.toByteArray())
             Log.i(TAG, "app doc deployed at ${dst.absolutePath}")
         }.onFailure { Log.w(TAG, "deploy app doc failed: ${it.message}") }
+    }
+
+    /** 细节文档（v2.5.37）：assets/docs 整树同步到 $DSH_HOME/docs，内容比对后按需写。 */
+    private fun deployDocs(ctx: Context) {
+        runCatching {
+            val home = EngineConfig.dshHome(ctx).apply { mkdirs() }
+            deployAssetTree(ctx, "docs", File(home, "docs"))
+            Log.i(TAG, "docs deployed at ${File(home, "docs").absolutePath}")
+        }.onFailure { Log.w(TAG, "deploy docs failed: ${it.message}") }
     }
 
     /**

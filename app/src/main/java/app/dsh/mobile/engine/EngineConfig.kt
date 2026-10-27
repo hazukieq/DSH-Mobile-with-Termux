@@ -1245,7 +1245,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
      */
     private val AGENT_GATES = listOf(
         "_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast",
-        "linux", "dsh-update", "shot", "appshot", "alarm", "record", "native", "media",
+        "linux", "dsh-update", "shot", "appshot", "alarm", "record", "native", "media", "docs",
     )
 
     /** 权限位（用于诊断日志，如 0600/0755）。 */

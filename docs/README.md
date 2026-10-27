@@ -1,5 +1,8 @@
 # docs 索引
 
+> 这份目录随 App 打包：安装/升级后在设备上用 `docs` 门读（`docs` 列目录、`docs ACCESSIBILITY` 打印单篇），
+> 落盘位置 `$DSH_HOME/docs`，每次 App 更新按内容比对自动刷新。
+
 App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）；这里放细节展开与实测记录。
 按问题找文件：
 
