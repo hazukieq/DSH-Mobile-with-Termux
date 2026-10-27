@@ -176,7 +176,6 @@ def main():
     # 融合锁记：术语绿 = Termux
     cx=text_end+20
     mono_w=d.textlength('TERMUX',font=fm(14,'SemiBold'))/S
-    glass(img,(cx-12,108,cx+mono_w+14,140),16,alpha=16)
     text(d,(cx-12,116),'×',14,(96,106,124),'Regular',0)
     mono(d,(cx+8,115),'TERMUX',14,(141,240,200),'SemiBold')
 
@@ -204,35 +203,44 @@ def main():
     # 能力行
     mono(d,(110,704),'scr dump  ·  ppocr6  ·  int8 UI detector',16,(110,120,138))
 
-    # 终端卡：文字直接排在那块磨砂玻璃卡上（卡片实测中心 (1032,568)，倾斜 -12.6°）
-    mono_px=int(14*S)
+    # 终端：画一张浮空卡 A；底图那块磨砂玻璃卡作为它错位的玻璃投影（A 与投影倾斜/位置错开叠加）
+    mono_px=int(13.2*S)
     lines=[('$ ', (141,240,200,255), 'dsh web', (238,243,252,255)),
-           ('',  None, ':3080 ready', (214,224,238,255)),
+           ('',  None, ':3080 ready', (206,217,232,255)),
            ('$ ', (141,240,200,255), 'scr dump', (238,243,252,255)),
-           ('',  None, '1080x2376', (214,224,238,255)),
-           ('',  None, '37 nodes', (214,224,238,255)),
+           ('',  None, '1080x2376', (206,217,232,255)),
+           ('',  None, '37 nodes', (206,217,232,255)),
            ('$ ', (141,240,200,255), '/act tap', (238,243,252,255)),
            ('',  None, 'ok gesture', (120,232,186,255))]
-    lw,lh=int(176*S),int(190*S)
-    lay=Image.new('RGBA',(lw,lh),(0,0,0,0)); ld=ImageDraw.Draw(lay)
     fmn=lambda sz,wt: ImageFont.truetype(MONO.format(wt), sz)
-    ty=int(4*S)
+    pl=int(22*S); lh=int(mono_px*1.6)
+    tw=max(sum(ImageDraw.Draw(Image.new('RGBA',(1,1))).textlength(t,font=fmn(mono_px,'Regular')) for t in (p or '', r or '')) for p,_,r,_ in lines)
+    cw,ch=int(tw+2*pl), int(lh*len(lines)+2*pl+int(6*S))
+    A=Image.new('RGBA',(cw,ch),(0,0,0,0)); ad=ImageDraw.Draw(A)
+    # 卡体：深色玻璃 + 细边 + 顶部三点
+    ad.rounded_rectangle((0,0,cw-1,ch-1),radius=int(16*S),fill=(10,13,18,214),outline=(255,255,255,40),width=2)
+    for i,c in enumerate([(244,112,96,255),(246,190,92,255),(110,214,132,255)]):
+        cx0=int(pl+ i*13*S); cy0=int(pl*0.62)
+        ad.ellipse((cx0,cy0,cx0+int(5.4*S),cy0+int(5.4*S)),fill=c)
+    ty=int(pl*1.55)
     for prompt,pcol,rest,tcol in lines:
-        x=int(8*S)
+        x=pl
         if prompt:
-            ld.text((x,ty),prompt,font=fmn(mono_px,'SemiBold'),fill=pcol,anchor='lt')
-            x+=ld.textlength(prompt,font=fmn(mono_px,'SemiBold'))
+            ad.text((x,ty),prompt,font=fmn(mono_px,'SemiBold'),fill=pcol,anchor='lt')
+            x+=ad.textlength(prompt,font=fmn(mono_px,'SemiBold'))
         if rest:
-            ld.text((x,ty),rest,font=fmn(mono_px,'Regular'),fill=tcol,anchor='lt')
-        ty+=int(mono_px*1.62)
-    txt=lay.crop(lay.getbbox())
-    pad=int(9*S)
-    cv=Image.new('RGBA',(txt.width+2*pad,txt.height+2*pad),(0,0,0,0))
-    sh=Image.new('RGBA',txt.size,(0,0,0,0)); sh.paste((0,0,0,150),(0,0),txt.split()[3])
-    cv.alpha_composite(sh.filter(ImageFilter.GaussianBlur(2.5*S)),(pad+int(1.5*S),pad+int(1.5*S)))
-    cv.alpha_composite(txt,(pad,pad))
-    block=cv.rotate(-12.6,resample=Image.BICUBIC,expand=True)
-    img.alpha_composite(block,(int(1032*S-block.width/2),int(560*S-block.height/2)))
+            ad.text((x,ty),rest,font=fmn(mono_px,'Regular'),fill=tcol,anchor='lt')
+        ty+=lh
+    # 卡 A 的投影（柔黑，偏右下）
+    sh=A.split()[3].point(lambda v:int(v*0.55))
+    shl=Image.new('RGBA',(cw+int(40*S),ch+int(40*S)),(0,0,0,0))
+    shl.paste((0,0,0,150),(int(24*S),int(24*S)),sh)
+    shl=shl.filter(ImageFilter.GaussianBlur(7*S))
+    Arot=A.rotate(-12.6,resample=Image.BICUBIC,expand=True)
+    Shi=shl.rotate(-12.6,resample=Image.BICUBIC,expand=True)
+    ax,ay=int(1012*S-Arot.width/2),int(534*S-Arot.height/2)
+    img.alpha_composite(Shi,(ax+int(8*S),ay+int(14*S)))
+    img.alpha_composite(Arot,(ax,ay))
 
     # 页脚
     text(d,(110,796),'github.com/hazukieq/DSH-Mobile-with-Termux',16,(126,136,154),'Regular')
