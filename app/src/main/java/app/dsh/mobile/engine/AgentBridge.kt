@@ -1408,6 +1408,21 @@ document.getElementById('api').textContent = checks.map(function(c){
                 java.net.URLDecoder.decode(it.substring(i + 1), "UTF-8")
         }
 
+    /**
+     * v2.5.25：用提权 shell（Shizuku/Root）发一次 `input tap`。
+     *
+     * 为什么需要它：GitHub App / Play 商店账号抽屉这类界面把内容标成
+     * accessibilityDataSensitive 且开启 filterTouchesWhenObscured，Android 14+ 会
+     * **静默吞掉无障碍注入的手势**（dispatchGesture 返回 true，页面毫无变化）。
+     * shell(uid 2000) 的 `input tap` 走系统合成输入，不受这类应用层过滤影响。
+     * @return true 表示命令已执行（不代表页面一定响应）
+     */
+    private fun tapViaShell(x: Float, y: Float): Boolean {
+        val c = shotCtx ?: return false
+        if (Privilege.getMode(c) == PrivMode.NORMAL) return false
+        return Privilege.runPrivileged(c, "input tap ${x.toInt()} ${y.toInt()}") != null
+    }
+
     /** POST /tap → 坐标点击 / 按文本点击（text+desc 打分匹配，trim 忽略大小写）/ 按 desc 点击 */
     private fun tap(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
@@ -1503,6 +1518,39 @@ document.getElementById('api').textContent = checks.map(function(c){
                     t.optJSONArray("bounds")?.let { put("bounds", it) }
                     t.optString("text").takeIf { it.isNotBlank() }?.let { put("text", it) }
                 }.toString()
+            }
+            // v2.5.25：显式走提权通道（部分 App 拒绝无障碍注入，见 tapViaShell 注释）
+            val via = obj.optString("via").lowercase()
+            if (via == "shell") {
+                val pt: Pair<Float, Float>? = when {
+                    obj.has("x") && obj.has("y") ->
+                        obj.getDouble("x").toFloat() to obj.getDouble("y").toFloat()
+                    sel != null -> {
+                        val m = svc.findMatches(sel, byDesc = obj.has("desc"))
+                        val i = (if (obj.has("index")) obj.getInt("index") else 0)
+                            .coerceIn(0, (m.size - 1).coerceAtLeast(0))
+                        if (m.isEmpty()) null else android.graphics.Rect()
+                            .also { m[i].node.getBoundsInScreen(it) }
+                            .let { it.exactCenterX() to it.exactCenterY() }
+                    }
+                    else -> null
+                }
+                if (pt == null) {
+                    return 400 to """{"ok":false,"error":"via=shell needs x/y, or text/desc that resolves on screen"}"""
+                }
+                if (Privilege.getMode(shotCtx ?: svc) == PrivMode.NORMAL) {
+                    return 400 to """{"ok":false,"error":"via=shell requires Shizuku or root","how_to_fix":"enable privilege in settings, or drop via:shell"}"""
+                }
+                val okShell = tapViaShell(pt.first, pt.second)
+                return if (okShell) {
+                    200 to org.json.JSONObject().apply {
+                        put("ok", true); put("dispatched", true); put("via", "shell")
+                        put("x", pt.first.toInt()); put("y", pt.second.toInt())
+                        put("hint", "shell input tap 已执行；老设备/输入法抢焦点时仍可能落空，dump 校验一次")
+                    }.toString()
+                } else {
+                    500 to """{"ok":false,"error":"shell tap failed","failedAt":"tap","hint":"check privilege mode / Shizuku alive"}"""
+                }
             }
             val ok = when {
                 sel != null && index >= 0 -> {

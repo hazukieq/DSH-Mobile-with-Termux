@@ -145,6 +145,24 @@ v2.5.2 的事故正是把 `/launch`、`/launch-intent`、`/open`、`/app-screens
 - **噪声测试站 7 页**（滚动列表、延迟加载、图标无文字、弹窗遮挡、长列表滚动）：全部通过；
 - **跨应用任务**（浏览器 → 设置 → 返回原应用）：验证"操作完必须返回应用"的约束可被稳定执行。
 
+## 8.5 某些 App 会拒绝无障碍注入（v2.5.25）
+
+实测两个典型：**GitHub App**、**Google Play 商店的账号抽屉**。
+
+- Android 14+ 允许 App 把界面标成 `accessibilityDataSensitive`（账号、支付、令牌），
+  framework 只把这类节点树交给声明了 `android:isAccessibilityTool="true"` 的无障碍服务；
+  未声明时：`dump` 只剩 OCR（实测 GitHub App 从 `21 nodes / ocr=21 lines` 变成修好后的
+  `38 nodes`，Play 商店同理能读到「查看任务 / 赞助商广告 / Grok Bot …」），
+  而 `dispatchGesture` 会**返回 true 但页面毫无反应**（静默被吞）。
+- 修法（已内置）：`app/src/main/res/xml/dsh_accessibility_service.xml` 里声明
+  `android:isAccessibilityTool="true"`，并补 `flagRetrieveInteractiveWindows`
+  （账号抽屉是独立 Dialog/PopupWindow）与 `flagIncludeNotImportantViews`。
+  ⚠️ 这个开关**只能在 XML 声明**（运行时 `AccessibilityServiceInfo.isAccessibilityTool` 只读），
+  改完必须去系统设置里把无障碍服务**关一次再开**，新 XML 才生效。
+- 兜底通道：`scr tap --shell <x> <y>`（`POST /tap {"via":"shell"}`）走 Shizuku/Root 的
+  `input tap`（uid 2000 系统合成输入），不受应用层 `filterTouchesWhenObscured` 影响。
+  没装 Shizuku/Root 时会明确返回 `via=shell requires Shizuku or root`，不会静默失败。
+
 ## 8. 边界（请知悉）
 
 - **纯 Canvas/游戏画面**：没有可读文本时只能靠 OCR 与视觉定位，复杂画面仍可能失手；

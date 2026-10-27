@@ -540,6 +540,11 @@ The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button
 4. Settings is the `[role=dialog]` overlay (账号与余额 / 通用设置 / 模型 / 内置插件 / Agent 预设 …).
 
 Rules:
+- **Tap channel**: `scr tap <x> <y>` 走无障碍 `dispatchGesture`。少数 App（GitHub、Play 商店账号抽屉）
+  把界面标成 `accessibilityDataSensitive`，Android 14+ 会静默吞掉注入（回执 ok、页面不动）。
+  自检：同一页面 `scr dump` 若只有 OCR、节点数为 0，基本就是这个原因；本 App v2.5.25 起
+  XML 声明了 `isAccessibilityTool="true"`（改 XML 后必须去系统设置重开无障碍服务才生效）。
+  仍被吞时用 `scr tap --shell <x> <y>`（Shizuku/Root 的 `input tap`，需提权模式；否则会明确报错）。
 - **Click channel** (v2.5.20/2.5.22, 2026-10-27 实测 + 查资料): `cdp click` / `cdp click-text`
   默认走 **DOM click**（`el.click()`，交给 React 处理）。原因不是选择器问题，而是
   **Android WebView 不处理 CDP 合成输入**：Chrome 里 `Input.dispatchTouchEvent` 会交给

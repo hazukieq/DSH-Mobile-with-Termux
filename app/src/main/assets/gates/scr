@@ -9,7 +9,7 @@ if [ -z "$_DSH_REEXEC" ]; then
 fi
 # [dsh-android] scr: screen see & control via the accessibility service.
 #   see:    dump | dump-click | dump-full | xml | shot | pkg
-#   act:    tap <x> <y> | tap-text <t> | tap-desc <d>
+#   act:    tap <x> <y> | tap --shell <x> <y> | tap-text <t> | tap-desc <d>
 #           swipe <x1> <y1> <x2> <y2> [ms] | long-press <x> <y> [ms]
 #           key <back|home|recents|notifications|quick_settings>
 #   type:   input <text> [--target <hint>] [--append]     (v1.2.54)
@@ -80,7 +80,15 @@ case "$1" in
     dsh_http POST /idle '{"timeoutMs":200}' || exit 2
     ;;
   tap)
-    [ -n "$2" ] && [ -n "$3" ] || { echo "usage: scr tap <x> <y>" >&2; exit 64; }
+    # --shell：走 Shizuku/Root 的 `input tap`（v2.5.25）
+    #   部分 App（GitHub、Play 商店账号抽屉）把界面标成 accessibilityDataSensitive，
+    #   Android 14+ 会静默吞掉无障碍注入的手势；shell 合成输入不被这类过滤拦。
+    if [ "$2" = "--shell" ]; then
+      [ -n "$3" ] && [ -n "$4" ] || { echo "usage: scr tap --shell <x> <y>" >&2; exit 64; }
+      dsh_http POST /tap "{\"x\":$3,\"y\":$4,\"via\":\"shell\"}" && echo tapped-shell || { echo "shell tap failed (need Shizuku/root)" >&2; exit 1; }
+      exit 0
+    fi
+    [ -n "$2" ] && [ -n "$3" ] || { echo "usage: scr tap <x> <y>   |   scr tap --shell <x> <y>" >&2; exit 64; }
     dsh_http POST /tap "{\"x\":$2,\"y\":$3}" && echo tapped || { echo "tap failed" >&2; exit 1; }
     ;;
   tap-text)

@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 无障碍服务声明：手势注入（模拟点击/滑动/长按）+ 屏幕截图（API 30+，
      canTakeScreenshot 需用户重新开启服务后生效）+ 读取屏幕内容。
-     canPerformGestures 是模拟点击的关键 flag，Android 8+ 可用。 -->
+     canPerformGestures 是模拟点击的关键 flag，Android 8+ 可用。
+
+     v2.5.25 真机事故：GitHub App / Play 商店账号抽屉把界面标成 accessibilityDataSensitive，
+     Android 14+ 只会把这类节点树交给声明了 android:isAccessibilityTool="true" 的服务；
+     不声明时 dump 只剩 OCR（实测 GitHub App：0 节点 + 21 行 OCR），注入手势也会被静默丢弃。
+     flagRetrieveInteractiveWindows：账号抽屉是独立 Dialog/PopupWindow，不取交互窗口就拿不到。
+     flagIncludeNotImportantViews：很多自定义控件的容器节点 importantForAccessibility=no。 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_desc"
     android:accessibilityEventTypes="typeAllMask"
@@ -10,4 +16,5 @@
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
     android:canTakeScreenshot="true"
-    android:accessibilityFlags="flagDefault" />
+    android:isAccessibilityTool="true"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews" />

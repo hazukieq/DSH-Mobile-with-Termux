@@ -1,6 +1,7 @@
 package app.dsh.mobile
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
@@ -53,8 +54,21 @@ class DshAccessibilityService : AccessibilityService() {
             info.eventTypes = info.eventTypes or
                 AccessibilityEvent.TYPE_TOUCH_INTERACTION_START or
                 AccessibilityEvent.TYPE_TOUCH_INTERACTION_END
+            // v2.5.25：XML 里的 flag 只是初始值，部分 ROM/重连路径会回落到 flagDefault。
+            // 这里显式补齐两个关键 flag：
+            //  - flagRetrieveInteractiveWindows：账号抽屉这类 Dialog/PopupWindow 是独立窗口，
+            //    不取交互窗口时 getWindows() 只拿得到前台 Activity 那一个。
+            //  - flagIncludeNotImportantViews：Compose/自定义控件常把容器标成
+            //    importantForAccessibility=no，不包含就只剩零散文本节点。
+            info.flags = info.flags or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            // v2.5.25：GitHub App / Play 商店把界面标为 accessibilityDataSensitive，
+            // Android 14+ 只对 isAccessibilityTool=true 的服务开放节点树与手势注入。
+            // ⚠️ 该开关**只能在 XML 声明**（AccessibilityServiceInfo.isAccessibilityTool 是只读的），
+            // 改动后必须到系统设置里重新开关一次无障碍服务才会按新 XML 生效。
             serviceInfo = info
-        }.onFailure { android.util.Log.w("DshA11y", "touch event subscribe failed: ${it.message}") }
+        }.onFailure { android.util.Log.w("DshA11y", "serviceInfo update failed: ${it.message}") }
         // 悬浮窗（v1.2.57）：服务连上即显示，让用户随时看到 AI 在做什么。
         // 用 TYPE_ACCESSIBILITY_OVERLAY，无需额外授权。
         //
