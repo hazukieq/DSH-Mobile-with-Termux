@@ -7,9 +7,12 @@ S=2
 W,H=1600,900
 F='/usr/share/fonts/opentype/noto/NotoSansCJK-{}.ttc'
 MONO='/home/hazukie/.fonts/JetMonos/ttf/JetBrainsMono-{}.ttf'
+KAI='/home/hazukie/.fonts/lxgw-wenkai/LXGWWenKai-{}.ttf'
 
 def f(size, weight='Regular'):
-    return ImageFont.truetype(F.format(weight), int(size*S), index=2 if 'SC' not in weight else 2)
+    return ImageFont.truetype(F.format(weight), int(size*S), index=2)
+def fk(size, weight='Regular'):
+    return ImageFont.truetype(KAI.format(weight), int(size*S))
 def fm(size, weight='Regular'):
     return ImageFont.truetype(MONO.format(weight), int(size*S))
 
@@ -113,8 +116,45 @@ def whale(size, color):
         cv2.fillPoly(sh,[poly],255,lineType=cv2.LINE_AA); mask=cv2.bitwise_xor(mask,sh)
     im=Image.new('RGBA',(wp,hp),color); im.putalpha(Image.fromarray(mask)); return im
 
+def panel_on_quad(img, quad_px, lines, mono_px=34, pad_px=34, radius_px=26, fill_alpha=168, outline_alpha=52):
+    """把一张半透明终端卡按透视贴到四边形上（四边形来自底图玻璃卡）。"""
+    import cv2
+    pts=np.array(quad_px,dtype=np.float32)
+    sm=pts.sum(axis=1); df=np.diff(pts,axis=1).ravel()
+    tl=pts[np.argmin(sm)]; br=pts[np.argmax(sm)]
+    tr=pts[np.argmin(df)]; bl=pts[np.argmax(df)]
+    w=int(max(np.linalg.norm(tr-tl),np.linalg.norm(br-bl)))
+    h=int(max(np.linalg.norm(bl-tl),np.linalg.norm(br-tr)))
+    P=Image.new('RGBA',(w,h),(0,0,0,0))
+    pd=ImageDraw.Draw(P)
+    r=radius_px
+    if fill_alpha or outline_alpha:
+        pd.rounded_rectangle((0,0,w-1,h-1),radius=r,fill=(9,11,15,fill_alpha),outline=(255,255,255,outline_alpha),width=2)
+    fmn=lambda sz,wt: ImageFont.truetype(MONO.format(wt), sz)
+    ty=pad_px
+    for prompt,pcol,rest,tcol in lines:
+        x=pad_px
+        if prompt:
+            pd.text((x,ty),prompt,font=fmn(mono_px,'SemiBold'),fill=pcol,anchor='lt')
+            x+=pd.textlength(prompt,font=fmn(mono_px,'SemiBold'))
+        if rest:
+            pd.text((x,ty),rest,font=fmn(mono_px,'Regular'),fill=tcol,anchor='lt')
+        ty+=int(mono_px*1.55)
+    src=np.float32([[0,0],[w,0],[w,h],[0,h]])
+    M=cv2.getPerspectiveTransform(src,np.float32([tl,tr,br,bl]))
+    warp=cv2.warpPerspective(np.array(P), M, (img.width,img.height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0,0))
+    layer=Image.fromarray(warp)
+    img.alpha_composite(layer)
+
 def main():
     base=fit_base(BASE).convert('RGBA')
+    # v4：整体提亮——黑底从 #06070a 抬到 ~#1b1e25，保留高光不糊
+    arr=np.asarray(base.convert('RGB')).astype(np.float32)
+    arr=np.clip(arr*0.92+36,0,255)
+    # 轻微降低饱和，避免提亮后发蓝
+    lum=arr.mean(axis=2,keepdims=True)
+    arr=np.clip(lum+(arr-lum)*0.92,0,255)
+    base=Image.fromarray(arr.astype(np.uint8)).convert('RGBA')
     img=base.copy()
 
     # 左侧压暗，保证文字可读
@@ -130,7 +170,8 @@ def main():
 
     # 品牌眉标
     wm=whale(22,(150,170,255,255))
-    img.alpha_composite(wm,(112*S,120*S))
+    _cap=15*0.34           # 15px 文字的大写字母视觉中心约在 +5.1px
+    img.alpha_composite(wm,(112*S,int((116+_cap)*S-wm.height/2)))
     tx=text_end=text(d,(144,116),'DEEPSEEK HARNESS',15,(158,168,186),'Medium',3.4)
     # 融合锁记：术语绿 = Termux
     cx=text_end+20
@@ -146,9 +187,9 @@ def main():
     # 分隔线
     d.rectangle((110*S,462*S,182*S,464*S),fill=(62,70,86))
 
-    # 中文
-    text(d,(110,494),'完整的 Agent 引擎，跑在你的手机上。',33,SUB,'Regular')
-    text(d,(110,550),'终端 · 引擎 · 无障碍自动化 —— 一个 APK 全都有。',23,DIM,'Regular')
+    # 中文（霞鹜文楷）
+    d.text((110*S,494*S),'完整的 Agent 引擎，跑在你的手机上。',font=fk(34,'Regular'),fill=SUB,anchor='lt')
+    d.text((110*S,552*S),'终端 · 引擎 · 无障碍自动化 —— 一个 APK 全都有。',font=fk(27,'Regular'),fill=DIM,anchor='lt')
 
     # 玻璃 pills
     pills=['No Root','Termux 内核','本地推理']
@@ -163,28 +204,35 @@ def main():
     # 能力行
     mono(d,(110,704),'scr dump  ·  ppocr6  ·  int8 UI detector',16,(110,120,138))
 
-    # 终端玻璃面板（真实等宽文字；不用 CJK，避免等宽字体缺字变方块）
-    px,py,pw,ph=1006,624,474,172
-    card=Image.new('RGBA',(pw*S,ph*S),(0,0,0,0))
-    cd=ImageDraw.Draw(card)
-    cd.rounded_rectangle((0,0,pw*S-1,ph*S-1),radius=18*S,fill=(10,12,16,238),outline=(255,255,255,34),width=max(1,S))
-    img.alpha_composite(card,(px*S,py*S))
-    d2=ImageDraw.Draw(img)
-    for i,col in enumerate([(255,95,86),(255,189,46),(39,201,63)]):
-        d2.ellipse(((px+16+i*15)*S,(py+15)*S,(px+21+i*15)*S,(py+20)*S),fill=col+(255,))
-    lines=[('$ ', (141,240,200,255), 'scr dump', (212,221,236,255)),
-           ('',  None, 'fg=com.tencent.mobileqq   1080x2376', (146,158,176,255)),
-           ('',  None, '37 nodes  ocr 12  icon 6  · 0.42s', (118,130,148,255)),
-           ('$ ', (141,240,200,255), '/act tap 540,804', (212,221,236,255)),
-           ('',  None, 'ok  via=gesture  · 1 step', (96,214,168,255))]
-    ty=py+40
+    # 终端卡：文字直接排在那块磨砂玻璃卡上（卡片实测中心 (1032,568)，倾斜 -12.6°）
+    mono_px=int(14*S)
+    lines=[('$ ', (141,240,200,255), 'dsh web', (238,243,252,255)),
+           ('',  None, ':3080 ready', (214,224,238,255)),
+           ('$ ', (141,240,200,255), 'scr dump', (238,243,252,255)),
+           ('',  None, '1080x2376', (214,224,238,255)),
+           ('',  None, '37 nodes', (214,224,238,255)),
+           ('$ ', (141,240,200,255), '/act tap', (238,243,252,255)),
+           ('',  None, 'ok gesture', (120,232,186,255))]
+    lw,lh=int(176*S),int(190*S)
+    lay=Image.new('RGBA',(lw,lh),(0,0,0,0)); ld=ImageDraw.Draw(lay)
+    fmn=lambda sz,wt: ImageFont.truetype(MONO.format(wt), sz)
+    ty=int(4*S)
     for prompt,pcol,rest,tcol in lines:
-        x=px+17
+        x=int(8*S)
         if prompt:
-            d2.text((x*S,ty*S),prompt,font=fm(14,'SemiBold'),fill=pcol,anchor='lt')
-            x+=d2.textlength(prompt,font=fm(14,'SemiBold'))/S
-        d2.text((x*S,ty*S),rest,font=fm(14,'Regular'),fill=tcol,anchor='lt')
-        ty+=26
+            ld.text((x,ty),prompt,font=fmn(mono_px,'SemiBold'),fill=pcol,anchor='lt')
+            x+=ld.textlength(prompt,font=fmn(mono_px,'SemiBold'))
+        if rest:
+            ld.text((x,ty),rest,font=fmn(mono_px,'Regular'),fill=tcol,anchor='lt')
+        ty+=int(mono_px*1.62)
+    txt=lay.crop(lay.getbbox())
+    pad=int(9*S)
+    cv=Image.new('RGBA',(txt.width+2*pad,txt.height+2*pad),(0,0,0,0))
+    sh=Image.new('RGBA',txt.size,(0,0,0,0)); sh.paste((0,0,0,150),(0,0),txt.split()[3])
+    cv.alpha_composite(sh.filter(ImageFilter.GaussianBlur(2.5*S)),(pad+int(1.5*S),pad+int(1.5*S)))
+    cv.alpha_composite(txt,(pad,pad))
+    block=cv.rotate(-12.6,resample=Image.BICUBIC,expand=True)
+    img.alpha_composite(block,(int(1032*S-block.width/2),int(560*S-block.height/2)))
 
     # 页脚
     text(d,(110,796),'github.com/hazukieq/DSH-Mobile-with-Termux',16,(126,136,154),'Regular')

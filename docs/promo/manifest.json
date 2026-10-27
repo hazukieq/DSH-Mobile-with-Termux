@@ -1,6 +1,6 @@
 {
-  "version": "banner-v3",
-  "built_at": "2026-10-28T00:56:28+08:00",
+  "version": "banner-v4",
+  "built_at": "2026-10-28T01:06:09+08:00",
   "approach": "local Qwen-Image 2.1 text-to-image (ComfyUI) for the hero art + deterministic Pillow typography overlay; text is never drawn by the diffusion model",
   "generation": {
     "runtime": "ComfyUI 0.38.0, 127.0.0.1:8188",
@@ -104,5 +104,26 @@
       "sha256": "599920387a2f47bdbf8a0dd39dd1cf6b81fe627abbf2cc96af420708a007530e"
     }
   ],
-  "fixes": "v3：底图重生成（屏幕全黑、无任何伪文字），把原先像“乱码字”的发光条纹彻底去掉，改为一枚直排终端玻璃卡（真实 JetBrains Mono 文字）；标题渐变改水平方向（每字母明度一致）、整串绘制保留字距、副标题/胶囊字号上调"
+  "fixes": "v3：底图重生成（屏幕全黑、无任何伪文字），把原先像“乱码字”的发光条纹彻底去掉，改为一枚直排终端玻璃卡（真实 JetBrains Mono 文字）；标题渐变改水平方向（每字母明度一致）、整串绘制保留字距、副标题/胶囊字号上调",
+  "typo_revision": {
+    "why": "用户反馈「字都是歪歪扭扭的」→ 移除 AI 生成的发光伪文字，屏幕全黑，所有文字由 Pillow 用真实字体绘制",
+    "changes": [
+      "终端卡改为直接排在底图那块磨砂玻璃卡上（-12.6° 对齐、实测卡片中心 (1032,560)）",
+      "背景整体提亮（黑底 #06070a → ~#2a2e36，保留高光）",
+      "中文正文改用霞鹜文楷 LXGW WenKai",
+      "副标题放大 23→27",
+      "顶部鲸鱼图标按 cap-height 视觉中心与 DEEPSEEK HARNESS 同排对齐"
+    ]
+  },
+  "typography": {
+    "cjk_body": "LXGW WenKai (霞鹜文楷)",
+    "latin_head": "Noto Sans CJK SC Bold",
+    "mono": "JetBrains Mono"
+  },
+  "sha256": {
+    "dsh-mobile-github.png": "7e9bd47eec915701",
+    "dsh-mobile-github@2x.png": "179f1d43ef38777e",
+    "dsh-mobile-github.webp": "31586096f4457b63",
+    "dsh-mobile-social.png": "86c5656f704e8897"
+  }
 }
