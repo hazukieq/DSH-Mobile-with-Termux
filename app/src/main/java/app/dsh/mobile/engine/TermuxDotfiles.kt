@@ -30,7 +30,7 @@ object TermuxDotfiles {
     private const val TRASH_CLI_MARKER = "DSH Mobile trash-cli"
     private const val APP_DOC_ASSET = "agents/DSH-MOBILE.md"
     private const val APP_DOC_MARKER = "dsh-mobile app doc v"
-    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v66 "
+    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v67 "
     private const val CDP_HELPER_ASSET = "termux/webview-cdp.mjs"
     private const val CDP_WRAPPER_ASSET = "termux/dsh-mobile.sh"
     private const val CDP_HELPER_MARKER = "DSH Mobile helper"

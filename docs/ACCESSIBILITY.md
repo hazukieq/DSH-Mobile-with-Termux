@@ -183,6 +183,37 @@ scr calib --list       # 看已存的分桶参数
 返回示例：`{"pairs":14,"fit":{"sx":1.0,"sy":1.0,"dx":0,"dy":-3},"maeBefore":2.4,"maeAfter":0.9,"applied":true}`。
 `/ocr` 与 `/scene` 返回的 OCR 坐标会自动经过该映射。
 
+## 8.7 `ownOverlay`：自家悬浮窗命中与绕行（v2.5.35）
+
+`ownOverlay:true` 表示落点命中本 App 的无障碍悬浮窗。**是否会被吞取决于落点性质**，不要凭矩阵猜：
+
+| 落点 | 谁在处理触摸 | 表现 | 处置 |
+| --- | --- | --- | --- |
+| 自家悬浮窗的**可交互控件**（胶囊、工具条按钮） | 本 App 的 View | 正常响应 | 直接用坐标手势（实测 6/6 有效） |
+| 自家悬浮窗的**透明区域**，下方是第三方 App | 悬浮窗吃掉且不响应 | 手势被吞、页面无变化 | 改用节点动作，或先收起悬浮窗 |
+| 第三方 App 普通区域 | 第三方 App | 正常 | 直接用坐标手势 |
+
+三步判定（不要靠猜）：
+
+1. 点完立刻 `scr changed`：`{"changed":false}` 就是没生效；
+2. 读回执的 `ownOverlay` / `window.all` / `staleFullScreenNode`：
+   `window.all` 里同时出现 `com.termux/TYPE_ACCESSIBILITY_OVERLAY` 与前台 App → 优先怀疑自家悬浮窗；
+3. 绕行（按代价从低到高）：
+   - 节点语义：`POST /act {"steps":[{"tap":"<屏上文字>"}]}`（实测有效）；
+   - 收起悬浮窗再点：`POST /overlay {"show":false}`、`scr status-hide`；
+   - 自家悬浮条/球上的按钮：`scr status --action` 或 `POST /overlay`。
+
+实测案例（2026-10-27，B 站 v8.x「热门」页）：目标「排行榜」行中心 `(128,480)`；
+`POST /tap {"x":128,"y":480}` → `ok:true`、`ownOverlay:true`、`window.all` 含
+`com.termux/TYPE_ACCESSIBILITY_OVERLAY (top 415, left 24, area 529137)`，`scr changed` 返回
+`{"changed":false}`（重复两次一致）；改用 `POST /act {"steps":[{"tap":"排行榜"}]}` 立即进入
+「全区排行榜」。注意该行是**文本节点**：`tap-desc "排行榜"` 会报 `target not found`（回执 nearest
+显示 `排行榜(dist=0)`），要按 text 匹配。
+
+实测对照（胶囊）：先用节点动作收起工具条并自证（`scr dump` 里 `重启 @` 计数为 0），再
+`POST /tap {"x":540,"y":144}` → 工具条恢复；6 轮全中，控制组 `(300,144)` 无变化。胶囊节点
+`center [540,144] bounds [444,120,636,168] clickable`。
+
 ## 8. 边界（请知悉）
 
 - **纯 Canvas/游戏画面**：没有可读文本时只能靠 OCR 与视觉定位，复杂画面仍可能失手；
@@ -191,7 +222,7 @@ scr calib --list       # 看已存的分桶参数
 - **部分应用的防自动化检测**：不保证 100% 通过（我们也不做规避检测的对抗）。
 
 
-## 9. 通知栏（shade）与系统 UI
+## 8.8 通知栏（shade）与系统 UI
 
 无障碍的 `dispatchGesture` 是合成手势，SystemUI 的 shade 是独立窗口，动画期间会丢弃合成事件——所以「坐标点得准也点不动」。可用手段：
 
@@ -231,7 +262,9 @@ scr calib --list       # 看已存的分桶参数
 
 - `sent` 是调用方给的坐标，`dispatchedAt` 是抖动/边界钳制后真正派发的点（差分大说明坐标被改写过）；
 - `staleFullScreenNode` 存在时，该窗口的 a11y 几何不可信，坐标请从截图上量；
-- 落在本 App 悬浮条上时给 `ownOverlay:true` + 提示改用 `/overlay` 或 `scr status --action`（无障碍注入手势常被自己的悬浮窗吞掉）。
+- `ownOverlay:true` 只说明「落点在本 App 的无障碍悬浮窗上」，**不等于一定被吞**：
+  落在悬浮窗的可交互控件（胶囊、工具条按钮）上会正常响应；落在悬浮窗的透明区域（下方是第三方 App）
+  才会被吃掉。判定见 §8.7。
 
 **能力矩阵（实测 2026-10-27，vivo V2520A / Android 17）**
 
@@ -239,7 +272,8 @@ scr calib --list       # 看已存的分桶参数
 | --- | --- | --- |
 | 普通第三方 App（GitHub / 酷狗 / 设置 / B站） | ✅ | ✅ |
 | SystemUI 通知栏 shade | ✅（本版实测可用） | ✅ |
-| DSH 自身悬浮条 / 悬浮球 | ❌ | ✅（`scr status --action`、`/overlay`） |
+| DSH 悬浮窗上的**可交互控件**（胶囊、工具条按钮） | ✅（2.5.35 实测 6/6） | ✅ |
+| DSH 悬浮窗的**透明区域**（下方是第三方 App） | ❌（触摸被悬浮窗吃掉、我们又不响应） | ✅（改节点点击或先收起悬浮窗） |
 | 存在残留全屏节点的窗口 | ✅（手势不受影响） | ⚠️ 中心坐标可能偏，改用截图坐标 |
 
 ## 9.1 统一分发与窗口诊断（v2.5.31 / 2.5.35）
@@ -257,8 +291,32 @@ scr calib --list       # 看已存的分桶参数
 | `window.all` | 所有包含该点的窗口，按面积升序（系统 UI 窗口也可能是全屏，勿只看面积） |
 | `node` | `via` 为节点语义时命中的节点标签 |
 | `staleFullScreenNode` | 当前页存在面积 ≥ 全屏的 clickable 残留节点时给出其标签 |
-| `ownOverlay` | 落点在本 App 无障碍悬浮窗上（合成手势会被吞，改用 `/overlay` 或节点点击） |
+| `ownOverlay` | 落点在本 App 无障碍悬浮窗上；是否被吞看落点性质（§8.7）——自家控件正常，透明区被吃 |
 
 回归自测（2.5.35，1080×2376）：酷狗列表行 `540,804` → `via=gesture`、`dispatchedAt=540,804`、
 `window.target=kugou TYPE_APPLICATION`；通知栏通知卡 `540,846` → `window.target=systemui
 TYPE_SYSTEM`，点后 shade 收起；`/act` 里同样的字段可见。
+
+## 10. 两条执行纪律：回执必读 · 坐标来源（2026-10-27 实测代价换来的）
+
+### 10.1 回执必读
+
+- 任何 bridge 调用（`/act`、`/gesture`、`/tap`、`/share`、`/launch`、`/open` …）都必须立即读回执，
+  检查 `ok` / `error` / `verified` / `changed` / `opened` / `handoff` / `ownOverlay` / `window`。
+- `ok:false`、`verified:false`、`changed:false`、`opened:false` 一律按失败处理，不得当成成功。
+- 禁止 `command >/dev/null` 静默丢弃回执；需要精简时用摘要封装（例如 `actq`）。
+- `handoff:true` 的动作（share / open / launch）不得重试，重试会产生重复副作用。
+
+真实翻车（同一天）：`/gesture` 漏传 `type` 返回 `{"ok":false,...}`，因为 stdout 被丢掉，
+被误判成「系统吞了手势」；`native share` 把 `handoff` 当失败重试，同一文件在 QQ「我的电脑」发了 3 份；
+`am force-stop` 返回 rc=0 但其实没停；把 `/proc`、`ps` 当「任务栈已清」的定论。
+
+### 10.2 坐标来源
+
+- 坐标只能来自当前屏幕的 `/scene` 或 `/screen?format=json` 的 `bounds`/`center`，或上一次成功
+  点击的回执；**禁止目测、按比例估算、复用旧页面坐标**。
+- 截图预览（如 581×1280）与真实屏幕（1080×2376）比例不同，禁止在预览图上手算坐标。
+- 需要系统级注入时才用 `scr tap --shell`（Shizuku/Root）；普通点击优先节点语义或 `/act` 事务。
+
+真实翻车：胶囊被估成 `(465,186)`/`(465,195)` 连点失败（真实中心 `(540,144)`），随后被错误推广成
+「自家悬浮层不吃坐标手势」；复用上一次页面的开屏「跳过」坐标，点进了视频页。

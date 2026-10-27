@@ -148,6 +148,36 @@ scr calib --list       # show stored buckets
 
 `/ocr` and `/scene` apply the mapping to OCR coordinates automatically.
 
+## 8.7 `ownOverlay`: hitting our own overlay, and how to route around it (v2.5.35)
+
+`ownOverlay:true` means the point is inside DSH's accessibility overlay window. **Whether the tap is
+swallowed depends on what is under it** - do not guess from a matrix:
+
+| Hit | Who handles the touch | Result | What to do |
+| --- | --- | --- | --- |
+| An **interactive control** of our overlay (pill, toolbar button) | Our own View | Works | Coordinate tap is fine (6/6 measured) |
+| The overlay's **transparent area** over a third-party app | The overlay eats it, nobody reacts | Swallowed, page unchanged | Use node actions, or hide the overlay first |
+| Normal area of a third-party app | That app | Works | Coordinate tap is fine |
+
+Three-step check:
+
+1. Right after the tap run `scr changed`: `{"changed":false}` means it did not land;
+2. Read `ownOverlay` / `window.all` / `staleFullScreenNode` from the receipt: if `window.all` contains
+   both `com.termux/TYPE_ACCESSIBILITY_OVERLAY` and the foreground app, suspect our overlay;
+3. Route around it (cheapest first): node semantics `POST /act {"steps":[{"tap":"<text on screen>"}]}`;
+   hide the overlay with `POST /overlay {"show":false}` / `scr status-hide`; for buttons on our own
+   bar use `scr status --action`.
+
+Case (2026-10-27, Bilibili "hot" tab): target row "排行榜" at `(128,480)`;
+`POST /tap {"x":128,"y":480}` returned `ok:true`, `ownOverlay:true`, `window.all` containing
+`com.termux/TYPE_ACCESSIBILITY_OVERLAY (top 415, left 24, area 529137)`, and `scr changed` replied
+`{"changed":false}` - twice. `POST /act {"steps":[{"tap":"排行榜"}]}` opened the ranking page at once.
+That row is a **text node**: `tap-desc "排行榜"` fails with `target not found` (receipt shows
+`nearest 排行榜(dist=0)`), match by text instead.
+
+Control case (the pill): collapse the toolbar with a node action first (assert `scr dump` has zero
+`重启 @` nodes), then `POST /tap {"x":540,"y":144}` restores it - 6/6, while `(300,144)` changes nothing.
+
 ## 8. Limits (be aware)
 
 - **Pure canvas / game frames**: with no readable text, only OCR and visual localization remain;
@@ -159,7 +189,7 @@ scr calib --list       # show stored buckets
 
 ## 9. Coordinate taps: semantics and the v2.5.30 regression fix
 
-`/tap {x,y}` means **pixels**: it dispatches a synthetic gesture and does NOT silently resolve the point to an accessibility node. v2.5.29 did the opposite and made coordinate taps unreliable (wrong ancestors, stale full-screen nodes, swallowed taps on the notification shade). Measured on 2026-10-27 (vivo V2520A, Android 17): gesture taps work on third-party apps and on the SystemUI shade; they are swallowed by DSH's own accessibility overlay (use `/overlay` or `scr status --action` there).
+`/tap {x,y}` means **pixels**: it dispatches a synthetic gesture and does NOT silently resolve the point to an accessibility node. v2.5.29 did the opposite and made coordinate taps unreliable (wrong ancestors, stale full-screen nodes, swallowed taps on the notification shade). Measured on 2026-10-27 (vivo V2520A, Android 17): gesture taps work on third-party apps and on the SystemUI shade. On DSH's own accessibility overlay it depends on the hit: taps on our **interactive controls** (the collapsed pill, toolbar buttons) work (6/6), while taps on the overlay's **transparent area** over a third-party app are swallowed - use node actions or hide the overlay there (see 8.7).
 
 Node semantics are still available explicitly with `{"via":"auto"}`, now guarded so that nodes covering >=60% of the screen (stale full-screen layers left by closed sidebars) are never used as tap targets - the call degrades to a gesture instead.
 
@@ -174,3 +204,29 @@ synthetic gesture by default (jitter ≤ 4 px), node semantics only with `{"smar
 
 `window.target` prefers the **foreground app's** window, because system-UI windows can also be
 full-screen; `window.all` lists every window containing the point, ascending by area.
+
+## 10. Two execution rules bought with real mistakes (2026-10-27)
+
+### 10.1 Always read the receipt
+
+- Every bridge call (`/act`, `/gesture`, `/tap`, `/share`, `/launch`, `/open` ...) must read its receipt
+  immediately and check `ok` / `error` / `verified` / `changed` / `opened` / `handoff` / `ownOverlay` / `window`.
+- `ok:false`, `verified:false`, `changed:false`, `opened:false` are failures, not successes.
+- Never discard receipts with `command >/dev/null`; wrap with a summarizer (e.g. `actq`) when output must be short.
+- `handoff:true` actions (share / open / launch) must never be retried - retrying duplicates side effects.
+
+Real cost: `/gesture` without `type` returned `{"ok":false,...}`, the stdout was thrown away, and it was
+misread as "the system swallowed the gesture"; a `native share` treated `handoff` as failure and retried,
+sending the same file to QQ "My Computer" three times.
+
+### 10.2 Where coordinates come from
+
+- Coordinates may only come from the current `/scene` or `/screen?format=json` `bounds`/`center`, or from
+  the receipt of a previous successful tap. No eyeballing, no proportional estimation, no reusing old
+  screen coordinates.
+- A downscaled screenshot (e.g. 581x1280) is not the screen (1080x2376): never compute coordinates on it.
+- Use `scr tap --shell` only when system-level injection is required (Shizuku/root); otherwise prefer node
+  semantics or an `/act` transaction.
+
+Real cost: the pill was estimated at `(465,186)`/`(465,195)` and missed twice (real centre `(540,144)`),
+which then produced the wrong generalisation "our overlay does not accept coordinate taps".

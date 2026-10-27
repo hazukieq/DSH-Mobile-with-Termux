@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v66 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v67 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -201,6 +201,17 @@ Other useful native endpoints: `GET /process` (pid/uid/version/debug flag/devtoo
 `POST /launch-intent` (`component` + `extras`), `GET /notif` (list notifications), `POST /notify`, `GET /say`/`POST /say`,
 `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`.
 
+### Ground rules every agent must follow (tap/act/share)
+
+- **Always read the receipt** of any bridge call (`/act`, `/gesture`, `/tap`, `/share`, `/launch`, `/open`):
+  `ok:false` / `verified:false` / `changed:false` / `opened:false` mean failure. Never discard it with
+  `>/dev/null`; wrap it (e.g. `actq`) if it must be short. `handoff:true` actions must never be retried.
+- **Coordinates only from the current screen**: `/scene` or `/screen?format=json` `bounds`/`center`, or the
+  receipt of a previous successful tap. No eyeballing, no proportional math on downscaled screenshots.
+- **`ownOverlay:true`** only means the point is inside our own accessibility overlay - our own controls
+  (pill, toolbar) still respond to coordinate taps; its transparent area swallows them (use node actions
+  or `/overlay {"show":false}`). Details: repo `docs/ACCESSIBILITY.md` §8.7.
+
 ### Instant actions (tap / scroll / type / key)
 
 All simulated-input endpoints (`/tap`, `/tap-id`, `/gesture`, `/key`, `/input`, `/scroll-*`,
@@ -209,6 +220,10 @@ type|key|scroll`) return `instant:true`, `verify:"none"` and
 `do_not:["screenshot_immediately","retry_immediately"]`. The event has been dispatched; the UI
 may be mid-animation or the user may have moved on. To verify a result: settle (`scr idle` or
 `cdp wait`) then read once. Screenshots are for evidence/diagnosis, not tap confirmation.
+
+Details that do not fit in this built-in doc: repo `docs/ACCESSIBILITY.md` (tap semantics, capability
+matrix, `ownOverlay`), `docs/CLICK_CHAIN_UPGRADE.md` (multi-step chains), `docs/` has an index at
+`docs/README.md`.
 
 ### Opening files with system apps (no desktop needed)
 
