@@ -1,6 +1,6 @@
 {
-  "version": "banner-v2",
-  "built_at": "2026-10-28T00:48:54+08:00",
+  "version": "banner-v3",
+  "built_at": "2026-10-28T00:56:28+08:00",
   "approach": "local Qwen-Image 2.1 text-to-image (ComfyUI) for the hero art + deterministic Pillow typography overlay; text is never drawn by the diffusion model",
   "generation": {
     "runtime": "ComfyUI 0.38.0, 127.0.0.1:8188",
@@ -10,14 +10,14 @@
       "vae": "qwen_image_2.1_vae_bf16.safetensors"
     },
     "graph": "UNETLoader -> ModelSamplingAuraFlow(shift 3.1) -> KSampler(euler/simple, 28 steps, cfg 3.0) ; CLIPLoader(qwen_image) -> TextEncodeQwenImage21 ; EmptySD3LatentImage 1600x896",
-    "seed": 90210,
+    "seed": 31337,
     "size": [
       1600,
       896
     ],
     "wall_time_s": 120,
     "script": "qwen_t2i.py",
-    "selected_base": "source/qwen-hero-v4.png",
+    "selected_base": "source/qwen-hero-v5.png",
     "rejected": [
       {
         "file": "poster_v1",
@@ -31,7 +31,8 @@
         "file": "poster_v3",
         "why": "model invented garbled pseudo-letters and a dollar sign on screen"
       }
-    ]
+    ],
+    "prompt_note": "v5 prompt 明确 screen is completely off and pitch black, no content, no letters；并加 floating frosted glass terminal card"
   },
   "copy": [
     "DEEPSEEK HARNESS × TERMUX",
@@ -77,30 +78,31 @@
   },
   "sources": [
     {
-      "file": "source/qwen-hero-v4.png",
-      "origin": "Qwen-Image 2.1 local generation (seed 90210)",
-      "sha256": "d10e28a9df3cc22c865e703d86f9dc94a0ed394b71a2872f64eb7f40979f75fd"
-    },
-    {
       "file": "source/ic_launcher_foreground.xml",
       "origin": "app/src/main/res/drawable/ic_launcher_foreground.xml",
       "sha256": "9c6a4cc1c06fc9379e3cc47ca42265d20dd911d886dd92268d26af8c3afc6e95"
     },
     {
       "file": "dsh-mobile-github.png",
-      "sha256": "191055d3641b26041926b44c7fbd07aba01d78af323446151b111eaa326afc9e"
+      "sha256": "c848838f049895b8fdfdb8a6c3b54bde09198c57387722caa3e5e1f6ceb94131"
     },
     {
       "file": "dsh-mobile-github@2x.png",
-      "sha256": "9a1ef117e38275a23047ddb813ea6b5ed99e95093b329a05183c4780a2f509df"
+      "sha256": "a1a9d5d14a915ce67ad5edb43e2897b13174ccd2bcf73c832c66d28a0f0631ca"
     },
     {
       "file": "dsh-mobile-github.webp",
-      "sha256": "3fdeb2ee783c03999b2119c700039f1ce1b4425ee6955160114f0dc10081ade4"
+      "sha256": "e4575cc51ea19b70cca58b9e10a34c2c454c2d7c2cac795009bf138d58f1b3ed"
     },
     {
       "file": "dsh-mobile-social.png",
-      "sha256": "a54bb4038fd2e7f1ab5a72d6f4518925070b3c8f7a8d73929a9c3b384282d911"
+      "sha256": "e27361ff0625f9ce119c1043a9734cfb33aa980202b15f697744ba862e84408e"
+    },
+    {
+      "file": "source/qwen-hero-v5.png",
+      "origin": "Qwen-Image 2.1 local generation (seed 31337)",
+      "sha256": "599920387a2f47bdbf8a0dd39dd1cf6b81fe627abbf2cc96af420708a007530e"
     }
-  ]
+  ],
+  "fixes": "v3：底图重生成（屏幕全黑、无任何伪文字），把原先像“乱码字”的发光条纹彻底去掉，改为一枚直排终端玻璃卡（真实 JetBrains Mono 文字）；标题渐变改水平方向（每字母明度一致）、整串绘制保留字距、副标题/胶囊字号上调"
 }

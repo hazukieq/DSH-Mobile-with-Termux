@@ -25,23 +25,25 @@ def fit_base(path):
     x=(im.width-tw)//2; y=(im.height-th)//2
     return im.crop((x,y,x+tw,y+th))
 
-def grad_text(img, xy, value, size, weight, top, bottom, tracking=0):
+def grad_text(img, xy, value, size, weight, left_color, right_color, tracking=0):
     l,t=xy
     ft=f(size,weight)
     mask=Image.new('L', img.size, 0)
-    d=ImageDraw.Draw(mask)
-    x=l*S
-    for ch in value:
-        d.text((x, t*S), ch, font=ft, fill=255, anchor='lt')
-        x+=d.textlength(ch,font=ft)+tracking*S
-    bb=mask.getbbox() or (int(l*S),int(t*S),int((l+600)*S),int((t+size)*S))
-    y0,y1=bb[1],bb[3]
-    h=max(1,y1-y0)
-    arr=np.zeros((img.height,img.width,3),np.uint8)
-    c0=np.array(top,dtype=float); c1=np.array(bottom,dtype=float)
-    ys=np.clip((np.arange(img.height)-y0)/h,0,1).reshape(-1,1,1)
-    col=np.clip(c0*(1-ys)+c1*ys,0,255).astype(np.uint8)
-    arr[:]=col
+    md=ImageDraw.Draw(mask)
+    if tracking:
+        x=l*S
+        for ch in value:
+            md.text((x, t*S), ch, font=ft, fill=255, anchor='lt')
+            x+=md.textlength(ch,font=ft)+tracking*S
+    else:
+        md.text((l*S, t*S), value, font=ft, fill=255, anchor='lt')
+    bb=mask.getbbox() or (int(l*S),int(t*S),int((l+900)*S),int((t+size)*S))
+    x0,x1=bb[0],bb[2]
+    w=max(1,x1-x0)
+    xs=np.clip((np.arange(img.width)-x0)/w,0,1).reshape(1,-1,1)
+    c0=np.array(left_color,dtype=float); c1=np.array(right_color,dtype=float)
+    row=np.clip(c0*(1-xs)+c1*xs,0,255).astype(np.uint8)
+    arr=np.repeat(row,img.height,axis=0)
     layer=Image.fromarray(arr).convert('RGBA'); layer.putalpha(mask)
     img.alpha_composite(layer)
 
@@ -139,14 +141,14 @@ def main():
 
     # 主标题
     text(d,(110,176),'DeepSeek',112,TXT,'Bold')
-    grad_text(img,(110,290),'on Android.',112,'Bold',(96,124,255),(88,228,196))
+    grad_text(img,(110,290),'on Android.',112,'Bold',(104,132,255),(90,226,198))
 
     # 分隔线
     d.rectangle((110*S,462*S,182*S,464*S),fill=(62,70,86))
 
     # 中文
-    text(d,(110,498),'完整的 Agent 引擎，跑在你的手机上。',29,SUB,'Regular')
-    text(d,(110,546),'终端 · 引擎 · 无障碍自动化 —— 一个 APK 全都有。',20,DIM,'Regular')
+    text(d,(110,494),'完整的 Agent 引擎，跑在你的手机上。',33,SUB,'Regular')
+    text(d,(110,550),'终端 · 引擎 · 无障碍自动化 —— 一个 APK 全都有。',23,DIM,'Regular')
 
     # 玻璃 pills
     pills=['No Root','Termux 内核','本地推理']
@@ -154,19 +156,42 @@ def main():
     for p in pills:
         wt=d.textlength(p,font=f(16,'Medium'))/S
         w=wt+34
-        glass(img,(x,606,x+w,606+46),23)
-        text(d,(x+17,619),p,16,(215,222,235),'Medium')
+        glass(img,(x,604,x+w,604+48),24)
+        d.text(((x+18)*S,(604+24)*S), p, font=f(17,'Medium'), fill=(215,222,235), anchor='lm')
         x+=w+12
 
     # 能力行
-    mono(d,(110,700),'scr dump  ·  ppocr6  ·  int8 UI detector',15,(104,114,132))
+    mono(d,(110,704),'scr dump  ·  ppocr6  ·  int8 UI detector',16,(110,120,138))
+
+    # 终端玻璃面板（真实等宽文字；不用 CJK，避免等宽字体缺字变方块）
+    px,py,pw,ph=1006,624,474,172
+    card=Image.new('RGBA',(pw*S,ph*S),(0,0,0,0))
+    cd=ImageDraw.Draw(card)
+    cd.rounded_rectangle((0,0,pw*S-1,ph*S-1),radius=18*S,fill=(10,12,16,238),outline=(255,255,255,34),width=max(1,S))
+    img.alpha_composite(card,(px*S,py*S))
+    d2=ImageDraw.Draw(img)
+    for i,col in enumerate([(255,95,86),(255,189,46),(39,201,63)]):
+        d2.ellipse(((px+16+i*15)*S,(py+15)*S,(px+21+i*15)*S,(py+20)*S),fill=col+(255,))
+    lines=[('$ ', (141,240,200,255), 'scr dump', (212,221,236,255)),
+           ('',  None, 'fg=com.tencent.mobileqq   1080x2376', (146,158,176,255)),
+           ('',  None, '37 nodes  ocr 12  icon 6  · 0.42s', (118,130,148,255)),
+           ('$ ', (141,240,200,255), '/act tap 540,804', (212,221,236,255)),
+           ('',  None, 'ok  via=gesture  · 1 step', (96,214,168,255))]
+    ty=py+40
+    for prompt,pcol,rest,tcol in lines:
+        x=px+17
+        if prompt:
+            d2.text((x*S,ty*S),prompt,font=fm(14,'SemiBold'),fill=pcol,anchor='lt')
+            x+=d2.textlength(prompt,font=fm(14,'SemiBold'))/S
+        d2.text((x*S,ty*S),rest,font=fm(14,'Regular'),fill=tcol,anchor='lt')
+        ty+=26
 
     # 页脚
-    text(d,(110,796),'github.com/hazukieq/DSH-Mobile-with-Termux',15,(122,132,150),'Regular')
+    text(d,(110,796),'github.com/hazukieq/DSH-Mobile-with-Termux',16,(126,136,154),'Regular')
     text(d,(110,824),'OPEN SOURCE · MIT · ANDROID',11,(74,82,98),'Medium',2.6)
 
     # 右下角角标
-    mono(d,(1400,824),'v2.5.38',12,(64,72,88))
+    mono(d,(1394,822),'v2.5.39',12,(64,72,88))
 
     final=img.convert('RGB')
     final.save(OUT+'.png')

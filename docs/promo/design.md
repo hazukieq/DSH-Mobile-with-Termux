@@ -7,8 +7,12 @@
 ## 视觉方案
 
 深黑底 + 单点冷光。左半屏是纯黑负空间与排版，右半屏是一台悬浮 Android 手机：金属边被
-蓝宝石色轮廓光勾出，屏幕里只有抽象的青绿色代码光带（不含任何字形），左下有一道细青色
-镜头光斑，手机左前浮着一块磨砂玻璃卡片。
+蓝宝石色轮廓光勾出，**屏幕全黑不通电**，手机前方浮着一块磨砂玻璃卡片；画面右下再叠一枚直排
+终端玻璃卡（真实 JetBrains Mono 等宽字，写 `scr dump` / `/act tap` 的真实回执）。
+
+> 为什么屏幕是黑的：v4 让模型在屏幕里画了「抽象代码光带」，缩略图里看着像乱码文字；
+v5 直接把屏幕提示词改成 `screen is completely off and pitch black`，再把真正的命令回执
+用字体排上去——一切文字都必须由 Pillow 画，模型不画字。
 
 - **融合语义**：深蓝 = DeepSeek，薄荷绿（`#8DF0C8`）= Termux 终端；品牌行写
   `DEEPSEEK HARNESS × TERMUX`，其中 TERMUX 是绿色等宽字的玻璃胶囊，即「两个世界拼成一个 App」。
@@ -27,8 +31,8 @@
 
 1. `qwen_t2i.py`：向本机 ComfyUI（`127.0.0.1:8188`）提交 API 图；模型
    `qwen_image_2.1_int8_convrot` + `qwen3vl_8b_int8_convrot` + `qwen_image_2.1_vae_bf16`；
-   采样 `euler/simple`、28 步、cfg 3.0、`ModelSamplingAuraFlow` shift 3.1、1600×896、seed 90210。
-   一次约 120 s。
+   采样 `euler/simple`、28 步、cfg 3.0、`ModelSamplingAuraFlow` shift 3.1、1600×896、seed 31337（v5）。
+   一次约 100–120 s。
 2. 提示词（精选）：`Apple keynote hero product shot, pure black background, one modern Android
    smartphone ... screen is dark with only soft abstract horizontal bars of cyan and mint light ...
    absolutely no characters, no letters, no numbers, no symbols on screen ... huge clean black
@@ -42,7 +46,7 @@
 - `dsh-mobile-github@2x.png` 3200 × 1800
 - `dsh-mobile-github.webp` 1600 × 900（网页轻量副本）
 - `dsh-mobile-social.png` 1280 × 640（社交预览）
-- `source/qwen-hero-v4.png`：选用的生成底图（未叠字）
+- `source/qwen-hero-v5.png`：选用的生成底图（未叠字，屏幕全黑）
 - `qwen_t2i.py` / `render_banner_v2.py`：可复现的生成与排版脚本
 - `manifest.json`：模型、seed、提示词要点、字体、sha256 清单
 - `samples/`：点击链路文档用的真机标注图（见 `docs/CLICK_CHAIN_UPGRADE.md`）
