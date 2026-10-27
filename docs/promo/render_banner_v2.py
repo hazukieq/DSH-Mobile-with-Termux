@@ -236,9 +236,10 @@ def main():
     shl=Image.new('RGBA',(cw+int(40*S),ch+int(40*S)),(0,0,0,0))
     shl.paste((0,0,0,150),(int(24*S),int(24*S)),sh)
     shl=shl.filter(ImageFilter.GaussianBlur(7*S))
-    Arot=A.rotate(-12.6,resample=Image.BICUBIC,expand=True)
-    Shi=shl.rotate(-12.6,resample=Image.BICUBIC,expand=True)
-    ax,ay=int(1012*S-Arot.width/2),int(534*S-Arot.height/2)
+    CARD_DEG=6.2   # 与底图玻璃卡的倾角一致（右端高，CCW 6.2°）
+    Arot=A.rotate(CARD_DEG,resample=Image.BICUBIC,expand=True)
+    Shi=shl.rotate(CARD_DEG,resample=Image.BICUBIC,expand=True)
+    ax,ay=int(1004*S-Arot.width/2),int(512*S-Arot.height/2)
     img.alpha_composite(Shi,(ax+int(8*S),ay+int(14*S)))
     img.alpha_composite(Arot,(ax,ay))
 
