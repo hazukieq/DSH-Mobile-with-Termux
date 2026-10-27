@@ -1,6 +1,6 @@
 {
-  "version": "banner-v6",
-  "built_at": "2026-10-28T01:10:22+08:00",
+  "version": "banner-v7",
+  "built_at": "2026-10-28T01:58:41+08:00",
   "approach": "local Qwen-Image 2.1 text-to-image (ComfyUI) for the hero art + deterministic Pillow typography overlay; text is never drawn by the diffusion model",
   "generation": {
     "runtime": "ComfyUI 0.38.0, 127.0.0.1:8188",
@@ -84,32 +84,35 @@
     },
     {
       "file": "dsh-mobile-github.png",
-      "sha256": "c848838f049895b8fdfdb8a6c3b54bde09198c57387722caa3e5e1f6ceb94131"
+      "sha256": "c8f0df9de9eba8557cbf32b1e92e3e89bdbb2ac0426de126300c320a5f23e6af"
     },
     {
       "file": "dsh-mobile-github@2x.png",
-      "sha256": "a1a9d5d14a915ce67ad5edb43e2897b13174ccd2bcf73c832c66d28a0f0631ca"
+      "sha256": "bbe57fb6a16098f7c497586d5085da06bd4cb09fe2c9a826e582644caf305ec2"
     },
     {
       "file": "dsh-mobile-github.webp",
-      "sha256": "e4575cc51ea19b70cca58b9e10a34c2c454c2d7c2cac795009bf138d58f1b3ed"
+      "sha256": "651d2bade4fcac1134570df6c994b86475bb8aa26f0e1310400ee227697ec3ac"
     },
     {
       "file": "dsh-mobile-social.png",
-      "sha256": "e27361ff0625f9ce119c1043a9734cfb33aa980202b15f697744ba862e84408e"
+      "sha256": "2a642baddabf07108784b3bde0fc406850898d1e230fdb2b37dbfe437c2cf8e0"
     },
     {
-      "file": "source/qwen-hero-v5.png",
+      "file": "source/qwen-hero-v6.png",
       "origin": "Qwen-Image 2.1 local generation (seed 31337)",
-      "sha256": "599920387a2f47bdbf8a0dd39dd1cf6b81fe627abbf2cc96af420708a007530e"
+      "sha256": "d18f5b01cb6686671f20ec15a178997be3d3be1a3d50f1386017245838986270"
     }
   ],
   "fixes": "v3：底图重生成（屏幕全黑、无任何伪文字），把原先像“乱码字”的发光条纹彻底去掉，改为一枚直排终端玻璃卡（真实 JetBrains Mono 文字）；标题渐变改水平方向（每字母明度一致）、整串绘制保留字距、副标题/胶囊字号上调",
   "typo_revision": {
-    "why": "用户指出卡 A 倾角与玻璃卡相反（左高右低 vs 右端高）；改正为与玻璃卡一致",
-    "measure": "底图玻璃卡实测：上边右端高约 30px / 275px → +6.2°（CCW）；左边缘随之下倾同样角度",
+    "why": "按用户逐轮定稿：白底横版终端卡、立正、压住手机屏幕左半边、卡顶与副标题齐平；标题改 DSH Mobile 并做基线/左缘光学对齐",
     "changes": [
-      "卡 A 旋转由 -12.6° 改为 +6.2°，与玻璃卡平行；A 保持左上偏移，玻璃卡读作其错位投影"
+      "标题 DSH Mobile：DSH 与 Mobile 基线对齐（2x 底边同为 471）、墨迹左缘对齐 110 网格（-9px 光学修正）",
+      "标题垂直居中于眉标(120.5)与副标题墨迹顶(350.5)之间 → 墨迹中心 235.75",
+      "终端卡：白底不透明、横版 6 行、MONO 16、bbox x762–1115 / y351–584",
+      "卡顶与副标题墨迹顶对齐（350 vs 351），右缘压在屏幕中线 ≈1115（占屏幕左半）",
+      "信息轴重排：眉标 115 / 标题 196 / 分隔线 318 / 副标题 350 / 说明 408 / 胶囊 460 / 证据行 548"
     ]
   },
   "typography": {
@@ -118,9 +121,9 @@
     "mono": "JetBrains Mono"
   },
   "sha256": {
-    "dsh-mobile-github.png": "8b905ce6ef148cef",
-    "dsh-mobile-github@2x.png": "28c6ce3ed89cd004",
-    "dsh-mobile-github.webp": "8d5425295c8c5d0f",
-    "dsh-mobile-social.png": "43a7509078d0b35b"
+    "dsh-mobile-github.png": "c8f0df9de9eba8557cbf32b1e92e3e89bdbb2ac0426de126300c320a5f23e6af",
+    "dsh-mobile-github@2x.png": "bbe57fb6a16098f7c497586d5085da06bd4cb09fe2c9a826e582644caf305ec2",
+    "dsh-mobile-github.webp": "651d2bade4fcac1134570df6c994b86475bb8aa26f0e1310400ee227697ec3ac",
+    "dsh-mobile-social.png": "2a642baddabf07108784b3bde0fc406850898d1e230fdb2b37dbfe437c2cf8e0"
   }
 }

@@ -1,3 +1,4 @@
+import os
 import sys, math
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -13,6 +14,9 @@ def f(size, weight='Regular'):
     return ImageFont.truetype(F.format(weight), int(size*S), index=2)
 def fk(size, weight='Regular'):
     return ImageFont.truetype(KAI.format(weight), int(size*S))
+def fm_px(px):
+    return ImageFont.truetype(MONO.format('Regular'), max(6,int(px)))
+
 def fm(size, weight='Regular'):
     return ImageFont.truetype(MONO.format(weight), int(size*S))
 
@@ -150,7 +154,7 @@ def main():
     base=fit_base(BASE).convert('RGBA')
     # v4：整体提亮——黑底从 #06070a 抬到 ~#1b1e25，保留高光不糊
     arr=np.asarray(base.convert('RGB')).astype(np.float32)
-    arr=np.clip(arr*0.92+36,0,255)
+    arr=np.clip(arr*0.92+22,0,255)
     # 轻微降低饱和，避免提亮后发蓝
     lum=arr.mean(axis=2,keepdims=True)
     arr=np.clip(lum+(arr-lum)*0.92,0,255)
@@ -180,15 +184,17 @@ def main():
     mono(d,(cx+8,115),'TERMUX',14,(141,240,200),'SemiBold')
 
     # 主标题
-    text(d,(110,176),'DeepSeek',112,TXT,'Bold')
-    grad_text(img,(110,290),'on Android.',112,'Bold',(104,132,255),(90,226,198))
+    TSZ=112
+    text(d,(101,196),'DSH',TSZ,TXT,'Bold')
+    _off=d.textlength('DSH ',font=f(TSZ,'Bold'))/S
+    grad_text(img,(101+_off,190),'Mobile',TSZ,'Bold',(104,132,255),(90,226,198))
 
     # 分隔线
-    d.rectangle((110*S,462*S,182*S,464*S),fill=(62,70,86))
+    d.rectangle((110*S,318*S,182*S,320*S),fill=(62,70,86))
 
     # 中文（霞鹜文楷）
-    d.text((110*S,494*S),'完整的 Agent 引擎，跑在你的手机上。',font=fk(34,'Regular'),fill=SUB,anchor='lt')
-    d.text((110*S,552*S),'终端 · 引擎 · 无障碍自动化 —— 一个 APK 全都有。',font=fk(27,'Regular'),fill=DIM,anchor='lt')
+    d.text((110*S,350*S),'完整的 Agent 引擎，跑在你的手机上。',font=fk(34,'Regular'),fill=SUB,anchor='lt')
+    d.text((110*S,408*S),'终端 · 引擎 · 无障碍自动化 —— 一个 APK 全都有。',font=fk(27,'Regular'),fill=DIM,anchor='lt')
 
     # 玻璃 pills
     pills=['No Root','Termux 内核','本地推理']
@@ -196,12 +202,12 @@ def main():
     for p in pills:
         wt=d.textlength(p,font=f(16,'Medium'))/S
         w=wt+34
-        glass(img,(x,604,x+w,604+48),24)
-        d.text(((x+18)*S,(604+24)*S), p, font=f(17,'Medium'), fill=(215,222,235), anchor='lm')
+        glass(img,(x,460,x+w,460+48),24)
+        d.text(((x+18)*S,(460+24)*S), p, font=f(17,'Medium'), fill=(215,222,235), anchor='lm')
         x+=w+12
 
     # 能力行
-    mono(d,(110,704),'scr dump  ·  ppocr6  ·  int8 UI detector',16,(110,120,138))
+    mono(d,(110,548),'scr dump  ·  ppocr6  ·  int8 UI detector',16,(110,120,138))
 
     # 终端：画一张浮空卡 A；底图那块磨砂玻璃卡作为它错位的玻璃投影（A 与投影倾斜/位置错开叠加）
     mono_px=int(13.2*S)
@@ -231,18 +237,92 @@ def main():
         if rest:
             ad.text((x,ty),rest,font=fmn(mono_px,'Regular'),fill=tcol,anchor='lt')
         ty+=lh
-    # 卡 A 的投影（柔黑，偏右下）
-    sh=A.split()[3].point(lambda v:int(v*0.55))
-    shl=Image.new('RGBA',(cw+int(40*S),ch+int(40*S)),(0,0,0,0))
-    shl.paste((0,0,0,150),(int(24*S),int(24*S)),sh)
-    shl=shl.filter(ImageFilter.GaussianBlur(7*S))
-    CARD_DEG=6.2   # 与底图玻璃卡的倾角一致（右端高，CCW 6.2°）
-    Arot=A.rotate(CARD_DEG,resample=Image.BICUBIC,expand=True)
-    Shi=shl.rotate(CARD_DEG,resample=Image.BICUBIC,expand=True)
-    ax,ay=int(1004*S-Arot.width/2),int(512*S-Arot.height/2)
-    img.alpha_composite(Shi,(ax+int(8*S),ay+int(14*S)))
-    img.alpha_composite(Arot,(ax,ay))
-
+    SKW=float(os.environ.get('SKEW','0.06')); SQZ=float(os.environ.get('SQUEEZE','0.90'))
+    # 贴在手机屏幕上的 UI：把（玻璃面板 + 终端卡）作为一个平面层，做真实透视贴到屏幕四边形
+    ONSCREEN=os.environ.get('ONSCREEN','1')=='1'
+    if ONSCREEN:
+        import cv2 as _cv, numpy as _np
+        # 屏幕四边形：由手机 minAreaRect（center/size/angle）内缩 + 上边透视收窄得到
+        ccx,ccy=int(os.environ.get('SCR_CX','1111')),int(os.environ.get('SCR_CY','416'))
+        sw,sh_=float(os.environ.get('SCR_W','275')),float(os.environ.get('SCR_H','615'))
+        ang=float(os.environ.get('SCR_ANG','15.42'))
+        ins=float(os.environ.get('SCR_INSET','0.08')); shrink=float(os.environ.get('SCR_TOP','0.93'))
+        hw,hh=sw*(0.5-ins), sh_*(0.5-ins)
+        a=math.radians(ang)
+        def _rot(dx,dy):
+            return (ccx+dx*math.cos(a)-dy*math.sin(a), ccy+dx*math.sin(a)+dy*math.cos(a))
+        TL=_rot(-hw*shrink,-hh); TR=_rot(hw*shrink,-hh); BR=_rot(hw,hh); BL=_rot(-hw,hh)
+        quad=_np.float32([TL,TR,BR,BL]).reshape(-1,2)*S
+        # 平面 UI 层（竖版，比例贴合屏幕）
+        LW=int(560); LH=int(LW*(sum(abs(quad[i][1]-quad[(i+1)%4][1]) for i in range(4))/max(1,abs(TR[0]-TL[0]))))
+        ui=Image.new('RGBA',(LW,LH),(0,0,0,0)); ud=ImageDraw.Draw(ui)
+        # 玻璃面板（屏幕上的磨砂层）
+        m=int(LW*0.03)
+        ud.rounded_rectangle((m,int(LH*0.285),LW-m,int(LH*0.615)),radius=int(LW*0.05),
+                             fill=(8,11,16,150),outline=(210,245,240,70),width=max(2,int(LW*0.004)))
+        # 终端卡 A（平面版）
+        cw2,ch2=int(LW*0.94),int(LH*0.26); cx0=(LW-cw2)//2; cy0=int(LH*0.32)
+        ud.rounded_rectangle((cx0,cy0,cx0+cw2,cy0+ch2),radius=int(LW*0.035),fill=(10,13,18,236),
+                             outline=(255,255,255,46),width=max(2,int(LW*0.0035)))
+        dot_y=cy0+int(ch2*0.085); dr=max(3,int(LW*0.011))
+        for i2,col in enumerate([(255,95,86,255),(255,189,46,255),(39,201,63,255)]):
+            dx0=cx0+int(cw2*0.09)+i2*int(cw2*0.075)
+            ud.ellipse((dx0-dr,dot_y-dr,dx0+dr,dot_y+dr),fill=col)
+        tm=13.2*(LW/(cw*1.0)) if False else cw2/ cw * mono_px   # 沿用原字号比例
+        tm=max(11,int(cw2*0.075))
+        ty=cy0+int(ch2*0.24); lh=int(tm*2.05)
+        for i2,ln in enumerate(['$ scr dump','1080x2376 37n','$ /act tap','ok gesture']):
+            col=(141,240,200,255) if ln.startswith('$') else ((120,232,186,255) if ln=='ok gesture' else (226,233,244,255))
+            ud.text((cx0+int(cw2*0.10),ty+i2*lh),ln,font=fm_px(tm),fill=col)
+        # 透视贴到屏幕
+        src=_np.float32([[0,0],[LW,0],[LW,LH],[0,LH]])
+        M=_cv.getPerspectiveTransform(src,quad)
+        arr=_np.array(ui)
+        warp=_cv.warpPerspective(arr,M,(W*S,H*S),flags=_cv.INTER_LANCZOS4,borderMode=_cv.BORDER_CONSTANT,borderValue=(0,0,0,0))
+        lab=Image.fromarray(warp,'RGBA')
+        img.alpha_composite(lab)
+        # 屏幕上的柔光，让 UI 与屏面更贴
+        pass
+    else:
+        # 常规设计：一张清晰的终端卡，与手机同角，压在屏幕区域
+        ACC=(10,122,95,255); TX=(24,28,34,255); TX2=(84,94,110,255); OK=(6,140,110,255)
+        ln=[('$ ', ACC, 'dsh web --port 3080', TX),
+            ('',  None, '127.0.0.1:3080 ready · engine up', TX2),
+            ('$ ', ACC, 'scr dump --scene', TX),
+            ('',  None, '1080x2376 · 37 nodes · a11y 24', TX2),
+            ('$ ', ACC, '/act tap 540,804', TX),
+            ('',  None, 'ok · via=gesture · 1 step', OK)]
+        mp=int(float(os.environ.get('MONO_PX','17'))*S)
+        fpt=ImageFont.truetype(MONO.format('Regular'), mp)
+        lh=int(mp*1.62); padx=int(mp*1.5); pady=int(mp*1.6)
+        tw=max(fpt.getlength(t)+fpt.getlength(p) for p,_,t,_ in ln)
+        cw_=int(tw+padx*2); ch_=int(lh*len(ln)+pady*2+int(mp*2.0))
+        C=Image.new('RGBA',(cw_,ch_),(0,0,0,0)); cd=ImageDraw.Draw(C)
+        cd.rounded_rectangle((0,0,cw_-1,ch_-1),radius=int(mp*1.1),fill=(252,253,255,255),
+                             outline=(15,20,28,26),width=max(2,int(0.9*S)))
+        dy0=int(pady*0.55); dr=int(mp*0.30)
+        for i2,col in enumerate([(255,95,86,255),(255,189,46,255),(39,201,63,255)]):
+            dx0=padx+i2*int(mp*1.05)
+            cd.ellipse((dx0-dr,dy0-dr,dx0+dr,dy0+dr),fill=col)
+        ty=pady+int(mp*1.9)
+        for i2,(p1,c1,t1,c2) in enumerate(ln):
+            x=padx; y=ty+i2*lh
+            if p1: cd.text((x,y),p1,font=fpt,fill=c1); x+=fpt.getlength(p1)
+            cd.text((x,y),t1,font=fpt,fill=c2)
+        # 外发光：让卡与暗场分离
+        halo=Image.new('RGBA',(cw_+int(24*S),ch_+int(24*S)),(0,0,0,0))
+        hd=ImageDraw.Draw(halo); hd.rounded_rectangle((int(12*S),int(12*S),int(12*S)+cw_,int(12*S)+ch_),
+            radius=int(mp*1.2),outline=(20,30,40,60),width=int(2*S))
+        halo=halo.filter(ImageFilter.GaussianBlur(int(7*S)))
+        S2=float(os.environ.get('SQUEEZE','0.96')); SK=float(os.environ.get('SKEW','0.04'))
+        def _sq(img_):
+            w0,h0=img_.size
+            return img_.transform((int(w0*S2), h0+int(abs(SK)*w0)), Image.AFFINE,(1,0,0,-SK,1,abs(SK)*w0), resample=Image.BICUBIC)
+        base_=Image.new('RGBA',(halo.width+int(24*S),halo.height+int(24*S)),(0,0,0,0))
+        base_.alpha_composite(halo,(0,0)); base_.alpha_composite(C,(int(12*S),int(12*S)))
+        rot=base_.rotate(float(os.environ.get('CARD_DEG','15.4')),resample=Image.BICUBIC,expand=True)
+        cx_=float(os.environ.get('A_CX','1103'))*S; cy_=float(os.environ.get('A_CY','420'))*S
+        img.alpha_composite(rot,(int(cx_-rot.width/2),int(cy_-rot.height/2)))
     # 页脚
     text(d,(110,796),'github.com/hazukieq/DSH-Mobile-with-Termux',16,(126,136,154),'Regular')
     text(d,(110,824),'OPEN SOURCE · MIT · ANDROID',11,(74,82,98),'Medium',2.6)

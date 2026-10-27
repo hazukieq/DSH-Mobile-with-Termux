@@ -71,3 +71,16 @@ v5 直接把屏幕提示词改成 `screen is completely off and pitch black`，�
    副标题字号 23 → 27（“完整…的底下文字再大些”）。
 4. **顶部图标与同排文字平齐**：鲸鱼图标按 15px 大写字高的视觉中心（+5.1px）对齐
    `DEEPSEEK HARNESS` 基线，不再按图片顶部贴。
+
+## banner-v7（定稿，用户逐轮验收）
+
+- 底图：`source/qwen-hero-v6.png`（Qwen-Image 2.1，seed 4242，1600×896，机身青色轮廓光从右后方打来）
+- 主标题：**DSH Mobile**，`DSH` 纯白 + `Mobile` 水平渐变（#4D6BFF → #5AE2C6）
+  - 基线对齐：2× 画布下 `DSH` 与 `Mobile` 墨迹底边同为 y=471
+  - 光学左对齐：墨迹左缘 111，与分隔线网格线 110 相差 1px（字形左侧含 8px 边距，故 x 从 110 收到 101）
+  - 垂直居中：眉标墨迹中心 120.5、副标题墨迹顶 350.5 → 中点 235.5；标题墨迹中心实测 235.75
+- 终端卡：白底不透明、横版 6 行、JetBrains Mono 16px
+  - bbox `x 762–1115 / y 351–584`；顶边与「完整的 Agent 引擎…」墨迹顶（350）差 1px
+  - 右缘 1115 ≈ 屏幕中线，即压在手机**屏幕左半边**；左半截探出机身在暗场里
+- 信息轴（1600×900）：眉标 115 / 标题 196 / 分隔线 318 / 副标题 350 / 说明 408 / 胶囊 460 / 证据行 548 / 页脚 790
+- 复现：`python3 docs/promo/render_banner_v2.py <hero.png> <outprefix>`，参数 `ONSCREEN=0 MONO_PX=16 CARD_DEG=0 SQUEEZE=1.0 SKEW=0 A_CX=951 A_CY=480`
