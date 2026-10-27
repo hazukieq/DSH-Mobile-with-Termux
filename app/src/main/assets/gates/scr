@@ -11,7 +11,7 @@ fi
 #   see:    dump | dump-click | dump-full | xml | shot | pkg
 #   act:    tap <x> <y> | tap --shell <x> <y> | tap-text <t> | tap-desc <d>
 #           swipe <x1> <y1> <x2> <y2> [ms] | long-press <x> <y> [ms]
-#           key <back|home|recents|notifications|quick_settings>
+#           key <back|home|recents|notifications|quick_settings|expand-notifications|dismiss-shade|expand-settings>
 #   type:   input <text> [--target <hint>] [--append]     (v1.2.54)
 #   search: find <text> [--tap] [--back] [--max N]        (v1.2.54)
 #           find-center <text> [--tap] [--max N]          (v1.2.82, 滚到居中)

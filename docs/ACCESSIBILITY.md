@@ -190,3 +190,16 @@ scr calib --list       # 看已存的分桶参数
 - **系统级权限弹窗**：仍需你手动点「允许」；
 - **部分应用的防自动化检测**：不保证 100% 通过（我们也不做规避检测的对抗）。
 
+
+## 9. 通知栏（shade）与系统 UI
+
+无障碍的 `dispatchGesture` 是合成手势，SystemUI 的 shade 是独立窗口，动画期间会丢弃合成事件——所以「坐标点得准也点不动」。可用手段：
+
+| 目的 | 用法 |
+|---|---|
+| 展开 / 收起 | `scr key expand-notifications` / `scr key dismiss-shade` |
+| 点通知条目或按钮 | `scr tap-desc "文案"`、`scr tap-id`（先 `ACTION_CLICK`，失败才回退手势） |
+| 判断是否在 shade | `/scene` 命中 `com.android.systemui` 时返回 `hint` |
+| 兜底 | `scr tap --shell x y`（Shizuku/root 的 `input tap` 属可信注入） |
+
+`tapNode()` 自 v2.5.32 起先试 `AccessibilityNodeInfo.ACTION_CLICK`，失败才注入手势；`tapNode` 的通道会写进日志与 `/tap` 响应的 `via` 字段（`action-click` / `node` / `gesture`）。

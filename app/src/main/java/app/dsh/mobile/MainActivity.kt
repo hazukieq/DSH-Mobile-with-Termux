@@ -472,6 +472,10 @@ class MainActivity : Activity() {
         // v1.3.68：WebUI 的 mobile-progress 插件通过这个桥把当前思考/步骤报给原生，
         // 不需要无障碍就能在后台/通知栏展示进度。
         runCatching { webView.addJavascriptInterface(ProgressJsBridge(this), "DshNative") }
+        runCatching {
+            app.dsh.mobile.DshLogBridge.appCtx = applicationContext
+            webView.addJavascriptInterface(app.dsh.mobile.DshLogBridge(), "DshLog")
+        }
         // ── WebView 诊断（v1.2.49）：用户报「用不了」时能拿到确凿信息 ────────────
         // 背景：华为 Mate40 报 `AbortSignal.any is not a function`、另有 Android 16 用户
         // 报失败，但 App 此前既不捕获 WebView 错误也不转发 console，排查只能靠猜。

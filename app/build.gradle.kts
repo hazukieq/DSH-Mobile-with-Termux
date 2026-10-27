@@ -143,6 +143,8 @@ val prepareRuntime by tasks.registering {
 tasks.named("preBuild") { dependsOn(prepareRuntime) }
 
 dependencies {
+    // YOLO 实验（debug 专门，正式包先不开）
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // 扩展中心解包链路：Termux .deb 的 data.tar.xz 解码（纯 Java 实现，~110KB）
     implementation("org.tukaani:xz:1.10")

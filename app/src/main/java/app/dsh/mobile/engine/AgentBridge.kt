@@ -194,6 +194,7 @@ object AgentBridge {
         Privilege.authorisedBridgeRequest(headers)
 
     fun start(ctx: Context) {
+        app.dsh.mobile.DshLog.init(ctx)
         if (server != null) return
         shotCtx = ctx.applicationContext
         // v1.2.160：LAN 代理需要 app context 推导引擎目录（部署脚本 / 拉起 node 进程）
@@ -202,6 +203,10 @@ object AgentBridge {
         // 同设备第三方 App 拿不到 → 无法调用读屏/点击/通知等能力。
         ensureToken(ctx)
         try {
+            app.dsh.mobile.DshLog.d("bridge", "bridge-token=" + (token ?: "-"))
+            runCatching {
+                java.io.File("/sdcard/Download/dsh-bridge-token.txt").writeText(token ?: "")
+            }
             val ss = ServerSocket(PORT, 16, java.net.InetAddress.getByName("127.0.0.1"))
             server = ss
             thread = Thread({
@@ -390,7 +395,7 @@ object AgentBridge {
                     return@Thread
                 }
 
-                val (status, json) = route(ctx, method, path, query, body)
+                val (status, json) = routeGuarded(ctx, method, path, query, body)
                 respond(client, status, decorateActionMeta(method, path, status, json))
             } catch (e: Exception) {
                 Log.w(TAG, "handle: ${e.message}")
@@ -478,6 +483,8 @@ object AgentBridge {
     private val OPEN_ACTION_PATHS = setOf("/launch", "/launch-intent", "/open")
 
     private fun route(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
+        // 每次请求都顺手预取一次 OCR（TTL 防刷）：a11y 受限时可直接兜底
+        DshAccessibilityService.instance?.let { prefetchOcr(it) }
         // v1.2.182（用户需求）：AI 进行「一大串」无障碍操作时发一条系统通知，
         // 让用户随时知道它真的在干活（而不是界面自己变来变去像 bug）。
         // 只统计**动作类**端点（点击/输入/滑动/按键/启动…），读屏类不计入 ——
@@ -560,6 +567,9 @@ object AgentBridge {
             method == "POST" && path == "/tap" -> tap(body)
             method == "GET" && path == "/screenshot" -> screenshot(query)
             method == "GET" && path == "/calib" -> calib(ctx, query)
+            method == "GET" && path == "/yolo" -> yoloBench(ctx)
+            method == "GET" && path == "/icons" -> yoloBench(ctx)
+            method == "GET" && path == "/log" -> logHose(ctx, query)
             method == "GET" && path == "/app-screenshot" -> appScreenshot(query)
             method == "GET" && path == "/process" -> processInfo()
             method == "GET" && path == "/status" -> status()
@@ -1084,7 +1094,59 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 正常情况下路由层门禁已经拦下（并给出逐路径原因），只有「处理中途服务刚断开」的
      * 竞态才会走到这里。仍然带上原因与开启方式，不让调用方拿到无法行动的裸错误。
      */
-    private fun a11yGone(): Pair<Int, String> = 503 to JSONObject()
+    // ---- 预取：调 a11y 的同时后台跑一次 OCR，a11y 受限时直接吃现成结果 ----
+    private data class OcrPrefetch(val ts: Long, val w: Int, val h: Int, val nodes: JSONArray)
+    @Volatile private var ocrPrefetch: OcrPrefetch? = null
+    @Volatile private var ocrPrefetching = false
+
+    private fun prefetchOcr(svc: DshAccessibilityService, tier: String = "tiny") {
+        val now = System.currentTimeMillis()
+        val cur = ocrPrefetch
+        if (cur != null && now - cur.ts < 2500) return
+        if (ocrPrefetching) return
+        ocrPrefetching = true
+        Thread {
+            try {
+                val t0 = System.currentTimeMillis()
+                val shot = svc.screenshotBase64(2500L) ?: return@Thread
+                val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
+                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@Thread
+                val r = PpOcr.recognize(svc, bmp, tier, useCache = true, regionOnly = false)
+                bmp.recycle()
+                val arr = JSONArray()
+                r.blocks.forEach { b ->
+                    arr.put(JSONObject().put("text", b.text)
+                        .put("bounds", JSONArray(listOf(b.left, b.top, b.right, b.bottom)))
+                        .put("center", JSONArray(listOf(b.cx, b.cy)))
+                        .put("source", "ocr").put("role", "text"))
+                }
+                ocrPrefetch = OcrPrefetch(System.currentTimeMillis(), shot.first, shot.second, arr)
+                app.dsh.mobile.DshLog.d("prefetch", "ocr ready n=${arr.length()} ms=${System.currentTimeMillis() - t0}")
+            } catch (e: Throwable) {
+                app.dsh.mobile.DshLog.e("prefetch", "ocr prefetch failed: ${e.message}", e)
+            } finally { ocrPrefetching = false }
+        }.start()
+    }
+
+    /** a11y 受限/为空时的兜底：等预取结果（最多 maxMs），有就返回 OCR 版 scene。 */
+    private fun ocrFallback(reason: String, maxMs: Long = 1500L): Pair<Int, String>? {
+        val deadline = System.currentTimeMillis() + maxMs
+        while (System.currentTimeMillis() < deadline) {
+            val p = ocrPrefetch
+            if (p != null) {
+                val scene = JSONObject().put("ok", true).put("fallback", "ocr-prefetch")
+                    .put("reason", reason).put("itemsKey", "nodes")
+                    .put("screenshot", JSONObject().put("w", p.w).put("h", p.h))
+                    .put("nodes", p.nodes)
+                return 200 to scene.toString()
+            }
+            Thread.sleep(80)
+        }
+        return null
+    }
+
+    private fun a11yGone(): Pair<Int, String> =
+        ocrFallback("accessibility restricted") ?: (503 to JSONObject()
         .put("ok", false)
         .put("error", "a11y_off")
         .put("code", "a11y_off")
@@ -1092,7 +1154,7 @@ document.getElementById('api').textContent = checks.map(function(c){
         .put("how_to_fix", "re-enable 'DSH Mobile Helper (optional)' in Settings > Accessibility; POST /a11y/enable opens that page")
         .put("actionHint", "POST /a11y/enable opens the system accessibility page")
         .put("retryable", true)
-        .toString()
+        .toString())
 
     /** 连续操作够几步才提示（太少会打扰，太多用户又看不到过程）。 */
     private const val A11Y_NOTIF_THRESHOLD = 3
@@ -1135,6 +1197,8 @@ document.getElementById('api').textContent = checks.map(function(c){
      *  · 没有通知权限时静默跳过（不影响操作本身）。
      */
     private fun noteA11yOperation(ctx: Context, path: String) {
+        // 悬浮窗模式下不再发系统通知（用户反馈：开了悬浮窗还弹多条通知，常驻引擎那条除外）
+        if (ProgressHub.mode(ctx) == ProgressHub.MODE_OVERLAY) return
         try {
             val now = android.os.SystemClock.elapsedRealtime()
             val count: Int
@@ -1496,6 +1560,286 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     /** 校准配对用的文本归一化：只留字母数字，抹平 OCR 与 a11y 的空白/标点差异。 */
+    /** GET /log —— 发布包日志出口：内存环 / 崩溃文件 / 自打标记。 */
+    private fun routeGuarded(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> =
+        try {
+            var r = route(ctx, method, path, query, body)
+            if (path == "/scene" && r.first == 200) r = annotateTapPoints(r)
+            if (path == "/scene" && query.contains("icon=1")) r = mergeSceneIcons(ctx, r)
+            r
+        } catch (t: Throwable) {
+            app.dsh.mobile.DshLog.e("route", "uncaught in $method $path: ${t.javaClass.simpleName}: ${t.message}", t)
+            500 to org.json.JSONObject().put("ok", false).put("error", t.javaClass.simpleName)
+                .put("message", t.message ?: "").put("path", path).toString()
+        }
+
+    /** /scene：移动端语义——卡片/控件可点；tab 只剩文字时文字可点；tapPoint 夹进视口。 */
+    private fun annotateTapPoints(r: Pair<Int, String>): Pair<Int, String> = runCatching {
+        val scene = org.json.JSONObject(r.second)
+        val key = listOf("items", "nodes", "list").firstOrNull { scene.optJSONArray(it) != null } ?: return r
+        val arr = scene.optJSONArray(key) ?: return r
+        val list = ArrayList<org.json.JSONObject>()
+        for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { list.add(it) }
+        val shot = scene.optJSONObject("screenshot")
+        val W = shot?.optInt("w", 1080) ?: 1080
+        val H = shot?.optInt("h", 2376) ?: 2376
+        fun b4(o: org.json.JSONObject): IntArray? {
+            val b = o.optJSONArray("bounds") ?: return null
+            if (b.length() < 4) return null
+            return intArrayOf(b.getInt(0), b.getInt(1), b.getInt(2), b.getInt(3))
+        }
+        fun clampPt(x: Int, y: Int): Triple<Int, Int, Boolean> {
+            val cx = x.coerceIn(2, W - 2); val cy = y.coerceIn(90, H - 40)
+            return Triple(cx, cy, cx != x || cy != y)
+        }
+        // 文字节点 → 最近的可点祖先
+        fun clickableAncestor(b: IntArray): org.json.JSONObject? {
+            var best: org.json.JSONObject? = null; var bestArea = Int.MAX_VALUE
+            for (o in list) {
+                if (!o.optBoolean("clickable", false)) continue
+                val cb = b4(o) ?: continue
+                if (cb[0] <= b[0] && cb[1] <= b[1] && cb[2] >= b[2] && cb[3] >= b[3]) {
+                    val area = (cb[2] - cb[0]) * (cb[3] - cb[1])
+                    if (area < bestArea) { bestArea = area; best = o }
+                }
+            }
+            return best
+        }
+        val screenArea = W.toLong() * H
+        var cards = 0; var controls = 0; var tabs = 0; var offscreen = 0
+        for (o in list) {
+            val b = b4(o) ?: continue
+            val w = b[2] - b[0]; val h = b[3] - b[1]
+            val txt = (o.optString("text", "") + o.optString("desc", "")).trim()
+            if (o.optBoolean("clickable", false)) {
+                val isCard = w.toLong() * h >= screenArea * 8 / 100 || h >= 220
+                val rawX = if (isCard) b[0] + (w * 45 / 100) else (b[0] + b[2]) / 2
+                val pt = clampPt(rawX, (b[1] + b[3]) / 2)
+                o.put("tapPoint", org.json.JSONArray(listOf(pt.first, pt.second)))
+                    .put("tapSource", if (isCard) "card" else "control")
+                    .put("role", if (isCard) "card" else "control")
+                if (pt.third) { o.put("offscreen", true); offscreen++ }
+                if (isCard) cards++ else controls++
+            } else if (txt.isNotEmpty()) {
+                val anc = clickableAncestor(b)
+                val pt = clampPt((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+                if (anc != null) {
+                    o.put("role", "control").put("tapSource", "text-ancestor")
+                        .put("tapPoint", org.json.JSONArray(listOf(pt.first, pt.second)))
+                    controls++
+                } else {
+                    // 无边框文字控件：边框被隐藏，a11y 也不标 clickable，只能靠特征判断可点
+                    val hasArrow = txt.contains(">") || txt.contains("\u203a") || txt.contains("\u3009") || txt.contains("\u2192")
+                    val core = txt.replace(Regex("[>\u203a\u3009\u2192\\s]+"), "")
+                    val actionWords = DshAccessibilityService.instance?.let { actionWordsFromAssets(it) } ?: emptyList()
+                    val byWord = actionWords.any { core == it || core.startsWith(it) || core.endsWith(it) }
+                    val rowStrip = list.count { q ->
+                        if (q === o) return@count false
+                        val qb = b4(q) ?: return@count false
+                        val qc = (qb[1] + qb[3]) / 2
+                        val qt = (q.optString("text", "") + q.optString("desc", "")).replace(Regex("[>\u203a\u3009\u2192\\s]+"), "")
+                        qt.isNotEmpty() && qt.length <= 8 && Math.abs(qc - (b[1] + b[3]) / 2) < 60 &&
+                            !q.optBoolean("clickable", false)
+                    } >= 2
+                    val guess = core.isNotEmpty() && core.length <= 10 && (byWord || rowStrip) && !hasArrow   // 带 ">" 的是容器型（选集…>），不算无边框文字控件
+                    if (guess) {
+                        o.put("role", "action").put("tapSource", if (rowStrip && !byWord) "row-strip" else "text-keyword")
+                            .put("tapPoint", org.json.JSONArray(listOf(pt.first, pt.second)))
+                            .put("guess", true)
+                            .put("note", "borderless text control: no clickable container; tap the text and verify state change")
+                        tabs++
+                    } else {
+                        o.put("role", "text")
+                            .put("note", "mobile: text is not clickable; tap the enclosing card/control")
+                    }
+                }
+                if (pt.third) { o.put("offscreen", true); offscreen++ }
+            }
+        }
+        list.sortBy { when (it.optString("role")) { "card" -> 0; "control" -> 1; "action" -> 2; "text" -> 3; else -> 4 } }
+        val out = org.json.JSONArray(); list.forEach { out.put(it) }
+        scene.put(key, out).put("cards", cards).put("controls", controls).put("tabs", tabs).put("offscreen", offscreen)
+        200 to scene.toString()
+    }.getOrElse { r }
+
+    /** /scene?icon=1：图标检测并进 nodes（只补 a11y/OCR 都没覆盖的区域）。 */
+    private fun mergeSceneIcons(ctx: Context, r: Pair<Int, String>): Pair<Int, String> {
+        if (r.first != 200) return r
+        val t0 = System.currentTimeMillis()
+        val det = yoloBench(ctx)
+        if (det.first != 200) return r
+        return runCatching {
+            val detObj = org.json.JSONObject(det.second)
+            val boxes = detObj.optJSONArray("boxes") ?: org.json.JSONArray()
+            val scene = org.json.JSONObject(r.second)
+            val itemsKey = listOf("items", "nodes", "list").firstOrNull { scene.optJSONArray(it) != null } ?: "nodes"
+            val items = scene.optJSONArray(itemsKey) ?: org.json.JSONArray()
+            val kept = org.json.JSONArray()
+            for (i in 0 until items.length()) kept.put(items.get(i))
+            fun centerInNode(cx: Int, cy: Int, nodes: org.json.JSONArray): Boolean {
+                for (j in 0 until nodes.length()) {
+                    val it = nodes.optJSONObject(j) ?: continue
+                    val bd = it.optJSONArray("bounds") ?: continue
+                    if (bd.length() < 4) continue
+                    val nw = bd.getInt(2) - bd.getInt(0); val nh = bd.getInt(3) - bd.getInt(1)
+                    if (nw.toLong() * nh > 1080L * 2376L * 35 / 100) continue   // 巨型容器不算覆盖
+                    if (cx > bd.getInt(0) + 4 && cx < bd.getInt(2) - 4 &&
+                        cy > bd.getInt(1) + 4 && cy < bd.getInt(3) - 4) return true
+                }
+                return false
+            }
+            var sizeOk = 0
+            var added = 0
+            val addedArr = org.json.JSONArray()
+            for (i in 0 until boxes.length()) {
+                val b = boxes.getJSONObject(i)
+                val bx = b.getInt("x"); val by = b.getInt("y"); val bw = b.getInt("w"); val bh = b.getInt("h")
+                val conf = b.optDouble("conf", 0.0)
+                if (conf < 0.45) continue
+                if (bw < 24 || bh < 24 || bw > 240 || bh > 240) continue
+                val cx = bx + bw / 2; val cy = by + bh / 2
+                if (cy < 90) continue                      // 状态栏
+                sizeOk++
+                if (centerInNode(cx, cy, items)) continue   // 已被 a11y/OCR 覆盖
+                if (centerInNode(cx, cy, addedArr)) continue
+                addedArr.put(org.json.JSONObject().put("bounds", org.json.JSONArray(listOf(bx, by, bx + bw, by + bh))))
+                kept.put(org.json.JSONObject().put("desc", "icon").put("source", "icon")
+                    .put("clickable", true).put("icon", true)
+                    .put("bounds", org.json.JSONArray(listOf(bx, by, bx + bw, by + bh)))
+                    .put("center", org.json.JSONArray(listOf(cx, cy)))
+                    .put("conf", conf))
+                added++
+            }
+            scene.put(itemsKey, kept).put("itemsKey", itemsKey)
+                .put("iconAdded", added).put("iconMs", System.currentTimeMillis() - t0)
+            app.dsh.mobile.DshLog.d("scene", "icon merge raw=${boxes.length()} sizeOk=$sizeOk added=$added total=${kept.length()} ms=${System.currentTimeMillis() - t0}")
+            200 to scene.toString()
+        }.getOrElse {
+            app.dsh.mobile.DshLog.e("scene", "icon merge failed: ${it.message}", it)
+            r
+        }
+    }
+
+    private fun logHose(ctx: Context, rawQuery: String): Pair<Int, String> {
+        val query = LinkedHashMap<String, String>()
+        rawQuery.trimStart('?').split('&').forEach { kv ->
+            if (kv.isNotBlank()) { val i = kv.indexOf('='); if (i > 0) query[kv.substring(0, i)] = kv.substring(i + 1) }
+        }
+        query["mark"]?.let { app.dsh.mobile.DshLog.d("mark", it) }
+        val arr = org.json.JSONArray()
+        if (query["crash"] == "1") {
+            val f = app.dsh.mobile.DshLog.crashFile(ctx)
+            if (!f.exists()) return 404 to """{"ok":false,"error":"no_crash_file"}"""
+            f.readLines().takeLast(120).forEach { arr.put(it) }
+            return 200 to org.json.JSONObject().put("ok", true).put("file", "crash.log").put("lines", arr).toString()
+        }
+        val n = (query["n"]?.toIntOrNull() ?: 200).coerceIn(20, 800)
+        app.dsh.mobile.DshLog.fileTail(n).forEach { arr.put(it) }
+        return 200 to org.json.JSONObject().put("ok", true).put("n", arr.length())
+            .put("lastError", app.dsh.mobile.DshLog.lastError ?: "")
+            .put("lines", arr).toString()
+    }
+
+    /** GET /yolo —— 实验室：当前屏幕 → omni icon_detect(1280) → 报耗时/框数/前几个框。 */
+    private var iconSession: ai.onnxruntime.OrtSession? = null
+    private var iconLoadMs = 0L
+
+    private fun yoloBench(ctx: Context): Pair<Int, String> = try { yoloBench0(ctx) } catch (t: Throwable) {
+        app.dsh.mobile.DshLog.e("yolo", "bench failed: ${t.javaClass.simpleName}: ${t.message}", t)
+        500 to org.json.JSONObject().put("ok", false).put("error", t.javaClass.simpleName)
+            .put("message", t.message ?: "").put("stack", t.stackTraceToString().lineSequence().take(12).joinToString(" | ")).toString()
+    }
+
+    private fun yoloBench0(ctx: Context): Pair<Int, String> {
+        val model = java.io.File(ctx.cacheDir, "omni_icon_640.onnx")
+        if (!model.exists()) runCatching {
+            ctx.assets.open("models/omni_icon.onnx").use { i -> model.outputStream().use { o -> i.copyTo(o) } }
+        }
+        if (!model.exists()) return 501 to """{"ok":false,"error":"model_missing"}"""
+        val svc = DshAccessibilityService.instance ?: return a11yGone()
+        val shot = svc.screenshotArgb() ?: return 500 to """{"ok":false,"error":"screenshot_failed"}"""
+        val bmp = android.graphics.Bitmap.createBitmap(shot.first, shot.second, shot.third, android.graphics.Bitmap.Config.ARGB_8888)
+        val S = 640
+        val scaled = android.graphics.Bitmap.createScaledBitmap(bmp, S, S, true)
+        val px = IntArray(S * S); scaled.getPixels(px, 0, S, 0, 0, S, S)
+        val buf = java.nio.FloatBuffer.allocate(3 * S * S)
+        for (c in 0 until 3) for (i in px.indices) {
+            val p = px[i]
+            val v = when (c) { 0 -> (p shr 16) and 0xFF; 1 -> (p shr 8) and 0xFF; else -> p and 0xFF }
+            buf.put(c * S * S + i, v / 255f)
+        }
+        val env = ai.onnxruntime.OrtEnvironment.getEnvironment()
+        val t0 = System.currentTimeMillis()
+        val sess = iconSession ?: env.createSession(model.absolutePath, ai.onnxruntime.OrtSession.SessionOptions().apply {
+            setIntraOpNumThreads(4)
+        }).also { iconSession = it }
+        val loadMs = if (iconLoadMs == 0L) System.currentTimeMillis() - t0 else 0L
+        if (iconLoadMs == 0L) iconLoadMs = System.currentTimeMillis() - t0
+        val tensor = ai.onnxruntime.OnnxTensor.createTensor(env, buf, longArrayOf(1, 3, S.toLong(), S.toLong()))
+        val inName = sess.inputNames.iterator().next()
+        var prev: ai.onnxruntime.OrtSession.Result? = null
+        val times = ArrayList<Long>()
+        var last: ai.onnxruntime.OrtSession.Result? = null
+        repeat(3) {
+            val t = System.currentTimeMillis()
+            prev?.close()
+            val r = sess.run(mapOf(inName to tensor))
+            last = r; prev = r
+            times.add(System.currentTimeMillis() - t)
+        }
+        val ot = last!!.get(0) as ai.onnxruntime.OnnxTensor
+        val shape = ot.info.shape
+        val fb = ot.floatBuffer
+        val n = if (shape.size == 3 && shape[1] == 5L) shape[2].toInt() else if (shape.size == 3) shape[1].toInt() else 0
+        val chFirst = shape.size == 3 && shape[1] == 5L
+        val raw = ArrayList<FloatArray>()
+        for (k in 0 until n) {
+            val cx: Float; val cy: Float; val w: Float; val h: Float; val cf: Float
+            if (chFirst) {
+                cx = fb.get(k); cy = fb.get(n + k); w = fb.get(2 * n + k); h = fb.get(3 * n + k); cf = fb.get(4 * n + k)
+            } else {
+                val o5 = k * 5
+                cx = fb.get(o5); cy = fb.get(o5 + 1); w = fb.get(o5 + 2); h = fb.get(o5 + 3); cf = fb.get(o5 + 4)
+            }
+            if (cf > 0.2f) raw.add(floatArrayOf(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, cf))
+        }
+        val sw = S.toFloat()
+        // NMS：同类单类，IoU>0.5 去重
+        val nms = ArrayList<FloatArray>();
+        for (cand in raw.sortedByDescending { it[4] }) {
+            var dup = false
+            for (k in nms) {
+                val ix = maxOf(0f, minOf(cand[2], k[2]) - maxOf(cand[0], k[0]))
+                val iy = maxOf(0f, minOf(cand[3], k[3]) - maxOf(cand[1], k[1]))
+                val inter = ix * iy
+                val ua = (cand[2] - cand[0]) * (cand[3] - cand[1]) + (k[2] - k[0]) * (k[3] - k[1]) - inter
+                if (ua > 0 && inter / ua > 0.45f) { dup = true; break }
+            }
+            if (!dup) nms.add(cand)
+        }
+        val kept = nms.filter { it[2] - it[0] < sw * 0.95f && (it[2] - it[0]) / (it[3] - it[1]) < 4f && (it[2] - it[0]) * (it[3] - it[1]) < S * S * 0.08f }
+        last?.close(); tensor.close()
+        times.sort()
+        val arrAll = org.json.JSONArray()
+        kept.sortedByDescending { it[4] }.forEach { b ->
+            arrAll.put(org.json.JSONObject().put("x", (b[0] / S * bmp.width).toInt()).put("y", (b[1] / S * bmp.height).toInt())
+                .put("w", ((b[2] - b[0]) / S * bmp.width).toInt()).put("h", ((b[3] - b[1]) / S * bmp.height).toInt())
+                .put("conf", (b[4] * 100).toInt() / 100.0))
+        }
+        val arr = org.json.JSONArray()
+        kept.sortedByDescending { it[4] }.take(6).forEach { b ->
+            arr.put(org.json.JSONObject().put("x", (b[0] / S * bmp.width).toInt()).put("y", (b[1] / S * bmp.height).toInt())
+                .put("w", ((b[2] - b[0]) / S * bmp.width).toInt()).put("h", ((b[3] - b[1]) / S * bmp.height).toInt())
+                .put("conf", (b[4] * 100).toInt() / 100.0))
+        }
+        val js = org.json.JSONObject().put("ok", true)
+            .put("screen", "${bmp.width}x${bmp.height}").put("modelMb", model.length() / 1024 / 1024)
+            .put("loadMs", loadMs).put("medianMs", times[1]).put("allMs", org.json.JSONArray(times))
+            .put("rawBoxes", raw.size).put("kept", kept.size).put("top", arr).put("boxes", arrAll).toString()
+        app.dsh.mobile.DshLog.d("yolo", js)
+        return 200 to js
+    }
+
     private fun normCalibText(s: String): String {
         val sb = StringBuilder(s.length)
         for (ch in s) if (ch.isLetterOrDigit()) sb.append(ch.lowercaseChar())
@@ -1756,7 +2100,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 }
                 obj.has("desc") -> svc.tapDesc(obj.getString("desc"))
                 obj.has("text") -> svc.tapText(obj.getString("text"))
-                obj.has("x") && obj.has("y") -> svc.dispatchTap(obj.getDouble("x").toFloat(), obj.getDouble("y").toFloat())
+                obj.has("x") && obj.has("y") -> { val x = obj.getDouble("x").toFloat(); val y = obj.getDouble("y").toFloat(); val via = svc.tapSmart(x, y); app.dsh.mobile.DshLog.d("tap", "xy $x,$y via=$via"); via != "failed" }
                 else -> false
             }
             // ⚠️ ok:true 只表示**手势已派发**，不代表页面真的响应了（用户实测：
@@ -1811,7 +2155,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 return 200 to obj2.toString()
             }
             if (ok) {
-                200 to """{"ok":true,"dispatched":true,"foreground":"${fg ?: ""}","foregroundChanged":$fgChanged,"shot":"${shot ?: ""}","hint":"ok means the gesture was dispatched, not that the UI reacted — dump again to verify"}"""
+                200 to """{"ok":true,"dispatched":true,"via":"${svc.lastTapVia ?: ""}","foreground":"${fg ?: ""}","foregroundChanged":$fgChanged,"shot":"${shot ?: ""}","hint":"ok means the gesture was dispatched, not that the UI reacted — dump again to verify"}"""
             } else {
                 // 失败时附上"最接近的候选"（提案 P0-2）——
                 // 省掉 AI「再花一整轮 dump 去找」的往返；常见真相是目标在 contentDescription 里
@@ -3139,7 +3483,9 @@ document.getElementById('api').textContent = checks.map(function(c){
             val action = JSONObject(body).optString("action")
             val ok = svc.performGlobalActionByName(action)
             if (ok) 200 to """{"ok":true,"action":"$action"}"""
-            else 400 to """{"ok":false,"error":"unknown action (back|home|recents|notifications|quick_settings)"}"""
+            else if (action in listOf("dismiss-shade", "expand-notifications", "expand-settings", "notifications", "quick_settings"))
+                200 to """{"ok":true,"action":"$action","note":"global action returned false — the panel is probably already in that state"}"""
+            else 400 to """{"ok":false,"error":"unknown action (back|home|recents|notifications|quick_settings|expand-notifications|dismiss-shade|expand-settings)"}"""
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"${e.message}"}"""
         }
@@ -3956,6 +4302,14 @@ document.getElementById('api').textContent = checks.map(function(c){
      * query: ocr=0 关闭 OCR；engine=mlkit|ppocr6 指定 OCR 引擎（默认自动）。
      * 返回 {ok,nodes:[{text,x,y,bounds,source,clickable,hint?,a11yIndex?}],timings,ocrEngine,scale}。
      */
+
+    /** 无边框文字控件的词表：放 assets/scene/action_words.json，便于随使用积累扩充（不在 Kotlin 里写 CJK） */
+    private fun actionWordsFromAssets(ctx: Context): List<String> = runCatching {
+        val txt = ctx.assets.open("scene/action_words.json").bufferedReader().use { it.readText() }
+        val arr = org.json.JSONArray(txt)
+        (0 until arr.length()).map { arr.getString(it) }
+    }.getOrDefault(emptyList())
+
     private fun scene(ctx: Context, query: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
             ?: return a11yGone()
@@ -3971,6 +4325,21 @@ document.getElementById('api').textContent = checks.map(function(c){
         val a11yNodes = base.optJSONArray("nodes") ?: JSONArray()
         val out = JSONArray()
         val clickables = ArrayList<JSONObject>()
+        // a11y 节点树被限制（空或极少）时，直接用预取的 OCR 结果兜底（同一张截图、同一套坐标）
+        var sceneFallback: String? = null
+        if (a11yNodes.length() < 3) {
+            val p = ocrPrefetch
+            if (p != null && System.currentTimeMillis() - p.ts < 5000) {
+                val seen = HashSet<String>()
+                for (i in 0 until p.nodes.length()) {
+                    val n = p.nodes.optJSONObject(i) ?: continue
+                    val t = n.optString("text")
+                    if (t.isBlank() || !seen.add(t)) continue
+                    out.put(n)
+                }
+                if (out.length() > 0) sceneFallback = "ocr-prefetch"
+            }
+        }
         val verbose = params["verbose"] in listOf("1", "true", "yes")
         for (i in 0 until a11yNodes.length()) {
             val o = a11yNodes.optJSONObject(i) ?: continue
@@ -4099,6 +4468,9 @@ document.getElementById('api').textContent = checks.map(function(c){
         return 200 to JSONObject().apply {
             put("ok", true)
             put("nodes", page)
+            if (DshAccessibilityService.instance?.systemUiShadeVisible() == true) {
+                put("hint", "notification shade / system UI: coordinate gestures are often swallowed; use tap-desc or tap-id (node ACTION_CLICK) and key expand-notifications|dismiss-shade; --shell is the last resort")
+            }
             put("count", page.length())
             put("total", total)
             put("offset", offset)

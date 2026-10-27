@@ -9,6 +9,8 @@ Source: this app is **DSH Mobile with Termux**, a fork of
 (MIT), built on the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) engine.
 Fork repository: <https://github.com/hazukieq/DSH-Mobile-with-Termux>. Reports, patches and
 build instructions belong there; upstream App issues belong to Soodok's repository.
+- **通知栏/系统 UI 不走坐标手势**：`com.android.systemui` 的 shade 会吞合成手势。展开/收起用 `scr key expand-notifications|dismiss-shade`；点条目用 `scr tap-desc`/`tap-id`（走节点 ACTION_CLICK）；`/scene` 命中 systemui 时会带 `hint` 提醒；最后手段 `scr tap --shell x y`。
+- **文字本身不可点击（富文本/链接除外）**：屏幕上看得见的字通常是 TextView，真正的可点击目标是它的**容器**（行/卡/按钮）。所以按坐标点文字容易点到不可点的子节点上；优先 `scr tap-desc/tap-text`（按节点找），或直接点容器中心。判据：`/scene` 里 `role=card|control` 的节点才是可点目标，`role=text` 只是标签。
 
 ## Accessibility boundary (one rule, before you classify any capability)
 

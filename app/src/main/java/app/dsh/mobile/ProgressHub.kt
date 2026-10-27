@@ -307,6 +307,8 @@ object ProgressHub {
     }
 
     private fun publishNotification(ctx: Context, snap: Snapshot) {
+        // 悬浮窗模式且悬浮窗在场时，不再发"进度"通知（用户反馈：开了悬浮窗仍有通知残留一闪而过）
+        if (mode(ctx) == MODE_OVERLAY && StatusOverlay.isAttached()) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureChannel(nm, ctx)
         val open = PendingIntent.getActivity(

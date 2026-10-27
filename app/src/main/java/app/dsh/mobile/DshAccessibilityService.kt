@@ -1376,6 +1376,46 @@ class DshAccessibilityService : AccessibilityService() {
      *  父容器是外层 LinearLayout；点祖先中心无效，点文字自身坐标才真正提交。
      *  现改为**点命中节点自身中心**（触摸事件会自然冒泡到可点击祖先），
      *  仅当命中节点尺寸为 0 时才回退到祖先矩形。 */
+    /** 坐标点击增强（v2.5.31）：先按坐标命中节点→tapNode（用节点中心），命中不到再纯手势。
+     *  纯手势失败率高的根因是坐标偏差/落点落在非交互子节点上。 */
+    @Volatile var lastTapVia: String? = null   // 最近一次坐标点击的通道：node/gesture/failed
+
+    fun tapSmart(x: Float, y: Float): String {
+        val hit = runCatching { nodeAt(x.toInt(), y.toInt()) }.getOrNull()
+        if (hit != null) {
+            var n: AccessibilityNodeInfo? = hit
+            var guard = 0
+            while (n != null && !n.isClickable && guard++ < 6) n = n.parent
+            val target = n ?: hit
+            if (runCatching { tapNode(target) }.getOrDefault(false)) { lastTapVia = "node"; return "node" }
+        }
+        lastTapVia = if (runCatching { dispatchTap(x, y) }.getOrDefault(false)) "gesture" else "failed"
+        return lastTapVia!!
+    }
+
+    private fun nodeAt(x: Int, y: Int): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        return deepestAt(root, x, y)
+    }
+
+    private fun deepestAt(node: AccessibilityNodeInfo, x: Int, y: Int): AccessibilityNodeInfo? {
+        val r = Rect(); node.getBoundsInScreen(r)
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) return null
+        for (i in 0 until node.childCount) {
+            val c = node.getChild(i) ?: continue
+            deepestAt(c, x, y)?.let { return it }
+        }
+        return node
+    }
+
+    /** 通知栏/系统 UI 是否在前（已展开的 shade 是 TYPE_SYSTEM 窗口，前台包名可能是原 App） */
+    fun systemUiShadeVisible(): Boolean = runCatching {
+        windows?.any { w ->
+            val r = w.root ?: return@any false
+            (r.packageName ?: "").toString() == "com.android.systemui"
+        } ?: false
+    }.getOrDefault(false)
+
     fun tapText(text: String): Boolean {
         val hit = findNodeByText(text) ?: return false
         return tapNode(hit)
@@ -1393,6 +1433,11 @@ class DshAccessibilityService : AccessibilityService() {
      * 才回退到最近的可点击祖先矩形。
      */
     private fun tapNode(node: AccessibilityNodeInfo): Boolean {
+        // v2.5.32：先试节点动作 ACTION_CLICK（SystemUI 通知栏等窗口会吞掉合成手势），失败再手势
+        if (runCatching { node.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)) {
+            lastTapVia = "action-click"
+            return true
+        }
         val own = Rect().also { node.getBoundsInScreen(it) }
         val rect = if (own.width() > 0 && own.height() > 0) {
             own
@@ -1985,6 +2030,9 @@ class DshAccessibilityService : AccessibilityService() {
             "home" -> GLOBAL_ACTION_HOME
             "recents" -> GLOBAL_ACTION_RECENTS
             "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+            "expand-notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+            "dismiss-shade" -> GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE
+            "expand-settings" -> GLOBAL_ACTION_QUICK_SETTINGS
             "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
             else -> return false
         }
