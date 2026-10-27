@@ -127,6 +127,27 @@ tap coordinates carry a small random offset instead of a fixed signature.
 - **Cross-app task** (browser → settings → return to the original app): the "always return to the app"
   constraint is executed reliably.
 
+## 8.6 OCR coordinate calibration: `scr calib` (v2.5.28)
+
+OCR boxes live in **screenshot pixel space**; accessibility bounds live in **display coordinates**.
+On this device they match (portrait `1080x2376`, landscape `2376x1080` - measured, not assumed), but any
+scaling, cropping, letterboxing or vendor screenshot rescaling shifts every tap at once, and that kind of
+error is invisible in code review.
+
+The tool takes a11y text-node centres as ground truth, pairs them with OCR boxes of the same text, and
+fits `truth = s * obs + d` per axis by least squares. Parameters are written only when `n >= 3` and the
+fit really improves (MAE < 0.9x before and < 24px), keyed by **screenshot pixel size**, so portrait and
+landscape are bucketed separately. Without a matching bucket the mapping is identity - old behaviour is
+untouched.
+
+```bash
+scr calib              # measure only: pairs, sx/sy/dx/dy, MAE before/after
+scr calib --apply      # measure and persist (undo with --clear)
+scr calib --list       # show stored buckets
+```
+
+`/ocr` and `/scene` apply the mapping to OCR coordinates automatically.
+
 ## 8. Limits (be aware)
 
 - **Pure canvas / game frames**: with no readable text, only OCR and visual localization remain;

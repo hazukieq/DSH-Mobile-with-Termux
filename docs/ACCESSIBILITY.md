@@ -163,6 +163,26 @@ v2.5.2 的事故正是把 `/launch`、`/launch-intent`、`/open`、`/app-screens
   `input tap`（uid 2000 系统合成输入），不受应用层 `filterTouchesWhenObscured` 影响。
   没装 Shizuku/Root 时会明确返回 `via=shell requires Shizuku or root`，不会静默失败。
 
+## 8.6 OCR 坐标自校准：`scr calib`（v2.5.28）
+
+OCR 的坐标活在**截图像素空间**，无障碍的 bounds 活在**显示坐标空间**。实测这台机器上两者一致
+（竖屏截图 `1080x2376`、横屏 `2376x1080` 都与显示尺寸相同），但一旦出现缩放、裁剪、
+letterbox 或厂商截图缩放，整屏点击坐标就会系统性偏移——这类偏差读代码看不出来，只能实测。
+
+做法：把「无障碍节点里带文字的项」当真值，把「OCR 同名文本块」当观测，
+**逐轴最小二乘**拟合 `truth = s * obs + d`；`n >= 3` 且拟合后误差真的下降（MAE < 0.9×原值
+且 < 24px）才落库。参数按**截图像素尺寸**分桶（`1080x2376` / `2376x1080` 天然分开），
+只在对应桶存在时生效，没有参数时映射恒等、老行为不变。
+
+```bash
+scr calib              # 只测量：配对数、sx/sy/dx/dy、校正前后 MAE
+scr calib --apply      # 测量并写库（不满意可 scr calib --clear 清空）
+scr calib --list       # 看已存的分桶参数
+```
+
+返回示例：`{"pairs":14,"fit":{"sx":1.0,"sy":1.0,"dx":0,"dy":-3},"maeBefore":2.4,"maeAfter":0.9,"applied":true}`。
+`/ocr` 与 `/scene` 返回的 OCR 坐标会自动经过该映射。
+
 ## 8. 边界（请知悉）
 
 - **纯 Canvas/游戏画面**：没有可读文本时只能靠 OCR 与视觉定位，复杂画面仍可能失手；

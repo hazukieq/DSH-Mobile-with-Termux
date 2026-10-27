@@ -545,6 +545,8 @@ Rules:
   自检：同一页面 `scr dump` 若只有 OCR、节点数为 0，基本就是这个原因；本 App v2.5.25 起
   XML 声明了 `isAccessibilityTool="true"`（改 XML 后必须去系统设置重开无障碍服务才生效）。
   仍被吞时用 `scr tap --shell <x> <y>`（Shizuku/Root 的 `input tap`，需提权模式；否则会明确报错）。
+  OCR 坐标与无障碍坐标出现系统性偏移时（换屏/缩放/letterbox），跑一次 `scr calib` 看拟合与 MAE，
+  满意再 `scr calib --apply` 落库（按截图像素尺寸分桶，横竖屏互不影响；`--clear` 清空）。
 - **Click channel** (v2.5.20/2.5.22, 2026-10-27 实测 + 查资料): `cdp click` / `cdp click-text`
   默认走 **DOM click**（`el.click()`，交给 React 处理）。原因不是选择器问题，而是
   **Android WebView 不处理 CDP 合成输入**：Chrome 里 `Input.dispatchTouchEvent` 会交给

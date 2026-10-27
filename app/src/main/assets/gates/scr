@@ -21,6 +21,7 @@ fi
 #   sync:   idle [ms] | wait <t> [gone] [ms]              (idle = v1.2.54)
 #   batch:  batch <json-file|->                           (v1.2.54, 多步一次执行)
 #   watch:  interference [since-ms]                       (v1.2.54, 人是否接管)
+#   calib:  calib [--apply] [--list] [--clear]          (v2.5.28, OCR 坐标自校准)
 DIR=$(cd "$(dirname "$0")" && pwd)
 . "$DIR/_dsh_http.sh"
 
@@ -337,6 +338,21 @@ case "$1" in
     esac
     dsh_http POST /open "$body" || exit 2
     ;;
+  calib)
+    # calib [--apply] [--list] [--clear]  —— OCR 坐标自校准（v2.5.28）
+    # 用「无障碍节点 bounds」当真值，把 OCR 同名文本块做逐轴最小二乘拟合，按截图像素尺寸分桶。
+    CPATH="/calib"; APPLY=0
+    for a in "$@"; do
+      case "$a" in
+        --apply) APPLY=1 ;;
+        --list) CPATH="/calib?list=1" ;;
+        --clear) CPATH="/calib?clear=1" ;;
+        --debug) CPATH="/calib?debug=1" ;;
+      esac
+    done
+    if [ "$APPLY" = 1 ] && [ "$CPATH" = "/calib" ]; then CPATH="/calib?apply=1"; fi
+    dsh_http GET "$CPATH" || exit 2
+    ;;
   wait-app)
     # wait-app <pkg> [--gone] [sec]  —— 等某 App 到前台（或离开），用于付款回流
     [ -n "$2" ] || { echo "usage: scr wait-app <package> [--gone] [sec]" >&2; exit 64; }
@@ -365,6 +381,7 @@ usage: scr <command>
   sync:   idle [ms] | wait <t> [gone] [ms]
   batch:  batch <json-file|->      (multi-step, one round trip)
   watch:  interference [since-ms]  (did the user take over?)
+  calib:  calib [--apply] [--list] [--clear]  (recalibrate OCR coords vs a11y bounds)
   ui:     status [text] [--action <a>] | status-hide
 USAGE
     exit 64

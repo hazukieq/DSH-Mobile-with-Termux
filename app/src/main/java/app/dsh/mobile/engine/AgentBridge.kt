@@ -1,6 +1,7 @@
 package app.dsh.mobile.engine
 
 import app.dsh.mobile.ProgressHub
+import app.dsh.mobile.Calib
 
 import android.content.Context
 import android.app.Notification
@@ -558,6 +559,7 @@ object AgentBridge {
             method == "POST" && path == "/daemon/stop" -> daemonStop()
             method == "POST" && path == "/tap" -> tap(body)
             method == "GET" && path == "/screenshot" -> screenshot(query)
+            method == "GET" && path == "/calib" -> calib(ctx, query)
             method == "GET" && path == "/app-screenshot" -> appScreenshot(query)
             method == "GET" && path == "/process" -> processInfo()
             method == "GET" && path == "/status" -> status()
@@ -1038,6 +1040,7 @@ document.getElementById('api').textContent = checks.map(function(c){
         "/scroll-edge" to "swipes until the scrollable node hits an edge",
         // 屏幕图像（无障碍截图 API，不是 MediaProjection）
         "/screenshot" to "takes a screen capture through the accessibility service",
+        "/calib" to "reads the node tree and captures the screen to pair OCR boxes with a11y bounds",
         "/frame-diff" to "captures screen frames to detect visual change",
         "/frame-wait" to "captures screen frames until they change",
         "/vision/crop" to "captures a screen region for vision analysis",
@@ -1325,6 +1328,197 @@ document.getElementById('api').textContent = checks.map(function(c){
      * ≈ 1.5 万 tokens，每一轮对话都要重新过一遍注意力 —— 用户实测「五六秒才动一次」，
      * 主因就是这个（不是动作慢，是喂给模型的上下文太肥）。紧凑格式 44KB → 6.5KB。
      */
+    /**
+     * GET /calib[?apply=1|clear=1|list=1][&tier=tiny] —— OCR 坐标自校准（v2.5.28）。
+     *
+     * 真值 = 无障碍节点 bounds（系统给的显示坐标）；观测 = OCR 同名文本块。
+     * 逐轴最小二乘拟合 truth = s*obs + d，按**截图像素尺寸**分桶落库（横竖屏天然分开）。
+     *
+     * 为什么需要：OCR 坐标活在截图像素空间，无障碍坐标活在显示空间；一旦出现缩放/裁剪/
+     * letterbox/厂商截图缩放，整屏点击坐标就会系统性偏移——这种偏差读代码看不出来，只能实测。
+     */
+    internal fun calib(ctx: Context, query: String): Pair<Int, String> {
+        val svc = DshAccessibilityService.instance ?: return a11yGone()
+        val q = parseQuery(query)
+        if (q["clear"] in listOf("1", "true", "yes")) {
+            Calib.clear(ctx)
+            return 200 to JSONObject().put("ok", true).put("cleared", true).toString()
+        }
+        if (q["list"] in listOf("1", "true", "yes")) {
+            val arr = JSONArray()
+            Calib.load(ctx).forEach { (k, v) -> arr.put(v.toJson().put("key", k)) }
+            return 200 to JSONObject().put("ok", true).put("params", arr).toString()
+        }
+        val tier = (q["tier"] ?: "tiny").lowercase()
+        // 1) 真值：无障碍节点里带文字的项（中心点）
+        val dump = withScreenTimeout("calib") { svc.dumpScreenJson("all", false) }
+            ?: return 504 to """{"ok":false,"error":"node tree read timed out"}"""
+        val root = runCatching { JSONObject(dump.getOrElse { throw it }) }.getOrNull()
+            ?: return 500 to """{"ok":false,"error":"bad node dump"}"""
+        val nodes = root.optJSONArray("nodes") ?: JSONArray()
+        // 同一段文字在树里可能出现多次（整行容器 + 内部 TextView + 标题副本）：
+        // 全部收下来，配对时按「宽度最接近」挑一个——容器的中心是行中心，不是文字中心，
+        // 直接拿容器中心当真值会把 x 算歪（实测「双卡与移动网络」容器 539 / 文字 331）。
+        val truth = HashMap<String, MutableList<FloatArray>>()
+        for (i in 0 until nodes.length()) {
+            val o = nodes.optJSONObject(i) ?: continue
+            val t = normCalibText(o.optString("text").ifBlank { o.optString("desc") })
+            if (t.length < 2) continue
+            val b = o.optJSONArray("bounds") ?: continue
+            if (b.length() < 4) continue
+            // 记**左上角**而不是中心：整行容器的中心会随宽度漂，左上角却与内部文字对齐，
+            // 对「a11y 给容器 / OCR 给文字」这种最常见的错位天然免疫（实测 Settings 行容器
+            // 中心 539、文字中心 331，但左上角一致）。
+            truth.getOrPut(t) { ArrayList() }.add(
+                floatArrayOf(
+                    b.optInt(0).toFloat(), b.optInt(1).toFloat(),
+                    o.optInt("w").toFloat(), o.optInt("h").toFloat(),
+                )
+            )
+        }
+        // 2) 观测：同一屏的 OCR 文本块
+        val shot = svc.screenshotBase64()
+            ?: return 503 to """{"ok":false,"error":"screenshot_failed","reason":"accessibility screenshot unavailable"}"""
+        val bw = shot.first
+        val bh = shot.second
+        val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: return 500 to """{"ok":false,"error":"bitmap_decode_failed"}"""
+        val boxes = ArrayList<Box>()
+        val usePp = PpOcr.ready(ctx) && PpOcr.isTierDeployed(ctx, tier)
+        if (usePp) {
+            val r = PpOcr.recognize(svc, bmp, tier, useCache = false, regionOnly = false)
+            if (r.ok) r.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, it.conf)) }
+        }
+        bmp.recycle()
+        if (boxes.isEmpty()) {
+            val ml = runCatching { ScreenOcr.recognize(svc, true, 0.5f) }.getOrNull()
+            if (ml != null && !ml.unavailable) {
+                ml.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, 0.0)) }
+            }
+        }
+        // 3) 配对：同一文本 → (a11y 中心, OCR 中心)
+        val pairs = ArrayList<FloatArray>()
+        val sample = JSONArray()
+        var skippedShape = 0
+        var skippedAmbiguous = 0
+        // OCR 侧同一文本出现几次（>1 视为歧义，直接跳过）
+        val ocrCount = HashMap<String, Int>()
+        for (b in boxes) {
+            val k = normCalibText(b.text)
+            ocrCount[k] = (ocrCount[k] ?: 0) + 1
+        }
+        for (b in boxes) {
+            val key = normCalibText(b.text)
+            val cands = truth[key] ?: continue
+            if ((ocrCount[key] ?: 0) > 1 || cands.size > 1) { skippedAmbiguous++; continue }
+            val bw = (b.right - b.left).toFloat().coerceAtLeast(1f)
+            val bh = (b.bottom - b.top).toFloat().coerceAtLeast(1f)
+            // 只接受尺寸量级接近的候选：容器中心 ≠ 文字中心，混进来就是系统性偏差
+            val a = cands
+                .filter { c ->
+                    // 只按宽度量级筛：Compose/整行容器的高度常带大片 padding（与文字框差 5-10 倍），
+                    // 高度比不能当门槛，否则大部分配对会被误杀（实测 GitHub App 只剩 2 对）。
+                    val rw = bw / c[2].coerceAtLeast(1f)
+                    rw in 0.2f..5f
+                }
+                .minByOrNull { c ->
+                    kotlin.math.abs(kotlin.math.ln(bw / c[2].coerceAtLeast(1f)))
+                }
+            if (a == null) { skippedShape++; continue }
+            pairs.add(floatArrayOf(a[0], a[1], b.left.toFloat(), b.top.toFloat()))
+            if (sample.length() < 10) {
+                sample.put(JSONObject()
+                    .put("text", b.text)
+                    .put("a11y", JSONArray().put(a[0].toInt()).put(a[1].toInt()))
+                    .put("ocr", JSONArray().put(b.left).put(b.top))
+                    .put("wh", JSONArray().put(bw.toInt()).put(bh.toInt())))
+            }
+        }
+        val engine = when {
+            boxes.isEmpty() -> "none"
+            usePp -> "ppocr6-$tier"
+            else -> "mlkit"
+        }
+        if (pairs.size < 3) {
+            return 200 to JSONObject()
+                .put("ok", true).put("calibrated", false).put("engine", engine)
+                .put("screenshot", JSONObject().put("w", bw).put("h", bh))
+                .put("a11yTexts", truth.size).put("ocrBoxes", boxes.size).put("pairs", pairs.size)
+                .put("skippedShape", skippedShape).put("skippedAmbiguous", skippedAmbiguous)
+                .apply {
+                    if (q["debug"] in listOf("1", "true", "yes")) {
+                        put("a11ySample", JSONArray(truth.keys.take(8)))
+                        put("ocrSample", JSONArray(boxes.take(8).map { it.text }))
+                    }
+                }
+                .put("reason", "need >=3 pairs of (a11y text node, OCR box with the same text) on this screen; open a text-rich screen and retry")
+                .toString()
+        }
+        val fit = Calib.fit(pairs) ?: return 500 to """{"ok":false,"error":"fit_failed"}"""
+        val apply = q["apply"] in listOf("1", "true", "yes")
+        // 只有「偏移够大」且「拟合后误差真的下降」才落库：
+        //  - 差几个像素（实测 GitHub App 是 +5/-6px）多半是文字墨水与节点内边距之差，
+        //    校准它等于给点击加偏置，不算坐标漂移；
+        //  - 缩放/裁剪/横竖屏那种漂移是几十到几百像素，会命中下面的门槛。
+        val meaningful = kotlin.math.abs(fit.sx - 1f) > 0.01f || kotlin.math.abs(fit.sy - 1f) > 0.01f ||
+            kotlin.math.abs(fit.dx) > 8f || kotlin.math.abs(fit.dy) > 8f
+        val worthwhile = meaningful && fit.maeAfter < fit.maeBefore * 0.9f && fit.maeAfter < 24f
+        if (apply && worthwhile) {
+            Calib.put(ctx, Calib.Params(bw, bh, fit.sx, fit.sy, fit.dx, fit.dy,
+                fit.n, fit.maeBefore, fit.maeAfter, System.currentTimeMillis()))
+        }
+        return 200 to JSONObject()
+            .put("ok", true).put("calibrated", true).put("engine", engine)
+            .put("screenshot", JSONObject().put("w", bw).put("h", bh))
+            .put("pairs", pairs.size).put("a11yTexts", truth.size).put("ocrBoxes", boxes.size)
+            .put("skippedShape", skippedShape).put("skippedAmbiguous", skippedAmbiguous)
+            .put("fit", JSONObject()
+                .put("sx", fit.sx.toDouble()).put("sy", fit.sy.toDouble())
+                .put("dx", fit.dx.toDouble()).put("dy", fit.dy.toDouble()))
+            .put("maeBefore", fit.maeBefore.toDouble()).put("maeAfter", fit.maeAfter.toDouble())
+            .put("applied", apply && worthwhile)
+            .put("meaningful", meaningful)
+            .apply { if (q["debug"] in listOf("1", "true", "yes")) put("sample", sample) }
+            .apply {
+                if (apply && !worthwhile) {
+                    put(
+                        "applySkipped",
+                        if (!meaningful) {
+                            "offset is within noise (|dx|,|dy| <= 8px and scale ~= 1): that is text-ink padding, not coordinate drift - nothing written"
+                        } else {
+                            "fit did not improve enough (maeAfter >= 0.9*maeBefore or > 24px); nothing written"
+                        }
+                    )
+                }
+            }
+            .toString()
+    }
+
+    /** 校准配对用的文本归一化：只留字母数字，抹平 OCR 与 a11y 的空白/标点差异。 */
+    private fun normCalibText(s: String): String {
+        val sb = StringBuilder(s.length)
+        for (ch in s) if (ch.isLetterOrDigit()) sb.append(ch.lowercaseChar())
+        return sb.toString()
+    }
+
+    /**
+     * 把一组 OCR 框从**截图像素空间**校正到显示坐标（无对应校准参数时恒等）。
+     *
+     * @param w/h 截图位图尺寸（不是显示尺寸）
+     */
+    private fun applyCalibToBoxes(ctx: Context, w: Int, h: Int, boxes: MutableList<Box>) {
+        if (boxes.isEmpty()) return
+        val rects = boxes.map { floatArrayOf(it.left.toFloat(), it.top.toFloat(), it.right.toFloat(), it.bottom.toFloat()) }
+            .toMutableList()
+        if (!Calib.applyTo(ctx, w, h, rects)) return
+        for (i in boxes.indices) {
+            val b = boxes[i]
+            val r = rects[i]
+            boxes[i] = Box(b.text, r[0].toInt(), r[1].toInt(), r[2].toInt(), r[3].toInt(), b.conf)
+        }
+    }
+
     private fun screen(query: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
             ?: return a11yGone()
@@ -1788,9 +1982,14 @@ document.getElementById('api').textContent = checks.map(function(c){
             val regionOnly = params["region"] in listOf("1", "true", "yes")
             val ifChanged = params["ifChanged"] in listOf("1", "true", "yes")
             val r = PpOcr.recognize(svc, bmp, tier, useCache, regionOnly, ifChanged)
+            // v2.5.28：把 OCR 的截图像素坐标校正到显示坐标（没有校准参数时恒等）
+            val mapped = r.blocks
+                .map { Box(it.text, it.left, it.top, it.right, it.bottom, it.conf) }
+                .toMutableList()
+            applyCalibToBoxes(ctx, shot.first, shot.second, mapped)
             bmp.recycle()
             val arr = JSONArray()
-            r.blocks.forEach { b ->
+            mapped.forEach { b ->
                 arr.put(JSONObject().apply {
                     put("text", b.text); put("x", b.cx); put("y", b.cy)
                     put("left", b.left); put("top", b.top); put("right", b.right); put("bottom", b.bottom)
@@ -1807,8 +2006,14 @@ document.getElementById('api').textContent = checks.map(function(c){
         val force = params["force"] in listOf("1", "true", "yes")
         val scale = params["scale"]?.toFloatOrNull() ?: 0.5f
         val r = app.dsh.mobile.ScreenOcr.recognize(svc, force, scale)
+        // v2.5.28：ML Kit 结果是显示坐标；仍按显示尺寸查一次校准（通常无参数 → 恒等）
+        val dm = svc.resources.displayMetrics
+        val mlBoxes = r.blocks
+            .map { Box(it.text, it.left, it.top, it.right, it.bottom, 0.0) }
+            .toMutableList()
+        applyCalibToBoxes(ctx, dm.widthPixels, dm.heightPixels, mlBoxes)
         val arr = JSONArray()
-        for (b in r.blocks) {
+        for (b in mlBoxes) {
             arr.put(JSONObject().apply {
                 put("text", b.text)
                 put("x", b.cx)
@@ -3835,6 +4040,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                                 ocrRegion = JSONArray().put(rg.left).put(rg.top).put(rg.right).put(rg.bottom)
                             }
                             r.blocks.forEach { boxes.add(Box(it.text, it.left, it.top, it.right, it.bottom, it.conf)) }
+                            applyCalibToBoxes(ctx, shot.first, shot.second, boxes)
                         }
                     }
                 }
