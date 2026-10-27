@@ -10,6 +10,8 @@ Source: this app is **DSH Mobile with Termux**, a fork of
 Fork repository: <https://github.com/hazukieq/DSH-Mobile-with-Termux>. Reports, patches and
 build instructions belong there; upstream App issues belong to Soodok's repository.
 - **通知栏/系统 UI 不走坐标手势**：`com.android.systemui` 的 shade 会吞合成手势。展开/收起用 `scr key expand-notifications|dismiss-shade`；点条目用 `scr tap-desc`/`tap-id`（走节点 ACTION_CLICK）；`/scene` 命中 systemui 时会带 `hint` 提醒；最后手段 `scr tap --shell x y`。
+- **`/tap {x,y}` 默认只发合成手势（坐标即像素，v2.5.30 起）**：v2.5.29 曾把坐标先转成节点 ACTION_CLICK，遇到「残留全屏节点」就会点到装饰层、表现为「点了没反应」。需要节点语义时显式传 `{"x":..,"y":..,"via":"auto"}`；回执带 `via / sent / dispatchedAt / staleFullScreenNode`，`via=node` 而肉眼位置不符时改用默认 gesture。
+- **残留全屏节点**：App 关掉侧边栏/弹层后常留下 `[0,0,W,H]` 的 clickable 节点（酷狗实测「关闭侧边栏」「播放」）。`/scene` 命中时会带 `staleFullScreenNode` + `spaceHint`：此时该窗口的节点中心不可信，坐标以截量为准，点击用 `scr tap x y`（手势）或 `tap-desc`，不要用 `via:auto`。
 - **文字本身不可点击（富文本/链接除外）**：屏幕上看得见的字通常是 TextView，真正的可点击目标是它的**容器**（行/卡/按钮）。所以按坐标点文字容易点到不可点的子节点上；优先 `scr tap-desc/tap-text`（按节点找），或直接点容器中心。判据：`/scene` 里 `role=card|control` 的节点才是可点目标，`role=text` 只是标签。
 
 ## Accessibility boundary (one rule, before you classify any capability)

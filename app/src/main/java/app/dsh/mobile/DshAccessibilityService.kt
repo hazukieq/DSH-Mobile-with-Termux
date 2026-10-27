@@ -1380,14 +1380,65 @@ class DshAccessibilityService : AccessibilityService() {
      *  纯手势失败率高的根因是坐标偏差/落点落在非交互子节点上。 */
     @Volatile var lastTapVia: String? = null   // 最近一次坐标点击的通道：node/gesture/failed
 
+    /** 最近一次坐标 tap 的实际落点 "x,y" 与命中的节点（诊断用）。 */
+    @Volatile var lastTapAt: String? = null
+    @Volatile var lastTapNode: String? = null
+
+    /** 只发合成手势、精确不抖动（坐标调用方的语义：我说哪点就点哪）。 */
+    fun tapAtExact(x: Float, y: Float): Boolean {
+        val ok = runCatching { dispatchTap(x, y, 0) }.getOrDefault(false)
+        lastTapVia = if (ok) "gesture" else "failed"
+        return ok
+    }
+
+    /** 残留全屏节点：bounds 覆盖 >=95% 屏幕且 clickable —— 多为 App 侧边栏关闭后未回收，
+     *  其 bounds 与实际渲染不同步，任何按它算的坐标都会偏。 */
+    fun staleFullscreenNode(): String? = runCatching {
+        val root = rootInActiveWindow ?: return@runCatching null
+        val (sw, sh) = screenSize()
+        val need = (sw * sh * 0.95f).toInt()
+        fun walk(n: AccessibilityNodeInfo, depth: Int): String? {
+            if (depth > 20) return null
+            val r = Rect(); n.getBoundsInScreen(r)
+            if (n.isClickable && r.width() * r.height() >= need) {
+                val label = (n.contentDescription ?: n.text)?.toString().orEmpty()
+                if (label.isNotBlank()) return label
+            }
+            for (i in 0 until n.childCount) {
+                walk(n.getChild(i) ?: continue, depth + 1)?.let { return it }
+            }
+            return null
+        }
+        walk(root, 0)
+    }.getOrNull()
+
     fun tapSmart(x: Float, y: Float): String {
         val hit = runCatching { nodeAt(x.toInt(), y.toInt()) }.getOrNull()
         if (hit != null) {
+            // v2.5.30：整屏装饰层/残留全屏节点（面积 >=60% 屏）绝不能当点击目标——
+            // 实测酷狗当前页挂着 [0,0,1080,2376] 的「关闭侧边栏」「播放」节点，
+            // 按坐标取最深节点就会点到它，表现为「点了没反应」。此类情况退回合成手势。
+            val (sw, sh) = screenSize()
+            val screenArea = sw.toLong() * sh
+            fun tooBig(n: AccessibilityNodeInfo): Boolean {
+                val r = Rect(); n.getBoundsInScreen(r)
+                return r.width().toLong() * r.height() >= screenArea * 6 / 10
+            }
             var n: AccessibilityNodeInfo? = hit
             var guard = 0
             while (n != null && !n.isClickable && guard++ < 6) n = n.parent
-            val target = n ?: hit
-            if (runCatching { tapNode(target) }.getOrDefault(false)) { lastTapVia = "node"; return "node" }
+            val cand = n ?: hit
+            val target = if (tooBig(hit) || tooBig(cand)) null else cand
+            if (target != null && runCatching { tapNode(target) }.getOrDefault(false)) {
+                lastTapVia = "node"
+                val r = Rect().also { target.getBoundsInScreen(it) }
+                val label = (target.contentDescription ?: target.text)?.toString().orEmpty()
+                lastTapNode = JSONObject().apply {
+                    put("label", label); put("clickable", target.isClickable)
+                    put("bounds", JSONArray(listOf(r.left, r.top, r.right, r.bottom)))
+                }.toString()
+                return "node"
+            }
         }
         lastTapVia = if (runCatching { dispatchTap(x, y) }.getOrDefault(false)) "gesture" else "failed"
         return lastTapVia!!
@@ -1413,6 +1464,16 @@ class DshAccessibilityService : AccessibilityService() {
         windows?.any { w ->
             val r = w.root ?: return@any false
             (r.packageName ?: "").toString() == "com.android.systemui"
+        } ?: false
+    }.getOrDefault(false)
+
+    /** 点是否落在本 App 自己的无障碍悬浮窗（状态条/悬浮球）上 —— 这类窗口吞合成手势。 */
+    fun pointInOwnOverlay(x: Int, y: Int): Boolean = runCatching {
+        windows?.any { w ->
+            val root = w.root ?: return@any false
+            if ((root.packageName ?: "").toString() != "com.termux") return@any false
+            val r = Rect(); root.getBoundsInScreen(r)
+            x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
         } ?: false
     }.getOrDefault(false)
 
@@ -1883,6 +1944,7 @@ class DshAccessibilityService : AccessibilityService() {
         val path = Path().apply { moveTo(jx, jy) }
         // 按压时长也在人类范围内抖动（真实点按约 50–130ms，恒定 60ms 是机器特征）
         val duration = if (jitterPx > 0) kotlin.random.Random.nextLong(55L, 135L) else 60L
+        lastTapAt = "" + jx.toInt() + "," + jy.toInt()
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
             .build()

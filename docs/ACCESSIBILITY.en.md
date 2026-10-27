@@ -157,3 +157,10 @@ scr calib --list       # show stored buckets
 - **Anti-automation detection in some apps**: not guaranteed to pass everywhere — and we do not
   implement detection evasion.
 
+## 9. Coordinate taps: semantics and the v2.5.30 regression fix
+
+`/tap {x,y}` means **pixels**: it dispatches a synthetic gesture and does NOT silently resolve the point to an accessibility node. v2.5.29 did the opposite and made coordinate taps unreliable (wrong ancestors, stale full-screen nodes, swallowed taps on the notification shade). Measured on 2026-10-27 (vivo V2520A, Android 17): gesture taps work on third-party apps and on the SystemUI shade; they are swallowed by DSH's own accessibility overlay (use `/overlay` or `scr status --action` there).
+
+Node semantics are still available explicitly with `{"via":"auto"}`, now guarded so that nodes covering >=60% of the screen (stale full-screen layers left by closed sidebars) are never used as tap targets - the call degrades to a gesture instead.
+
+Responses now carry `sent`, `dispatchedAt`, `via`, `staleFullScreenNode`, `spaceHint` and `ownOverlay`, which is enough for a caller to prove where the tap actually landed.

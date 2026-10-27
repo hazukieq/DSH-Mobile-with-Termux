@@ -203,3 +203,41 @@ scr calib --list       # 看已存的分桶参数
 | 兜底 | `scr tap --shell x y`（Shizuku/root 的 `input tap` 属可信注入） |
 
 `tapNode()` 自 v2.5.32 起先试 `AccessibilityNodeInfo.ACTION_CLICK`，失败才注入手势；`tapNode` 的通道会写进日志与 `/tap` 响应的 `via` 字段（`action-click` / `node` / `gesture`）。
+
+## 9. 坐标 tap 的语义与 v2.5.30 回归修复
+
+**结论：`/tap {x,y}` 的语义是「像素」，默认只发合成手势（dispatchGesture），不做节点语义替换。**
+
+背景：v2.5.29 曾把坐标 tap 改成「先按坐标找节点 → 点该节点」，本意是提高命中率，实测反而把坐标点击变坏：
+
+| 场景 | v2.5.29（节点优先） | v2.5.30（默认手势） |
+| --- | --- | --- |
+| 酷狗音乐 点列表行/关注按钮 | 点到整屏残留节点或错误祖先，无反应/误命中 | 正常跳转 |
+| 通知栏 shade 点通知卡 / 「分享状态」 | 常无反应 | 正常打开通知目标 / 微信状态编辑 |
+| DSH 自己顶部工具条「隐藏」 | 无反应 | 无反应（见下，属另一类问题） |
+
+另加了两道护栏（`tapSmart`，仅在显式 `{"via":"auto"}` 时启用）：
+
+1. **整屏节点拒绝**：面积 ≥60% 屏的节点（酷狗实测挂着 `[0,0,1080,2376]` 的「关闭侧边栏」「播放」）不能作为点击目标；
+2. 命中这类节点时自动退回合成手势，`via` 回执里能看到实际用的是什么。
+
+`/tap` 的坐标回执现在带自证信息：
+
+```json
+{"ok":true,"dispatched":true,"via":"gesture","sent":{"x":540,"y":804},
+ "dispatchedAt":{"x":541,"y":803},"shot":"…/step-3.png",
+ "staleFullScreenNode":"关闭侧边栏","spaceHint":"…"}
+```
+
+- `sent` 是调用方给的坐标，`dispatchedAt` 是抖动/边界钳制后真正派发的点（差分大说明坐标被改写过）；
+- `staleFullScreenNode` 存在时，该窗口的 a11y 几何不可信，坐标请从截图上量；
+- 落在本 App 悬浮条上时给 `ownOverlay:true` + 提示改用 `/overlay` 或 `scr status --action`（无障碍注入手势常被自己的悬浮窗吞掉）。
+
+**能力矩阵（实测 2026-10-27，vivo V2520A / Android 17）**
+
+| 窗口类型 | 坐标手势 | 节点动作 (tap-desc/tap-id) |
+| --- | --- | --- |
+| 普通第三方 App（GitHub / 酷狗 / 设置 / B站） | ✅ | ✅ |
+| SystemUI 通知栏 shade | ✅（本版实测可用） | ✅ |
+| DSH 自身悬浮条 / 悬浮球 | ❌ | ✅（`scr status --action`、`/overlay`） |
+| 存在残留全屏节点的窗口 | ✅（手势不受影响） | ⚠️ 中心坐标可能偏，改用截图坐标 |

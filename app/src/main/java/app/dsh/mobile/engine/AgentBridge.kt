@@ -72,6 +72,9 @@ object AgentBridge {
     /** 上一次动作发生时的前台包名（用于回报 foregroundChanged，见 tap 的注释） */
     @Volatile private var lastActionPkg: String? = null
 
+    /** 最近一次坐标 tap 的 (x, y, via)，用于回执自证落点。 */
+    @Volatile private var lastTapXy: Triple<Int, Int, String>? = null
+
     /** 包名匹配：完全相等，或一方是另一方的前缀（容忍 caller 只写包名前缀） */
     private fun pkgMatches(current: String, expect: String): Boolean =
         current == expect || current.startsWith(expect) || expect.startsWith(current)
@@ -2100,8 +2103,45 @@ document.getElementById('api').textContent = checks.map(function(c){
                 }
                 obj.has("desc") -> svc.tapDesc(obj.getString("desc"))
                 obj.has("text") -> svc.tapText(obj.getString("text"))
-                obj.has("x") && obj.has("y") -> { val x = obj.getDouble("x").toFloat(); val y = obj.getDouble("y").toFloat(); val via = svc.tapSmart(x, y); app.dsh.mobile.DshLog.d("tap", "xy $x,$y via=$via"); via != "failed" }
+                obj.has("x") && obj.has("y") -> {
+                    val x = obj.getDouble("x").toFloat()
+                    val y = obj.getDouble("y").toFloat()
+                    // v2.5.30（用户实测“tap xy 变得不可靠”）：坐标调用的语义是像素，
+                    // 默认只发合成手势；想按节点语义点用 via:auto|node（或 smart:true）。
+                    val smart = via == "node" || via == "auto" || obj.optBoolean("smart", false)
+                    val r = if (smart) svc.tapSmart(x, y)
+                    else (if (svc.tapAtExact(x, y)) "gesture" else "failed")
+                    lastTapXy = Triple(x.toInt(), y.toInt(), r)
+                    app.dsh.mobile.DshLog.d("tap", "xy $x,$y smart=$smart via=$r dispatched=${svc.lastTapAt}")
+                    r != "failed"
+                }
                 else -> false
+            }
+            // 坐标 tap：回执给足自证信息（实际落点 / 是否命中节点 / 残留全屏节点）
+            val txy = lastTapXy
+            if (txy != null && ok) {
+                val shot0 = captureStepShot()
+                return 200 to JSONObject().apply {
+                    put("ok", true)
+                    put("dispatched", true)
+                    put("via", txy.third)
+                    put("sent", JSONObject().put("x", txy.first).put("y", txy.second))
+                    val at = (svc.lastTapAt ?: "").split(",")
+                    if (at.size == 2) {
+                        put("dispatchedAt", JSONObject().put("x", at[0].toIntOrNull() ?: 0).put("y", at[1].toIntOrNull() ?: 0))
+                    }
+                    svc.lastTapNode?.let { runCatching { put("node", JSONObject(it)) } }
+                    svc.staleFullscreenNode()?.let {
+                        put("staleFullScreenNode", it)
+                        put("spaceHint", "a stale full-screen clickable node ($it) is attached; a11y bounds of this window may not match what is rendered, so node-based centres can be off — prefer coordinates measured from a screenshot")
+                    }
+                    if (svc.pointInOwnOverlay(txy.first, txy.second)) {
+                        put("ownOverlay", true)
+                        put("hint", "this point is inside the DSH overlay (ticker/status bar): accessibility-injected gestures are often swallowed there. Use POST /overlay {\"show\":false}, or scr status \"<text>\" --action <desc>, or act tap on the overlay's own action chain")
+                    }
+                    if (shot0 != null) put("shot", shot0)
+                    put("hint", "ok means the gesture was dispatched, not that the UI reacted — verify with dump; if it misses, retry with via:auto (node semantics) or tap-desc")
+                }.toString()
             }
             // ⚠️ ok:true 只表示**手势已派发**，不代表页面真的响应了（用户实测：
             // 点不可点击节点的祖先中心时返回 ok:true 但毫无变化）。
@@ -4470,6 +4510,11 @@ document.getElementById('api').textContent = checks.map(function(c){
             put("nodes", page)
             if (DshAccessibilityService.instance?.systemUiShadeVisible() == true) {
                 put("hint", "notification shade / system UI: coordinate gestures are often swallowed; use tap-desc or tap-id (node ACTION_CLICK) and key expand-notifications|dismiss-shade; --shell is the last resort")
+            } else {
+                DshAccessibilityService.instance?.staleFullscreenNode()?.let {
+                    put("staleFullScreenNode", it)
+                    put("spaceHint", "a stale full-screen clickable node ($it) is attached: this window's a11y bounds may be out of sync with the rendered UI, so centres derived from nodes can be off by an inset — measure from a screenshot, or tap node-first with /tap {\"x\":..,\"y\":..,\"via\":\"auto\"}")
+                }
             }
             put("count", page.length())
             put("total", total)
