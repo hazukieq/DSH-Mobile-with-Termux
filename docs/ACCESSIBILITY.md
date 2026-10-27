@@ -241,3 +241,24 @@ scr calib --list       # 看已存的分桶参数
 | SystemUI 通知栏 shade | ✅（本版实测可用） | ✅ |
 | DSH 自身悬浮条 / 悬浮球 | ❌ | ✅（`scr status --action`、`/overlay`） |
 | 存在残留全屏节点的窗口 | ✅（手势不受影响） | ⚠️ 中心坐标可能偏，改用截图坐标 |
+
+## 9.1 统一分发与窗口诊断（v2.5.31 / 2.5.35）
+
+`POST /act` 的 `{"tapXY":[x,y]}` 不再单独调 `dispatchTap`，改为与 `POST /tap {x,y}` 共用同一套
+`tapDispatch`：默认合成手势（jitter≤4px），`{"smart":true}` 或 `/tap {"via":"auto"}` 才走节点语义。
+两步的回执字段因此一致：
+
+| 字段 | 含义 |
+| --- | --- |
+| `via` | `gesture` / `action-click` / `shell` / `list` / `failed` |
+| `sent` | 调用方请求的坐标 |
+| `dispatchedAt` | **实际**落点（含抖动，已夹取屏内） |
+| `window.target` | 落点所属窗口，优先取前台 App 的窗口（`window/type/top/left/area`） |
+| `window.all` | 所有包含该点的窗口，按面积升序（系统 UI 窗口也可能是全屏，勿只看面积） |
+| `node` | `via` 为节点语义时命中的节点标签 |
+| `staleFullScreenNode` | 当前页存在面积 ≥ 全屏的 clickable 残留节点时给出其标签 |
+| `ownOverlay` | 落点在本 App 无障碍悬浮窗上（合成手势会被吞，改用 `/overlay` 或节点点击） |
+
+回归自测（2.5.35，1080×2376）：酷狗列表行 `540,804` → `via=gesture`、`dispatchedAt=540,804`、
+`window.target=kugou TYPE_APPLICATION`；通知栏通知卡 `540,846` → `window.target=systemui
+TYPE_SYSTEM`，点后 shade 收起；`/act` 里同样的字段可见。

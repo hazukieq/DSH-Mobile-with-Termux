@@ -1467,6 +1467,52 @@ class DshAccessibilityService : AccessibilityService() {
         } ?: false
     }.getOrDefault(false)
 
+    /**
+     * 落点窗口诊断（v2.5.31）：列出包含该点的所有窗口（按面积升序），
+     * 并优先把「前台 App 的窗口」标为 target —— 系统 UI 窗口常常也是全屏，光看面积会误判。
+     * JSON: {"target":{...},"all":[{...},...]}
+     */
+    fun windowInfoAt(x: Int, y: Int): String? = runCatching {
+        val ws = windows ?: return@runCatching null
+        val fg = foregroundPackage()
+        data class Hit(val json: JSONObject, val area: Long, val pkg: String)
+        val hits = ArrayList<Hit>()
+        for (w in ws) {
+            val root = w.root ?: continue
+            val r = Rect(); root.getBoundsInScreen(r)
+            if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue
+            val pkg = (root.packageName ?: "").toString()
+            val typeName = when (w.type) {
+                android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION -> "TYPE_APPLICATION"
+                android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "TYPE_INPUT_METHOD"
+                android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM -> "TYPE_SYSTEM"
+                android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "TYPE_ACCESSIBILITY_OVERLAY"
+                android.view.accessibility.AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER -> "TYPE_SPLIT_DIVIDER"
+                else -> "TYPE_OTHER"
+            }
+            val area = r.width().toLong() * r.height().toLong()
+            hits.add(Hit(JSONObject()
+                .put("window", pkg)
+                .put("type", typeName)
+                .put("top", r.top)
+                .put("left", r.left)
+                .put("area", area), if (area > 0) area else Long.MAX_VALUE, pkg))
+        }
+        if (hits.isEmpty()) return@runCatching null
+        hits.sortBy { it.area }
+        val target = hits.firstOrNull { fg != null && pkgMatchesForWindow(it.pkg, fg!!) } ?: hits.first()
+        val out = JSONObject()
+        out.put("target", target.json)
+        out.put("all", org.json.JSONArray(hits.take(4).map { it.json }))
+        if (hits.size > 1) {
+            out.put("note", "several windows contain this point; target prefers the foreground app window (systemui overlays can also be full-screen)")
+        }
+        out.toString()
+    }.getOrNull()
+
+    private fun pkgMatchesForWindow(a: String, b: String): Boolean =
+        a == b || a.startsWith(b) || b.startsWith(a)
+
     /** 点是否落在本 App 自己的无障碍悬浮窗（状态条/悬浮球）上 —— 这类窗口吞合成手势。 */
     fun pointInOwnOverlay(x: Int, y: Int): Boolean = runCatching {
         windows?.any { w ->

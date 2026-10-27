@@ -74,6 +74,7 @@ object AgentBridge {
 
     /** 最近一次坐标 tap 的 (x, y, via)，用于回执自证落点。 */
     @Volatile private var lastTapXy: Triple<Int, Int, String>? = null
+    @Volatile private var lastTapDetail: JSONObject? = null
 
     /** 包名匹配：完全相等，或一方是另一方的前缀（容忍 caller 只写包名前缀） */
     private fun pkgMatches(current: String, expect: String): Boolean =
@@ -1965,11 +1966,44 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     /** POST /tap → 坐标点击 / 按文本点击（text+desc 打分匹配，trim 忽略大小写）/ 按 desc 点击 */
+    /**
+     * v2.5.30：/tap 与 /act.tapXY 共用同一套坐标分发 + 自证回执。
+     * smart=false → 合成手势（像素语义，jitter≤4px）；smart=true → 节点语义（失败退回手势）。
+     */
+    private fun tapDispatch(svc: DshAccessibilityService, x: Float, y: Float, smart: Boolean): JSONObject {
+        val via = if (smart) svc.tapSmart(x, y) else if (svc.tapAtExact(x, y)) "gesture" else "failed"
+        val out = JSONObject()
+        out.put("ok", via != "failed")
+        out.put("via", via)
+        out.put("sent", JSONObject().put("x", x.toInt()).put("y", y.toInt()))
+        val at = runCatching { svc.lastTapAt }.getOrNull()
+        if (at != null && at.isNotBlank()) {
+            val parts = at.split(",")
+            if (parts.size == 2) {
+                out.put("dispatchedAt", JSONObject()
+                    .put("x", parts[0].trim().toIntOrNull() ?: 0)
+                    .put("y", parts[1].trim().toIntOrNull() ?: 0))
+            }
+        }
+        val node = runCatching { svc.lastTapNode }.getOrNull()
+        if (node != null && node.isNotBlank()) runCatching { out.put("node", JSONObject(node)) }
+        val win = runCatching { svc.windowInfoAt(x.toInt(), y.toInt()) }.getOrNull()
+        if (win != null && win.isNotBlank()) runCatching { out.put("window", JSONObject(win)) }
+        val stale = runCatching { svc.staleFullscreenNode() }.getOrNull()
+        if (stale != null && stale.isNotBlank()) out.put("staleFullScreenNode", stale)
+        if (runCatching { svc.pointInOwnOverlay(x.toInt(), y.toInt()) }.getOrDefault(false)) {
+            out.put("ownOverlay", true)
+            out.put("ownOverlayHint", "point is inside our own accessibility overlay; synthetic gestures may be swallowed — use POST /overlay {\"show\":false} or tap the node instead")
+        }
+        return out
+    }
+
     private fun tap(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
             ?: return a11yGone()
         return try {
             val obj = JSONObject(body)
+            lastTapDetail = null
             // 悬浮窗（v1.2.57）：让用户实时看到 AI 正在执行什么动作
             announceAction(
                 R.string.a11y_action_tap,
@@ -2106,42 +2140,25 @@ document.getElementById('api').textContent = checks.map(function(c){
                 obj.has("x") && obj.has("y") -> {
                     val x = obj.getDouble("x").toFloat()
                     val y = obj.getDouble("y").toFloat()
-                    // v2.5.30（用户实测“tap xy 变得不可靠”）：坐标调用的语义是像素，
-                    // 默认只发合成手势；想按节点语义点用 via:auto|node（或 smart:true）。
+                    // v2.5.30（用户实测“tap xy 变得不可靠”）：坐标调用语义是像素，默认只发合成手势；
+                    // 需要节点语义时用 via:auto|node（或 smart:true）。
                     val smart = via == "node" || via == "auto" || obj.optBoolean("smart", false)
-                    val r = if (smart) svc.tapSmart(x, y)
-                    else (if (svc.tapAtExact(x, y)) "gesture" else "failed")
-                    lastTapXy = Triple(x.toInt(), y.toInt(), r)
-                    app.dsh.mobile.DshLog.d("tap", "xy $x,$y smart=$smart via=$r dispatched=${svc.lastTapAt}")
-                    r != "failed"
+                    lastTapDetail = tapDispatch(svc, x, y, smart)
+                    app.dsh.mobile.DshLog.d("tap", "xy $x,$y smart=$smart via=${lastTapDetail?.optString("via")} dispatched=${svc.lastTapAt}")
+                    lastTapDetail!!.optBoolean("ok")
                 }
                 else -> false
             }
             // 坐标 tap：回执给足自证信息（实际落点 / 是否命中节点 / 残留全屏节点）
-            val txy = lastTapXy
-            if (txy != null && ok) {
+            val detail = lastTapDetail
+            if (detail != null && ok) {
                 val shot0 = captureStepShot()
-                return 200 to JSONObject().apply {
-                    put("ok", true)
-                    put("dispatched", true)
-                    put("via", txy.third)
-                    put("sent", JSONObject().put("x", txy.first).put("y", txy.second))
-                    val at = (svc.lastTapAt ?: "").split(",")
-                    if (at.size == 2) {
-                        put("dispatchedAt", JSONObject().put("x", at[0].toIntOrNull() ?: 0).put("y", at[1].toIntOrNull() ?: 0))
-                    }
-                    svc.lastTapNode?.let { runCatching { put("node", JSONObject(it)) } }
-                    svc.staleFullscreenNode()?.let {
-                        put("staleFullScreenNode", it)
-                        put("spaceHint", "a stale full-screen clickable node ($it) is attached; a11y bounds of this window may not match what is rendered, so node-based centres can be off — prefer coordinates measured from a screenshot")
-                    }
-                    if (svc.pointInOwnOverlay(txy.first, txy.second)) {
-                        put("ownOverlay", true)
-                        put("hint", "this point is inside the DSH overlay (ticker/status bar): accessibility-injected gestures are often swallowed there. Use POST /overlay {\"show\":false}, or scr status \"<text>\" --action <desc>, or act tap on the overlay's own action chain")
-                    }
-                    if (shot0 != null) put("shot", shot0)
-                    put("hint", "ok means the gesture was dispatched, not that the UI reacted — verify with dump; if it misses, retry with via:auto (node semantics) or tap-desc")
-                }.toString()
+                detail.put("dispatched", true)
+                if (shot0 != null) detail.put("shot", shot0)
+                if (!detail.has("hint")) {
+                    detail.put("hint", "ok means the gesture was dispatched, not that the UI reacted — verify with dump; if it misses, retry with via:auto (node semantics) or tap-desc")
+                }
+                return 200 to detail.toString()
             }
             // ⚠️ ok:true 只表示**手势已派发**，不代表页面真的响应了（用户实测：
             // 点不可点击节点的祖先中心时返回 ok:true 但毫无变化）。
@@ -4616,8 +4633,17 @@ document.getElementById('api').textContent = checks.map(function(c){
                 st.has("tapXY") -> {
                     action = "tap-xy"
                     val xy = st.optJSONArray("tapXY")
-                    actionOk = xy != null && xy.length() >= 2 &&
-                        svc.dispatchTap(xy.optDouble(0).toFloat(), xy.optDouble(1).toFloat())
+                    if (xy != null && xy.length() >= 2) {
+                        val d = tapDispatch(svc, xy.optDouble(0).toFloat(), xy.optDouble(1).toFloat(),
+                            st.optBoolean("smart", false))
+                        actionOk = d.optBoolean("ok")
+                        st.put("via", d.optString("via"))
+                        for (k in listOf("sent", "dispatchedAt", "node", "window", "ownOverlay", "ownOverlayHint")) {
+                            if (d.has(k) && !d.isNull(k)) st.put(k, d.get(k))
+                        }
+                        val staleNode = d.optString("staleFullScreenNode")
+                        if (staleNode.isNotBlank()) st.put("staleFullScreenNode", staleNode)
+                    } else actionOk = false
                 }
                 st.has("listId") && st.has("itemIndex") -> {
                     action = "tap-list"
@@ -4701,6 +4727,11 @@ document.getElementById('api').textContent = checks.map(function(c){
             val stepOk = actionOk && verified
             r.put("index", i)
             r.put("action", action)
+            for (k in listOf("via", "sent", "dispatchedAt", "node", "window", "ownOverlay", "ownOverlayHint", "staleFullScreenNode")) {
+                val v = st.opt(k) ?: continue
+                if (v is String && v.isBlank()) continue
+                r.put(k, v)
+            }
             r.put("ok", stepOk)
             r.put("verified", verified)
             r.put("verifyHow", verifyHow)

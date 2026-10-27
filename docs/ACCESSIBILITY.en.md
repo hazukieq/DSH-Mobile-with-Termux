@@ -164,3 +164,13 @@ scr calib --list       # show stored buckets
 Node semantics are still available explicitly with `{"via":"auto"}`, now guarded so that nodes covering >=60% of the screen (stale full-screen layers left by closed sidebars) are never used as tap targets - the call degrades to a gesture instead.
 
 Responses now carry `sent`, `dispatchedAt`, `via`, `staleFullScreenNode`, `spaceHint` and `ownOverlay`, which is enough for a caller to prove where the tap actually landed.
+
+## 9.1 Unified dispatch and window diagnostics (v2.5.31 / 2.5.35)
+
+`POST /act` with `{"tapXY":[x,y]}` now goes through the same `tapDispatch` as `POST /tap {x,y}`:
+synthetic gesture by default (jitter ≤ 4 px), node semantics only with `{"smart":true}` or
+`/tap {"via":"auto"}`. Both reply with the same diagnostics — `via`, `sent`, `dispatchedAt`,
+`window.target` / `window.all`, `node`, `staleFullScreenNode`, `ownOverlay`.
+
+`window.target` prefers the **foreground app's** window, because system-UI windows can also be
+full-screen; `window.all` lists every window containing the point, ascending by area.
