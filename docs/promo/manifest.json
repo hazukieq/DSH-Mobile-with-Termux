@@ -1,105 +1,106 @@
 {
-  "version": "banner-v1",
-  "built_at": "2026-10-01T21:21:08+08:00",
+  "version": "banner-v2",
+  "built_at": "2026-10-28T00:48:54+08:00",
+  "approach": "local Qwen-Image 2.1 text-to-image (ComfyUI) for the hero art + deterministic Pillow typography overlay; text is never drawn by the diffusion model",
+  "generation": {
+    "runtime": "ComfyUI 0.38.0, 127.0.0.1:8188",
+    "models": {
+      "diffusion": "qwen_image_2.1_int8_convrot.safetensors",
+      "text_encoder": "qwen3vl_8b_int8_convrot.safetensors",
+      "vae": "qwen_image_2.1_vae_bf16.safetensors"
+    },
+    "graph": "UNETLoader -> ModelSamplingAuraFlow(shift 3.1) -> KSampler(euler/simple, 28 steps, cfg 3.0) ; CLIPLoader(qwen_image) -> TextEncodeQwenImage21 ; EmptySD3LatentImage 1600x896",
+    "seed": 90210,
+    "size": [
+      1600,
+      896
+    ],
+    "wall_time_s": 120,
+    "script": "qwen_t2i.py",
+    "selected_base": "source/qwen-hero-v4.png",
+    "rejected": [
+      {
+        "file": "poster_v1",
+        "why": "phone too small, Apple logo artifact"
+      },
+      {
+        "file": "poster_v2",
+        "why": "screen line-art too faint, weaker rim light"
+      },
+      {
+        "file": "poster_v3",
+        "why": "model invented garbled pseudo-letters and a dollar sign on screen"
+      }
+    ]
+  },
   "copy": [
-    "DSH Mobile",
-    "DeepSeek Harness.",
-    "Now in your pocket.",
-    "完整 Agent 引擎，在 Android 上运行。",
+    "DEEPSEEK HARNESS × TERMUX",
+    "DeepSeek on Android.",
+    "完整的 Agent 引擎，跑在你的手机上。",
+    "终端 · 引擎 · 无障碍自动化 —— 一个 APK 全都有。",
     "No Root",
-    "No Termux",
-    "19 Extensions"
+    "Termux 内核",
+    "本地推理",
+    "scr dump · ppocr6 · int8 UI detector"
   ],
+  "composition": {
+    "canvas": [
+      1600,
+      900
+    ],
+    "supersample": 2,
+    "left": "typography column on black negative space, 110px margin",
+    "right": "phone hero + frosted glass card, full bleed",
+    "fonts": {
+      "sans": "/usr/share/fonts/opentype/noto/NotoSansCJK-{Regular,Bold}.ttc (index 2 = SC)",
+      "mono": "/home/hazukie/.fonts/JetMonos/ttf/JetBrainsMono-{Regular,SemiBold}.ttf"
+    },
+    "script": "render_banner_v2.py"
+  },
+  "outputs": {
+    "dsh-mobile-github.png": [
+      1600,
+      900
+    ],
+    "dsh-mobile-github@2x.png": [
+      3200,
+      1800
+    ],
+    "dsh-mobile-github.webp": [
+      1600,
+      900
+    ],
+    "dsh-mobile-social.png": [
+      1280,
+      640
+    ]
+  },
   "sources": [
     {
-      "file": "source/ui-workspace.png",
-      "origin": "E:/Deepeek harness/_build_v128/emu35-toolbar.png",
-      "sha256": "6d9b3c158ad476b1c5955da241489c1bcc956789879eb44f639913b37bdc1094"
-    },
-    {
-      "file": "source/ui-extensions.png",
-      "origin": "E:/Deepeek harness/_build_v128/emu44-tools.png",
-      "sha256": "5da320c5edb4082dddb511bb161a2793a386f7950e49ea04a486fe2d4d11b749"
+      "file": "source/qwen-hero-v4.png",
+      "origin": "Qwen-Image 2.1 local generation (seed 90210)",
+      "sha256": "d10e28a9df3cc22c865e703d86f9dc94a0ed394b71a2872f64eb7f40979f75fd"
     },
     {
       "file": "source/ic_launcher_foreground.xml",
-      "origin": "E:/Deepeek harness/dsh-android/app/src/main/res/drawable/ic_launcher_foreground.xml",
+      "origin": "app/src/main/res/drawable/ic_launcher_foreground.xml",
       "sha256": "9c6a4cc1c06fc9379e3cc47ca42265d20dd911d886dd92268d26af8c3afc6e95"
     },
     {
-      "file": "source/deep-blue-current.png",
-      "origin": "Procedural local studio background; render_banner.py",
-      "sha256": "c271ca78d9e7f5ca1f52a817cb1716b18412537a8fc8847dfea0109f1752cb93"
-    }
-  ],
-  "fonts": {
-    "bold": "C:/Windows/Fonts/arialbd.ttf",
-    "regular": "C:/Windows/Fonts/segoeui.ttf",
-    "medium": "C:/Windows/Fonts/segoeuib.ttf",
-    "light": "C:/Windows/Fonts/segoeuil.ttf",
-    "chinese": "C:/Windows/Fonts/msyh.ttc",
-    "mono": "C:/Windows/Fonts/consola.ttf"
-  },
-  "model_inference": "Configured API service",
-  "ui_processing": "Real screenshots, scale and status/toolbar crop only. No generated UI content.",
-  "safe_bounds": [
-    {
-      "name": "brand",
-      "box": [
-        94,
-        84,
-        745,
-        117
-      ]
+      "file": "dsh-mobile-github.png",
+      "sha256": "191055d3641b26041926b44c7fbd07aba01d78af323446151b111eaa326afc9e"
     },
     {
-      "name": "title",
-      "box": [
-        94,
-        229,
-        824,
-        366
-      ]
+      "file": "dsh-mobile-github@2x.png",
+      "sha256": "9a1ef117e38275a23047ddb813ea6b5ed99e95093b329a05183c4780a2f509df"
     },
     {
-      "name": "claims",
-      "box": [
-        98,
-        423,
-        770,
-        707
-      ]
+      "file": "dsh-mobile-github.webp",
+      "sha256": "3fdeb2ee783c03999b2119c700039f1ce1b4425ee6955160114f0dc10081ade4"
     },
     {
-      "name": "engine_status",
-      "box": [
-        1350,
-        638,
-        1511,
-        703
-      ]
-    },
-    {
-      "name": "footer",
-      "box": [
-        100,
-        795,
-        720,
-        840
-      ]
-    }
-  ],
-  "outputs": [
-    "dsh-mobile-github.png",
-    "dsh-mobile-github@2x.png",
-    "dsh-mobile-github.webp",
-    "dsh-mobile-social.png"
-  ],
-  "timeline": [
-    {
-      "version": "banner-v1",
-      "time": "2026-10-01T21:21:08+08:00",
-      "change": "Initial dark navy banner with vector logo and real UI phone mockups."
+      "file": "dsh-mobile-social.png",
+      "sha256": "a54bb4038fd2e7f1ab5a72d6f4518925070b3c8f7a8d73929a9c3b384282d911"
     }
   ]
 }
