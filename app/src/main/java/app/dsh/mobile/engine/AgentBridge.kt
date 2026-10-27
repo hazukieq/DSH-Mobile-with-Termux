@@ -1546,7 +1546,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                     200 to org.json.JSONObject().apply {
                         put("ok", true); put("dispatched", true); put("via", "shell")
                         put("x", pt.first.toInt()); put("y", pt.second.toInt())
-                        put("hint", "shell input tap 已执行；老设备/输入法抢焦点时仍可能落空，dump 校验一次")
+                        put("hint", "shell input tap executed; verify with dump (IME focus or app-level filters may still swallow it)")
                     }.toString()
                 } else {
                     500 to """{"ok":false,"error":"shell tap failed","failedAt":"tap","hint":"check privilege mode / Shizuku alive"}"""
