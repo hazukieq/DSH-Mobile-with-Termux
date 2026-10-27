@@ -996,7 +996,10 @@ class DshAccessibilityService : AccessibilityService() {
                 ocrInfo = " ocr=unavailable"
             }
         }
-        sb.append("${resources.displayMetrics.widthPixels}x$rootHeight ${lines.size}nodes$ocrInfo\n")
+        // v2.5.38（handoff 过度校验 issue）：头行带前台包名，跨 App 的 dump 能自证来源，
+        // 避免把上一帧/自己 App 的树当成目标 App 的界面去解读。
+        val fgTag = runCatching { foregroundPackage() }.getOrNull() ?: "?"
+        sb.append("fg=$fgTag ${resources.displayMetrics.widthPixels}x$rootHeight ${lines.size}nodes$ocrInfo\n")
         lines.forEach { sb.append(it).append('\n') }
         return sb.toString()
     }
@@ -1173,6 +1176,7 @@ class DshAccessibilityService : AccessibilityService() {
         }
         return JSONObject()
             .put("ok", true)
+            .put("foreground", runCatching { foregroundPackage() }.getOrNull() ?: JSONObject.NULL)
             .put("width", resources.displayMetrics.widthPixels)
             .put("height", rootHeight)
             .put("count", count)

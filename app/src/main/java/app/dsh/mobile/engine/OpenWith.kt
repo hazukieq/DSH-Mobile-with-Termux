@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -186,6 +187,9 @@ object OpenWith {
                 .put("target_label", target?.label ?: JSONObject.NULL)
                 .put("handoff", true)
                 .put("verify", "none")
+                .put("stop", true)
+                .put("next", "none")
+                .put("do_not", JSONArray().put("screenshot").put("poll").put("retry"))
                 .put("elapsed_ms", System.currentTimeMillis() - started)
                 .put(
                     "hint",

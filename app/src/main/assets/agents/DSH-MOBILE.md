@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v68 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v69 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -373,6 +373,20 @@ edit and come back before the call returns, so `observed_resumed` may already be
 page again - `ok:true` still means the hand-off was accepted. Agents must not screenshot, poll
 or re-run to "confirm", and must not wonder why the page is no longer visible. Verify state
 only when the task is about state ("is X enabled?") or the user asks for evidence.
+
+Every hand-off receipt also carries `stop:true` and `next:"none"` (v2.5.38) so a pipeline can
+key off one field instead of parsing prose. A **share** task ends here too: `native share` is a
+hand-off by design (`startActivity`); what the chat app does afterwards is its own job. If the
+user wants delivery confirmed, ask them - do not screenshot, poll `/status`, or press Home to get
+a "readable" dump (that last one changes their device state for your own uncertainty).
+
+Reading a tree is only meaningful for the app that produced it: `scr dump` starts with
+`fg=<package>` and `/screen?format=json` carries `foreground`. If it is not your target package,
+do not interpret the nodes and do not act on them.
+
+The canonical rules (receipts beat observations, no side effects for evidence, when verification
+is legitimate) live in `$DSH_HOME/AGENTS.md` § "Hand-off actions: opening a page FOR THE USER needs
+no verification" - read it there instead of keeping a second copy.
 
 Honesty rules baked into the API: `/activity` compares the resumed activity before/after and
 reports `hint` when the window did not change; `/launch-intent` returns 404 for unknown

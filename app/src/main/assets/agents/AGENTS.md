@@ -653,6 +653,21 @@ Rules:
   rendering bug - not as a reflex after every navigation.
 - If the user says "I already came back / I changed it", trust them: continue from that answer
   instead of re-checking the UI.
+- **Receipts beat observations.** When a receipt and an observation disagree, the receipt wins:
+  an observation only decides what to do *next*, never whether the previous step already
+  happened. A hand-off receipt with `stop:true` / `next:"none"` is a terminal answer.
+- **Check `foreground` before interpreting a tree.** `scr dump` / `/screen` start with
+  `fg=<package>` and `/screen?format=json` carries `foreground`: if it is not the package you
+  meant to read, do not interpret the nodes and do not act on them - re-foreground and read once.
+- **Never cause a side effect to obtain evidence.** Pressing Home / Back / switching apps to get a
+  "readable" dump changes the user's device state to serve your own uncertainty - refuse that
+  reflex, ask the user instead.
+- **A share task ends at the share receipt.** `native share` / `/share` succeed as `handoff:true`;
+  what the user's chat app does afterwards is that app's job. Only the user can ask for delivery
+  confirmation, and then you ask *them*, you do not screenshot or poll to find out.
+
+Canonical text for the hand-off semantics lives here; `$DSH_HOME/DSH-MOBILE.md` ("Hand-off
+semantics") links back to this section and adds the mobile-specific endpoints.
 
 ## Working agreements
 

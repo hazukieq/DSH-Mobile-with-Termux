@@ -452,6 +452,9 @@ object AgentBridge {
                 "handoff" -> {
                     obj.put("handoff", true)
                         .put("verify", "none")
+                        // v2.5.38：机器可读的终止标记——agent 不必读 prose 也知道该停
+                        .put("stop", true)
+                        .put("next", "none")
                         .put("do_not", org.json.JSONArray().put("screenshot").put("poll").put("retry"))
                     // /open 自己会在「没换前台」时给出更具体的原因（无障碍关着/选择器/BAL），别覆盖
                     if (path == "/open") {
