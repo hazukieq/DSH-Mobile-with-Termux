@@ -10,7 +10,7 @@ Source: this app is **DSH Mobile with Termux**, a fork of
 Fork repository: <https://github.com/hazukieq/DSH-Mobile-with-Termux>. Reports, patches and
 build instructions belong there; upstream App issues belong to Soodok's repository.
 - **通知栏/系统 UI 不走坐标手势**：`com.android.systemui` 的 shade 会吞合成手势。展开/收起用 `scr key expand-notifications|dismiss-shade`；点条目用 `scr tap-desc`/`tap-id`（走节点 ACTION_CLICK）；`/scene` 命中 systemui 时会带 `hint` 提醒；最后手段 `scr tap --shell x y`。
-- **`/tap {x,y}` 默认只发合成手势（坐标即像素，v2.5.30 起）**：v2.5.29 曾把坐标先转成节点 ACTION_CLICK，遇到「残留全屏节点」就会点到装饰层、表现为「点了没反应」。需要节点语义时显式传 `{"x":..,"y":..,"via":"auto"}`；回执带 `via / sent / dispatchedAt / staleFullScreenNode`，`via=node` 而肉眼位置不符时改用默认 gesture。
+- **`/tap {x,y}` 默认只发合成手势（坐标就是屏幕像素）**：若坐标先被转成节点 ACTION_CLICK，遇到「残留全屏节点」会点到装饰层、表现为「点了没反应」。需要节点语义时显式传 `{"x":..,"y":..,"via":"auto"}`；回执带 `via / sent / dispatchedAt / staleFullScreenNode`，`via=node` 而肉眼位置不符时改用默认 gesture。
 - **残留全屏节点**：App 关掉侧边栏/弹层后常留下 `[0,0,W,H]` 的 clickable 节点（酷狗实测「关闭侧边栏」「播放」）。`/scene` 命中时会带 `staleFullScreenNode` + `spaceHint`：此时该窗口的节点中心不可信，坐标以截量为准，点击用 `scr tap x y`（手势）或 `tap-desc`，不要用 `via:auto`。
 - **文字本身不可点击（富文本/链接除外）**：屏幕上看得见的字通常是 TextView，真正的可点击目标是它的**容器**（行/卡/按钮）。所以按坐标点文字容易点到不可点的子节点上；优先 `scr tap-desc/tap-text`（按节点找），或直接点容器中心。判据：`/scene` 里 `role=card|control` 的节点才是可点目标，`role=text` 只是标签。
 
@@ -49,7 +49,7 @@ off. The per-endpoint list and the "service is off" ladder are in "Accessibility
 - Everything else is the read-only Android system image or other apps' private data: do not go
   hunting for a host filesystem beyond `$HOME`, `$PREFIX` and `/sdcard`.
 
-## Using Termux like Termux (replaces the old on-demand extension store)
+## Using Termux like Termux
 
 - Search: `pkg search <regex>`; install: `pkg install -y <names...>`; list: `pkg list-installed`;
   refresh indexes: `pkg update`. `apt install -y` / `dpkg -l` also work, but `pkg` is the
@@ -73,7 +73,7 @@ off. The per-endpoint list and the "service is off" ladder are in "Accessibility
 - `curl` — binary-safe wrapper over node fetch (`-s/-sS/-I/--json/-L/-X/-H/-d/-o/--max-time`);
   `-o` writes raw bytes.
 - `pgrep -x <name>` / `pkill -x <name>` — list/kill by command **name (comm)** only
-  (the `psx`/`killx` helpers were removed in 2.5.42; both landed in the Termux bootstrap). Prefer these over
+  (`psx`/`killx` no longer exist — use the bootstrap's `pgrep`/`pkill`). Prefer these over
   `pkill -f` or `ps | grep <cmdline>`: your own `bash -c` / `node -e` command line contains the
   pattern and you can end up killing yourself.
 - `say [-f] <text>` — speak via the system TTS engine (truncates at 4000 chars).
@@ -102,7 +102,7 @@ Use a controlled restart only; never kill the engine process yourself.
 
 ## UI Automation Workflow (role and continuation protocol)
 
-### Time windows: plan slow, execute fast (real-device finding)
+### Time windows: plan slow, execute fast
 
 Some controls disappear in a few seconds (video seek bars ~3s, toasts 2–3s, dropdowns). A
 "tap -> dump -> think -> tap" loop takes 1.5–3s and loses the window; the second tap lands on the
@@ -255,8 +255,8 @@ The documented environment already puts `scr`, `loop`, `notify`, and `say` on yo
 - **Screenshots**: use `scr shot --save`; it returns a file path instead of base64. Read the file with the `read_image` tool only when pixels are needed; dump text and OCR lines cover common cases. Old shots are auto-cleaned (last 12 kept).
 - **OCR fallback**: when the accessibility tree exposes almost no text (ColorOS/OPPO browser, WebView, canvas-rendered apps), `scr dump` automatically appends offline OCR lines recognized from the screenshot (ML Kit, no network). The header then shows `ocr=Nlines/<ms>`; OCR lines are prefixed `o` (for example `o3 搜索 @540,2200 c`) and are valid tap targets/matching text exactly like normal nodes. Bridge `GET /ocr?force=1` returns raw OCR blocks with bounding boxes. Results are cached ~1.5s; avoid polling faster because screenshot capture is system-throttled. If a screen looks empty, OCR is already applied; do not conclude "nothing is on screen" from an empty dump alone.
 - **Local fast layer**: bridge `GET /local/status` reports `modelReady`/`serverRunning` for the on-device embedding model; `POST /local/ensure` starts the 15MB model download + `llama-server` in the background. Once running, `loop pick` resolves semantically similar labels locally in milliseconds before any cloud round-trip.
-- Commands: `scr tap <x> <y>` · `tap-text <t>` / `tap-desc <d>` · `long-press <x> <y> [ms]` · `swipe <x1> <y1> <x2> <y2> [ms]` · `key <back|home|recents|notifications|quick_settings>` · `input <text> [--target <hint>] [--append]` · `find <text> [--tap] [--back] [--max N]` (scroll until found) · `idle [ms]` (until the UI settles; also reports the foreground package) · `launch <pkg|label>` · `open <uri|pkg/cls|pkg>` (jump to another app/app link, v2.5.2; v2.5.7 also takes `intent://…` and rewrites `https://*.alipay.com` payment links to `alipays://`) · pay flow is **launch-only**: `scr open "weixin://wxpay/bizpayurl?pr=…"` / `scr open "<https alipay link>"` only starts WeChat/Alipay — landing on the pay page is **not** guaranteed, so never try to verify, scroll or click inside the payment app; just `scr wait-app <com.tencent.mm|com.eg.android.AlipayGphone> --gone 60`, then re-check the order via MCP. Never poll screenshots, never open the pay link twice (fork repo: docs/PAYMENT-LINKS.md) · `wait-app <pkg> [--gone] [sec]` · `pkg` · `shot [--max N]` · `status "<text>" [--action <desc>]` (writes the overlay's **accessibility/app-action chain** — the
-  section under the tool chain, v2.5.6; the old bottom notice strip is gone) · `status-hide`.
+- Commands: `scr tap <x> <y>` · `tap-text <t>` / `tap-desc <d>` · `long-press <x> <y> [ms]` · `swipe <x1> <y1> <x2> <y2> [ms]` · `key <back|home|recents|notifications|quick_settings>` · `input <text> [--target <hint>] [--append]` · `find <text> [--tap] [--back] [--max N]` (scroll until found) · `idle [ms]` (until the UI settles; also reports the foreground package) · `launch <pkg|label>` · `open <uri|pkg/cls|pkg>` (jump to another app/app link; also takes `intent://…` and rewrites `https://*.alipay.com` payment links to `alipays://`) · pay flow is **launch-only**: `scr open "weixin://wxpay/bizpayurl?pr=…"` / `scr open "<https alipay link>"` only starts WeChat/Alipay — landing on the pay page is **not** guaranteed, so never try to verify, scroll or click inside the payment app; just `scr wait-app <com.tencent.mm|com.eg.android.AlipayGphone> --gone 60`, then re-check the order via MCP. Never poll screenshots, never open the pay link twice (fork repo: docs/PAYMENT-LINKS.md) · `wait-app <pkg> [--gone] [sec]` · `pkg` · `shot [--max N]` · `status "<text>" [--action <desc>]` (writes the overlay's **accessibility/app-action chain** — the
+  section under the tool chain) · `status-hide`.
 - **`scr changed`** checks "did the screen move?" in milliseconds. The event stream feeds a small what-changed log (window switches, appearing/updating texts); calling it returns and consumes the log, so prefer `scr changed` over a full `dump` whenever only a change signal is needed. `scr macro <back|home|recents|notifications|quick_settings|open-settings|sleep>` runs a deterministic common action in one command.
 - **`scr batch <json-file|->`** runs a gesture-only sequence in one turn. For multi-step target-state automation, prefer `loop run`. Step types and their exact field names are: `tap` (`text` | `desc` | `x`+`y`), `long_press` (`x`,`y`, optional `durationMs`), `swipe` (`x1`,`y1`,`x2`,`y2`, optional `durationMs`), `input` (`text`, optional `append`, `target`), `key` (`action`), `scroll_find` (`text`, optional `tap`,`back`,`maxSwipes`), `wait` (`text`, optional `gone`,`timeoutMs`), `idle` (optional `timeoutMs`), `sleep` (`ms`). The endpoint validates field names; a failing step aborts the batch unless it carries `"optional":true`. The response reports every step plus the fields it actually received.
 - For raw `scr` gestures/batches, `ok:true` means dispatch, not the expected UI state. Verify important changes with a batch `wait`, `scr changed`, or one necessary dump. For `loop`, read each step's `detail` verification instead.
@@ -446,7 +446,7 @@ before deep app work. Quick map:
 ## Debugging the Web UI over CDP - mandatory
 
 Never guess WebUI DOM/CSS from screenshots; drive the real page. **WebView debugging is ON by
-default since v1.3.61** (`GET /process` → `webview_debug:true` + `devtools_socket`), so no
+default** (`GET /process` → `webview_debug:true` + `devtools_socket`), so no
 flag/restart is needed; `dsh-mobile cdp off` (opt-out file) + restart disables it.
 
 0. `dsh-mobile cdp doctor` first when anything looks off: it prints OK/FAIL for the process,
@@ -465,7 +465,7 @@ flag/restart is needed; `dsh-mobile cdp off` (opt-out file) + restart disables i
 
 Renderer console errors also appear in logcat under the `chromium` tag.
 
-Background progress (v1.3.68): an injected `mobile-progress` plugin posts the current thinking /
+Background progress: an injected `mobile-progress` plugin posts the current thinking /
 tool step through `DshNative.progress(json)`; native `ProgressHub` shows it as an ongoing
 notification or floating window (settings → 后台进度提示). The layer works without accessibility -
 overlay uses SYSTEM_ALERT_WINDOW first and only falls back to the accessibility window. Never use
@@ -497,8 +497,8 @@ pnpm.
   overlay whose URL stays `/` (NOT a `/settings` route); the **native settings** is the top-bar gear
   (Android `SettingsActivity`). Do not try `GET /settings` and do not `am start` our own activities.
 - "plugins" now has **only** the web layer: the drawer 插件 entry (已安装 / 插件市场 tabs, market
-  provided by the bundled `dshmarket` plugin). The old native plugin centre was removed — there is no
-  native activity for it, so never `am start` one.
+  provided by the bundled `dshmarket` plugin). There is no native plugin screen — never `am start`
+  one.
 - "terminal" is still two layers: the native terminal activity vs the engine sidebar terminal.
 - If the layer is ambiguous, **ask the user which one** before spending more than two steps; if two
   probes fail, switch layer or ask instead of exploring further in the wrong layer.
@@ -519,16 +519,16 @@ The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button
 Rules:
 - **Tap channel**: `scr tap <x> <y>` 走无障碍 `dispatchGesture`。少数 App（GitHub、Play 商店账号抽屉）
   把界面标成 `accessibilityDataSensitive`，Android 14+ 会静默吞掉注入（回执 ok、页面不动）。
-  自检：同一页面 `scr dump` 若只有 OCR、节点数为 0，基本就是这个原因；本 App v2.5.25 起
+  自检：同一页面 `scr dump` 若只有 OCR、节点数为 0，基本就是这个原因；本 App
   XML 声明了 `isAccessibilityTool="true"`（改 XML 后必须去系统设置重开无障碍服务才生效）。
   仍被吞时用 `scr tap --shell <x> <y>`（Shizuku/Root 的 `input tap`，需提权模式；否则会明确报错）。
   OCR 坐标与无障碍坐标出现系统性偏移时（换屏/缩放/letterbox），跑一次 `scr calib` 看拟合与 MAE，
   满意再 `scr calib --apply` 落库（按截图像素尺寸分桶，横竖屏互不影响；`--clear` 清空）。
-- **Click channel** (v2.5.20/2.5.22, 2026-10-27 实测 + 查资料): `cdp click` / `cdp click-text`
+- **Click channel**: `cdp click` / `cdp click-text`
   默认走 **DOM click**（`el.click()`，交给 React 处理）。原因不是选择器问题，而是
   **Android WebView 不处理 CDP 合成输入**：Chrome 里 `Input.dispatchTouchEvent` 会交给
   SyntheticGestureController 做底层注入，WebView 没有这条路径，所以调用回执 ok、页面收不到
-  事件（Chromium issuetracker 35819848 / 35824183 有同类讨论）。v2.5.22 已实测把
+  事件（Chromium issuetracker 35819848 / 35824183 有同类讨论）。实测把
   `Emulation.setTouchEmulationEnabled` / `setFocusEmulationEnabled` / `Page.setWebLifecycleState(active)`
   全部打开，触摸仍然不生效——可以确定不是「页面没聚焦」。
   需要真手势（画布/地图/自定义 pointer）时：用无障碍手势 `scr tap <x> <y>`（真实系统输入），
@@ -542,7 +542,7 @@ Rules:
   longer text blob, so a chat message quoting the label no longer steals the hit.
 - Hashed class names change per build (`hHd-Xa_*`, `VOzbGW_panel`) - anchor on aria-label / role /
   text instead.
-- `element.click()` **能**驱动这个 UI（v2.5.20 实测：开抽屉、点导航项都有效，所以 `click`/
+- `element.click()` **能**驱动这个 UI（开抽屉、点导航项都有效，所以 `click`/
   `click-text` 默认就用它）；synthetic KeyboardEvents 不行，打字仍用 helper 的 `type` / `key`。
 - Verify after each step (dialog present, text changed, or `appshot`); an element with x<0 means
   its panel is not open yet - open it first. Two failures -> ask the user which entry they mean.

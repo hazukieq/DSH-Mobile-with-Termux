@@ -26,7 +26,6 @@ App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）
 - `NARROW_UI.md` · `NARROW_UI.en.md` —— 窄屏布局。
 
 ## 实测记录（回归证据，按日期）
-- `testing/2026-10-27-tap-xy-regression.md` —— 坐标 tap 回归：根因、修复、逐用例结果、未解项。
 - `testing/` 下其它文件同规则：一个主题一份，含设备/版本/方法/结论。
 
 ## 发布

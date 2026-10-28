@@ -37,7 +37,7 @@ Engine WebUI listens on `127.0.0.1:3080` (token-gated). Android native side adds
 | `notify [msg]` | system notification (use when a long task finishes) |
 | `scr dump` / `scr tap x y` / `scr tap-text text` | read UI hierarchy; tap by coordinates or text (needs the accessibility service) |
 | `say text` | speak through Android TTS |
-| `pgrep -x` / `pkill -x` | list / kill by process name (Termux bootstrap; `psx`/`killx` were removed in 2.5.42) |
+| `pgrep -x` / `pkill -x` | list / kill by process name (Termux bootstrap; `psx`/`killx` no longer exist) |
 | `loop` | screen-action loop helper (`loop --help`) |
 | `fast on/off` | per-step "no thinking" mode while driving the UI |
 | `dsh-update check|pull|apply` | hot-update the dsh engine layer (not the APK) |
@@ -96,7 +96,7 @@ as blocked because it is off:
 if it must read another app's UI tree/pixels, inject input into another app, or consume
 accessibility events. Launching (`startActivity`), intents, share sheets, `MediaPlayer`,
 `NotificationManager`, `TextToSpeech`, files/SAF and our own window are ordinary Android APIs —
-in v2.5.2 they were wrongly put behind the gate (so "open WeChat" answered `503 a11y_off` with the
+These are deliberately **not** behind the accessibility gate (so "open WeChat" must not answer `503 a11y_off` with the
 service off); that was a classification bug, **not** an Android restriction, fixed in 6fb665c and
 now enforced by `A11Y_DEPENDENT_REASONS` / `A11Y_INDEPENDENT_ACTIONS` in `AgentBridge.kt`.
 
@@ -145,7 +145,7 @@ screenshots; drive the real page.
 0. Diagnose first (recommended): `dsh-mobile cdp doctor` runs the whole chain — process info,
    bridge `/process`, socket discovery, devtools HTTP, a test `Runtime.evaluate` — and prints
    OK/FAIL per layer.
-1. **WebView debugging is ON by default since v1.3.61** (no flag, no restart needed). To opt out
+1. **WebView debugging is ON by default** (no flag, no restart needed). To opt out
    on a device: `dsh-mobile cdp off` (creates `webview-debug-off` next to the app's external
    files) and restart the app; `dsh-mobile cdp on` removes the opt-out.
 2. On-device bridge (no adb needed): `dsh-mobile cdp serve 9222` — connects the WebView's
@@ -229,7 +229,6 @@ docs                      # list what is available
 docs ACCESSIBILITY        # tap semantics, capability matrix, ownOverlay; §10 receipt/coordinate rules
 docs CLICK_CHAIN_UPGRADE  # multi-step chains
 docs README               # index of everything
-docs testing/2026-10-27-tap-xy-regression   # field evidence for the v2.5.30 fix
 ```
 
 ### Opening files with system apps (no desktop needed)
@@ -378,7 +377,7 @@ page again - `ok:true` still means the hand-off was accepted. Agents must not sc
 or re-run to "confirm", and must not wonder why the page is no longer visible. Verify state
 only when the task is about state ("is X enabled?") or the user asks for evidence.
 
-Every hand-off receipt also carries `stop:true` and `next:"none"` (v2.5.38) so a pipeline can
+Every hand-off receipt also carries `stop:true` and `next:"none"` so a pipeline can
 key off one field instead of parsing prose. A **share** task ends here too: `native share` is a
 hand-off by design (`startActivity`); what the chat app does afterwards is its own job. If the
 user wants delivery confirmed, ask them - do not screenshot, poll `/status`, or press Home to get
@@ -484,7 +483,7 @@ Rules for reliable WebUI automation:
 ## Node, pnpm and plugin tooling on the device
 
 The bundled runtime has Node, but `dsh` and `pnpm` are **not on PATH** (verified on a real
-device, 2026-10-22). Use these forms instead of trying to install another Node:
+device). Use these forms instead of trying to install another Node:
 
 ```bash
 PREFIX=${PREFIX:-/data/data/com.termux/files/usr}

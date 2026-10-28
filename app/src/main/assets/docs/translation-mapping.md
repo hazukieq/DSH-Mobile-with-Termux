@@ -4,7 +4,7 @@ Reference for the localisation of DSH Mobile. The app ships **English
 as the default locale** (`res/values/strings.xml`) and translates into
 **German** (`res/values-de/`) and **Simplified Chinese**
 (`res/values-zh-rCN/`). The in-app language switcher (onboarding +
-*Settings → Other → Language*, since v1.2.120) offers exactly these three
+*Settings → Other → Language*) offers exactly these three
 languages; **English is the default** and the old "Follow system" option
 was removed (`lang_system` deleted from every locale). The WebUI still
 follows the system language.
@@ -32,9 +32,9 @@ Guard rails live in `scripts/check-i18n.py`, run on every PR by
 | 语音合成（TTS） | Text-to-speech (TTS) | Text-zu-Sprache (TTS) | |
 | 保活 / 杀进程 | keep-alive / kill processes | Wachhalten / Beenden von Prozessen | Shizuku capabilities |
 | 工作区 / 会话 | workspace / session | Workspace / Sitzung | |
-| 竖屏 / 横屏 / 自动 | Portrait / Landscape / Auto | Hochformat / Querformat / Automatisch | tri-state since v1.2.120, stored in `dsh_ui` key `orientation` (migrated from boolean `landscape`) |
+| 竖屏 / 横屏 / 自动 | Portrait / Landscape / Auto | Hochformat / Querformat / Automatisch | tri-state, stored in `dsh_ui` key `orientation` |
 | 页面缩放 | Page zoom | Seitenzoom | |
-| 跟随系统 | Follow system | Systemsprache folgen | **removed in v1.2.120** (no longer a language option) |
+| 跟随系统 | Follow system | Systemsprache folgen | not offered (no follow-system language option) |
 
 ## Notable string decisions
 
@@ -46,11 +46,11 @@ Guard rails live in `scripts/check-i18n.py`, run on every PR by
 | `state_on` / `state_off` | On / Off | new; replaces hardcoded 已开启/未开启 in `SettingsActivity` + `activity_settings.xml` |
 | `tts_test_text` | Text-to-speech test | new; the string handed to the system TTS engine |
 | `access_enabled_toast` | Screen tap (accessibility): On | new; replaces string concatenation with a full-width colon |
-| `lang_de` | German (DE: `Deutsch`) | added v1.2.120 together with the third locale |
-| `setting_orient_auto` / `ob_orient_auto` | Auto | new v1.2.120; the third orientation value |
-| `lang_system` | — | **removed** v1.2.120; "follow system" is no longer offered |
+| `lang_de` | German (DE: `Deutsch`) | third locale |
+| `setting_orient_auto` / `ob_orient_auto` | Auto | the third orientation value |
+| `lang_system` | — | not used; "follow system" is not offered |
 
-## Screen orientation (v1.2.120)
+## Screen orientation
 
 Orientation moved from a boolean (`dsh_ui/landscape`) to the tri-state string
 pref `dsh_ui/orientation` with values `portrait` / `landscape` / `auto`
@@ -79,7 +79,7 @@ by their on-screen text**, so it had to move with the UI:
 - error fingerprints `扩展目录发布失败…` → `Extension publish failed`
 
 `SEED_VERSION` was bumped 9 → 10 so existing installs pick up the reworded seed,
-and again 27 → 28 (v1.2.120) so the German labels above are taught.
+and again 27 → 28 so the German labels above are taught.
 
 ## Not translated on purpose
 
