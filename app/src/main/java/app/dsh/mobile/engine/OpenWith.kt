@@ -161,6 +161,14 @@ object OpenWith {
         val started = System.currentTimeMillis()
         return runCatching {
             if (direct) {
+                // App context 起 Activity 必须带 NEW_TASK，否则 AndroidRuntimeException
+                // （/share/text 直发曾必现 500 就是缺这个 flag）。
+                if (intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK == 0) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (uri != null && kind == "share") {
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
                 ctx.startActivity(intent)
             } else {
                 val chooser = Intent.createChooser(intent, null).addFlags(
