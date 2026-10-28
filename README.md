@@ -32,8 +32,8 @@ APK 里没有大语言模型——**推理走你配置的 API**。默认的两�
 
 | 模型 | 任务 | 体积 | 运行时 | 默认 |
 |---|---|---|---|---|
-| **PP-OCRv6** `det_tiny` + `rec_tiny`（ONNX） | 截图文字识别 + 行框坐标 | 1.8 MB + 4.5 MB | ONNX Runtime 1.31（CPU） | 开 |
-| **int8 单类 icon 检测**（ONNX，OmniParser 的 `icon_detect` 蒸馏后量化） | 无文字控件（图标、头像、开关、tab） | 30 MB | ONNX Runtime 1.31（CPU，640×640，单类 + NMS） | **关**（`icon=1` 开启） |
+| **PP-OCRv6** `det_tiny` + `rec_tiny`（ONNX）[¹] | 截图文字识别 + 行框坐标 | 1.8 MB + 4.5 MB | ONNX Runtime 1.31（CPU） | 开 |
+| **int8 单类 icon 检测**（ONNX）[²] | 无文字控件（图标、头像、开关、tab） | 30 MB | ONNX Runtime 1.31（CPU，640×640，单类 + NMS） | **关**（`icon=1` 开启） |
 
 ### 1. 界面理解模型（APK 内，离线）
 
@@ -41,7 +41,7 @@ APK 里没有大语言模型——**推理走你配置的 API**。默认的两�
 - 推理全部在 CPU：实机（8 核 arm64，1080×2376 截图）上 icon 检测约 **0.7 s/帧**，PP-OCRv6 tiny 为百毫秒级；两者都不跑时 `/scene` 只用无障碍节点树，几乎无延迟。速度敏感时用默认配置，只有遇到「整屏都是图标、没有文字」的界面才开 `icon=1`。
 - 三层结果合并进 `/scene`：无障碍节点树 → OCR 文本框 → icon 框，重叠的按「中心点落在谁里面」去重。文字控件永远由 a11y/OCR 负责，icon 只补空缺，因此不开它也完全可用。
 - 坐标可信度用 `scr calib` 自校准：同一批文本的 a11y 框中心与 OCR 框中心做最小二乘，按截图尺寸分桶存 `coord-calib.json`，修正厂商 webview/eink 类偏移。
-- 模型本体：[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)（PP-OCRv6，Apache-2.0）、[microsoft/OmniParser](https://github.com/microsoft/OmniParser) 的 `icon_detect`（按其仓库许可，量化后 30 MB）、[onnxruntime](https://github.com/microsoft/onnxruntime)。
+¹ [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)（PP-OCRv6，Apache-2.0）；² [microsoft/OmniParser](https://github.com/microsoft/OmniParser) 的 `icon_detect`（按其仓库许可，本项目蒸馏 + 量化到 30 MB）；推理框架 [onnxruntime](https://github.com/microsoft/onnxruntime)（MIT）。完整清单见 [docs/CREDITS.md](docs/CREDITS.md)。
 
 ### 2. Termux 用户态（模型和工具都跑在它上面）
 
@@ -111,6 +111,22 @@ gradle -p . assembleRelease -Pabi=arm64-v8a
 
 - 内置 **Root / Shizuku** 三档权限；开启特权模式等于把设备控制权交给模型，风险自负。
 - 问题与建议请开 [Issue](../../issues)。
+
+## 参考与引用
+
+本项目的核心能力来自这些开源项目，完整清单与分发注意事项见 [docs/CREDITS.md](docs/CREDITS.md)：
+
+| 项目 | 在本项目里承担什么 | 许可 |
+|---|---|---|
+| [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) | Agent 引擎：会话、工具调用、插件系统、WebUI | 见上游 |
+| [Termux](https://github.com/termux/termux-app) | 运行时用户态：`$PREFIX`、`pkg`/`dpkg`、bash、终端约定 | GPL-3.0 |
+| [PaddleOCR / PP-OCRv6](https://github.com/PaddlePaddle/PaddleOCR) | 截图文字识别（APK 内置 `det_tiny` + `rec_tiny`） | Apache-2.0 |
+| [microsoft/OmniParser](https://github.com/microsoft/OmniParser) | 无文字控件检测模型来源（蒸馏 + int8 量化后 30 MB） | 见上游 |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) | 设备端推理（CPU） | MIT |
+| [Qwen-Image 2.1](https://github.com/QwenLM/Qwen-Image) + [ComfyUI](https://github.com/comfyanonymous/ComfyUI) | 仅用于生成本仓库海报底图，不参与 App 运行 | Apache-2.0 / GPL-3.0 |
+| [霞鹜文楷](https://github.com/lxgw/LxgwWenKai) · [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | 海报排版字体 | OFL-1.1 |
+
+重新分发 APK 时请注意 Termux 的 GPL-3.0 义务（详见 [docs/CREDITS.md](docs/CREDITS.md#分发注意)）。
 
 ## 分叉与许可
 

@@ -10,6 +10,7 @@ App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）
 - `ACCESSIBILITY.md` · `ACCESSIBILITY.en.md` —— 无障碍能力全景：端点语义、坐标 tap 语义与回归修复、
   §8.7 `ownOverlay` 命中与绕行、§9 能力矩阵、§10 回执必读 / 坐标来源两条纪律。
 - `CLICK_CHAIN_UPGRADE.md` —— 多步点击链的写法与失败重试策略。
+- `CREDITS.md` —— 参考与引用：依赖了哪些开源项目、各自许可与分发义务（Termux GPL-3.0 等）。
 - `CROSS_COMPILE.md` —— 交叉编译指南：Android 上没有 wheel 的 Python 包（C/C++/Rust 扩展）如何在设备内或主机 NDK 上编出来。
 - `android-agent-routes.md` · `android-agent-routes.zh.md` —— AgentBridge 路由清单（端点级）。
 - `A11Y-SCOPE.md` · `A11Y-SCOPE.en.md` —— 无障碍服务的边界：哪些操作需要它、哪些绝不需要。
