@@ -133,6 +133,40 @@ NM=/tmp/eng/lib/node_modules DRY=1 bash scripts/patch-sharp-wasm.sh   # 只报�
 - 原生 addon 还需要注意（`src/build/Release/sharp-android-arm64-0.35.5.node`）更快（103–127 ms vs wasm
   202–254 ms），但依赖 Termux 的 libvips；要做也得**和 wasm 一起打**，否则设备缺 libvips 时没回退。
 
+### 1.4.2 在 PC 上交叉编译 sharp 原生 addon（推荐，几秒出包）
+
+手机编要装 clang + libvips（200 MB+）跑十分钟；**PC 用 NDK 交叉编译只要几秒**，产物等价
+（同为 aarch64 bionic ELF）。原理：addon 只依赖 node 头文件 + libvips 头/库，把 Termux 的
+libvips sysroot 当 `-I/-L` 交给 NDK clang 即可，不需要 gyp/cmake。
+
+```bash
+# ① 设备上打包 libvips sysroot（装了 libvips 的 Termux；也可以只取 deb 解包）
+cd $PREFIX && tar czf /sdcard/Download/vips-sysroot.tar.gz \
+  include/vips include/glib-2.0 include/gio include/gobject lib/glib-2.0/include \
+  lib/libvips*.so* lib/libglib-2.0.so* lib/libgobject-2.0.so* lib/libgio-2.0.so* \
+  lib/libgmodule-2.0.so* lib/libexpat.so* lib/libjpeg.so* lib/libpng*.so* lib/libtiff.so* \
+  lib/libwebp.so* lib/libheif.so* lib/liblcms2.so* lib/libxml2.so* lib/libpcre2-8.so* \
+  lib/libffi.so* lib/libintl.so* lib/libz.so*
+adb pull /sdcard/Download/vips-sysroot.tar.gz && mkdir -p /tmp/vipsroot && tar xzf vips-sysroot.tar.gz -C /tmp/vipsroot
+
+# ② PC 上交叉编译（NDK 自动探测；产物 337 KB）
+scripts/build-sharp-native-pc.sh --sysroot /tmp/vipsroot \
+  --closure /tmp/consumer/node_modules --out /tmp/sharp-android-arm64-0.35.5.node
+
+# ③ 把 addon 放进闭包，再把 libvips 依赖闭包放进引擎层
+cp /tmp/sharp-android-arm64-0.35.5.node \
+   /tmp/consumer/node_modules/sharp/src/build/Release/sharp-android-arm64-0.35.5.node
+scripts/pack-engine-vips.sh --libs /tmp/vipsroot/lib --tree /tmp/engine/engine-tree
+#   ④ 重打引擎层 zip/tar（见 §3），APK 资产换成新的 zip
+```
+
+实测（2026-10-29）：`libvips` 运行时闭包 **69 个 .so / 39.2 MB**；APK 215 MB 引擎层 + 闭包 =
+**322,026,536 B**；设备上把全局 `$PREFIX/lib/libvips*` 移走后仍能加载，
+`/proc/self/maps` 显示 vips 来自 `<PREFIX>/lib/dsh-engine/lib/libvips-cpp.so.42`（原生优先，wasm 作兜底）。
+
+> ⚠️ 引擎层只在**首装**时解包（`BootstrapInstaller.ensureDshEngine` 判据是「dsh 入口在 + stamp 在」），
+> 老用户升级 APK 不会自动换 lib/；要么走 `dsh-update`（需把 `lib/*.so*` 一起搬），要么让用户重装。
+
 ### 1.5 装机与回滚
 
 ```sh
