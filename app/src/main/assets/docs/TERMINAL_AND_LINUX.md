@@ -133,7 +133,45 @@ dsh-update stage <url|path> [sha256]     # 暂存指定包（离线/内测）
 dsh-update apply                         # 备份 → 换入 → 重启 → 健康检查（失败自动回滚）
 dsh-update rollback                      # 回到上一份引擎
 dsh-update restart                       # 只重启引擎
+dsh-update howto                         # 打印「自己编译上游 dsh」的完整步骤
 ```
+
+### 自己编译上游 dsh
+
+引擎层 = Termux 版 node + `@deepseek-ai/dsh` 依赖闭包 + 一组 Android 兼容补丁，所以
+「编译」是在 **x86_64 Linux 主机**上重新组装，不是手机上 gcc（手机上也没有工具链）。
+
+```sh
+# 0) 选上游 tag（不是 npm dist-tag），例如 dsh-v0.2.2-alpha.2
+# 1) 主机依赖：node/npm(>=20)、pnpm、unzip、zip、python3、llvm-readelf（NDK 自带）
+export NPM_REGISTRY=https://registry.npmmirror.com
+export TERMUX_REPO=https://mirror.nju.edu.cn/termux/apt/termux-main
+# 2) 取上游 dsh + 打 bionic 兼容补丁 + 收 Termux 运行时
+DSH_VERSION=0.2.2-alpha.2 scripts/collect-termux-runtime.sh /tmp/rt-arm64.zip aarch64
+# 3) 组装引擎层（同热更新包布局，顺手校验 ABI）
+scripts/build-engine-layer.sh --runtime /tmp/rt-arm64.zip --arch aarch64 \
+    --out /tmp/engine-mine --engine-version "0.2.2-alpha.2+my1"
+# 4) 推进手机并切换（sha256 用 sha256sum 算）
+adb push /tmp/engine-mine/engine-dsh-aarch64.tar.gz /sdcard/Download/
+dsh-update stage /sdcard/Download/engine-dsh-aarch64.tar.gz <sha256>
+dsh-update apply            # 换层 → 等旧引擎退出 → 健康检查；失败自动回滚
+dsh-update rollback         # 不满意随时回上一份
+```
+
+- **不要跳过第 2 步**：apiproxy / webview-polyfill / koffi 打桩 / session-persistence /
+  flock 等 bionic 兼容补丁都在那里；跳过通常表现为 WebUI 白屏或引擎起不来。
+- **镜像**：Termux 源 NJU 最快（实测 ~521 kB/s），USTC 可用，TUNA/BFSU 的 termux 路径会
+  403；npm 用 npmmirror（~1.5 MB/s）。
+- **引擎 tar 的最小布局**（自己手搓包时必须满足）：`lib/node_modules/**`（dshEntry 按 npm
+  布局解析，缺了就是空壳）+ `.dsh-engine-version`（status/回滚识别）；`bin/node`、`bin/rg`
+  可选，缺了沿用旧引擎/运行时那份。**不要把 runtime.zip 直接 stage**。
+- **手机端自建也可行**（≈10–15 分钟，主要在 `pnpm install` 与构建）：
+  `pkg install nodejs-lts pnpm zip` → `git clone --depth 1 -b dsh-v0.2.2-alpha.2
+  https://github.com/deepseek-ai/deepseek-harness.git` → `pnpm install --frozen-lockfile` →
+  `pnpm build:official` → 把 `lib/node_modules` 闭包 + `.dsh-engine-version` 打 tar 后
+  `stage`/`apply`。内存吃紧时给 node 加 `--max-old-space-size=4096`。
+- 想验证自己的包：`dsh-update stage` 后先 `apply`，`status` 里看引擎版本与健康检查结果。
+
 
 - 版本按 `@deepseek-ai/dsh` 判断，不按 APK 版本。
 - `apply` 把旧层移到 `$PREFIX/.engine-prev`，换入后重启引擎，用

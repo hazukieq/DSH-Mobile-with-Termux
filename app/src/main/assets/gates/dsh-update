@@ -33,7 +33,7 @@
 #      ⚠️ Termux 源：NJU 最快（实测 ~521 kB/s），USTC 可用，TUNA/BFSU 的 termux
 #         路径会 403。npmmirror 约 1.5 MB/s。
 #   2a) 【快路】只换 JS 闭包、复用现有运行时（升级 dsh 版本首选，20 秒出包）：
-#        先按上游 packaging 产「发布形态闭包」（详见 docs/CROSS_COMPILE.md §5）：
+#        先按上游 packaging 产「发布形态闭包」（详见 docs/ENGINE-BUILD.md §1）：
 #          pnpm exec tsx scripts/release/pack.ts --family dsh --out /tmp/npmpack
 #          npm install --ignore-scripts --omit=optional ...（tarball 走 file: 依赖）
 #        然后：

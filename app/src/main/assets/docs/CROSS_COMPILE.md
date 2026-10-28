@@ -145,6 +145,9 @@ Termux 官方仓库里已有大量预编译科学包，**先 `pkg search python-
 
 ---
 
+> 引擎层（JS 闭包 / Android 独有库交叉编译 / Termux 运行时收集）已独立成篇：
+> **[ENGINE-BUILD.md](ENGINE-BUILD.md)**。本篇只讲「Android 上没有 wheel 的 Python 包怎么编」。
+
 ## 参考
 
 - Termux 包索引：<https://packages.termux.dev>

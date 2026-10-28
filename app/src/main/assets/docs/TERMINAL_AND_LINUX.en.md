@@ -149,7 +149,47 @@ dsh-update stage <url|path> [sha256]     # stage a specific bundle (offline/inte
 dsh-update apply                         # back up -> swap in -> restart -> health check (auto-rollback on failure)
 dsh-update rollback                      # restore the previous engine
 dsh-update restart                       # restart the engine only
+dsh-update howto                         # print the "build upstream dsh yourself" recipe
 ```
+
+### Building upstream dsh yourself
+
+The engine layer = Termux node + the `@deepseek-ai/dsh` dependency closure + a set of
+Android (bionic) patches, so "building" means reassembling it on an **x86_64 Linux host**,
+not compiling on the phone.
+
+```sh
+# 0) pick an upstream tag (not an npm dist-tag), e.g. dsh-v0.2.2-alpha.2
+# 1) host deps: node/npm (>=20), pnpm, unzip, zip, python3, llvm-readelf (with the NDK)
+export NPM_REGISTRY=https://registry.npmmirror.com
+export TERMUX_REPO=https://mirror.nju.edu.cn/termux/apt/termux-main
+# 2) fetch upstream dsh + apply bionic patches + collect the Termux runtime
+DSH_VERSION=0.2.2-alpha.2 scripts/collect-termux-runtime.sh /tmp/rt-arm64.zip aarch64
+# 3) assemble the engine layer (same layout as the hot-update bundle, ABI-checked)
+scripts/build-engine-layer.sh --runtime /tmp/rt-arm64.zip --arch aarch64 \
+    --out /tmp/engine-mine --engine-version "0.2.2-alpha.2+my1"
+# 4) push to the phone and switch
+adb push /tmp/engine-mine/engine-dsh-aarch64.tar.gz /sdcard/Download/
+dsh-update stage /sdcard/Download/engine-dsh-aarch64.tar.gz <sha256>
+dsh-update apply            # swap -> wait for the old engine to exit -> health check; auto-rollback
+dsh-update rollback         # go back any time
+```
+
+- **Do not skip step 2**: apiproxy / webview-polyfill / koffi stubs / session-persistence /
+  flock patches live there; skipping usually means a blank WebUI or an engine that won't boot.
+- **Mirrors**: NJU Termux is the fastest (~521 kB/s), USTC works, TUNA/BFSU termux paths
+  return 403; use npmmirror for npm (~1.5 MB/s).
+- **Minimum engine tarball layout**: `lib/node_modules/**` (dshEntry resolves through the npm
+  layout; without it the layer is an empty shell) + `.dsh-engine-version`; `bin/node` and
+  `bin/rg` are optional (the previous engine/runtime copies are reused). **Never stage a
+  runtime.zip directly.**
+- **Building on the phone is possible** (~10–15 min, mostly `pnpm install` + build):
+  `pkg install nodejs-lts pnpm zip` -> clone `dsh-v0.2.2-alpha.2` -> `pnpm install
+  --frozen-lockfile` -> `pnpm build:official` -> tar `lib/node_modules` + `.dsh-engine-version`
+  -> `stage`/`apply`. Use `--max-old-space-size=4096` when memory is tight.
+- The version string is only used for `status`/rollback bookkeeping — use
+  `<upstream version>+<your tag>`.
+
 
 - The version is judged by `@deepseek-ai/dsh`, not by the APK version.
 - `apply` moves the old layer to `$PREFIX/.engine-prev`, swaps in the staged one, restarts the

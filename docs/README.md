@@ -21,6 +21,8 @@ App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）
 - `PAYMENT-LINKS.md` —— 支付宝/微信支付链接与 `intent://` 改写。
 
 ## 终端 / 引擎 / 网络
+- `ENGINE-BUILD.md` —— 引擎层构建：§1 只换 JS 闭包（20 秒滚动升级）、§2 Android 独有库
+  十字编（NDK / C++ / Rust / Python / N-API + bionic 错误对照表）、§3 收集 Termux 运行时。
 - `TERMINAL_AND_LINUX.md` · `TERMINAL_AND_LINUX.en.md` —— 内置终端（PTY / VT100，与 AI 同环境）。
 - `ENGINE_RESTART.md` —— 引擎重启与 WebView 返回栈。
 - `LAN_WEBUI.md` · `LAN_WEBUI.en.md` —— 局域网 WebUI 与代理。

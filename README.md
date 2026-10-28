@@ -24,7 +24,9 @@
 
 **5. 能跳出应用再回来** — `POST /open` 把 `weixin://` / `alipays://` / App Link / 指定包或 Activity 直接送到目标 App，回执带真实前后台（`before` / `after` / `changed`）；`POST /wait-app` 等用户付完款、授完权回到会话，不用轮询截图。
 
-**6. 进度看得见** — 悬浮窗由引擎事件驱动，输出「思考 / 工具 / 结果 / 回复」链路，可拖动贴边、长文在卡片内滚动；也可切到通知模式。
+**6. 引擎可滚动升级** — APK 内置引擎只是起点：`dsh-update` 支持 `stage` / `apply` / `rollback` 三段式换引擎，失败了自动回退到上一个可用版本。日常只换 JS 闭包（复用 Termux 运行时，20 秒出一个 tar）；换 node 或加原生库时才重收运行时。在手机上自己 `pkg install nodejs` 编译、或在 PC 上用 NDK 十字编原生库都可以，做法见 [ENGINE-BUILD.md](docs/ENGINE-BUILD.md)。
+
+**7. 进度看得见** — 悬浮窗由引擎事件驱动，输出「思考 / 工具 / 结果 / 回复」链路，可拖动贴边、长文在卡片内滚动；也可切到通知模式。
 
 ## 本地运行的模型
 
@@ -102,6 +104,7 @@ gradle -p . assembleRelease -Pabi=arm64-v8a
 | [docs/A11Y-SCOPE.md](docs/A11Y-SCOPE.md) | 哪些能力需要无障碍、关着时如何降级 |
 | [docs/PAYMENT-LINKS.md](docs/PAYMENT-LINKS.md) | 微信/支付宝跳转与回流 |
 | [docs/TERMINAL_AND_LINUX.md](docs/TERMINAL_AND_LINUX.md) | 内置终端（PTY / VT100 / 与 AI 同环境） |
+| [docs/ENGINE-BUILD.md](docs/ENGINE-BUILD.md) | 引擎层构建：闭包滚动升级、NDK 十字编、Termux 运行时收集 |
 | [docs/PROGRESS_OVERLAY.md](docs/PROGRESS_OVERLAY.md) | 悬浮窗链路、贴边与文本上限 |
 | [docs/LAN_WEBUI.md](docs/LAN_WEBUI.md) | 局域网访问手机里的原生 WebUI |
 | [docs/ENGINE_RESTART.md](docs/ENGINE_RESTART.md) | 受控重启路径与端口竞态 |
