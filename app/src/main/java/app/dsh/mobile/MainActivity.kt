@@ -459,7 +459,12 @@ class MainActivity : Activity() {
             domStorageEnabled = true
             allowFileAccess = false       // 关闭文件域，收窄 WebView 攻击面
             allowContentAccess = false
-            javaScriptCanOpenWindowsAutomatically = false
+            // 登录/OAuth 常见 `window.open(url)` 或 `target=_blank`：WebView 默认
+            // 不允许多窗口，弹窗请求被静默丢弃 → 页面只剩空白（issue：登录 try to
+            // openPopup 失败）。这里开多窗口，并在 onCreateWindow 里把弹窗首跳接到
+            // 外部浏览器（见下方注释）。
+            javaScriptCanOpenWindowsAutomatically = true
+            setSupportMultipleWindows(true)
             // 竖屏页面缩小靠 viewport meta 改写（同桌面模式机制），useWideViewPort 必须开。
             useWideViewPort = true
             loadWithOverviewMode = true
@@ -488,6 +493,80 @@ class MainActivity : Activity() {
                     logWebView("console/${msg.messageLevel()} ${msg.sourceId()}:${msg.lineNumber()} $text")
                 }
                 return false
+            }
+
+            /**
+             * 弹窗（window.open / target=_blank）处理 —— v2.5.57。
+             *
+             * ## 为什么必须实现
+             * WebView 默认不支持多窗口：网页调 `window.open()` 时，若宿主没实现本回调并
+             * 通过 `WebViewTransport` 交出一个子 WebView，**弹窗请求会被静默丢弃**。
+             * 表现就是第三方登录 / OAuth（"try to openPopup"）点了没反应、页面变空白。
+             *
+             * ## 做法
+             * 不去真的开一个应用内子窗口：登录页多半是外部站点，在应用内渲染既拿不稳
+             * Cookie/SSO，也容易被 X-Frame/UA 判断卡死。这里用一个一次性「探测 WebView」
+             * 截获弹窗的**首个 URL**，然后：
+             *  · http/https 且非回环 → `ACTION_VIEW` 交给系统浏览器（登录在那里完成）；
+             *  · 回环（127.0.0.1/localhost）或 about:blank → 直接在主 WebView 打开，
+             *    因为那本来就是 App 自己的页面（例如 WebUI 的内部弹层）。
+             */
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: android.os.Message?,
+            ): Boolean {
+                val msg = resultMsg ?: return false
+                val transport = msg.obj as? WebView.WebViewTransport ?: return false
+                val probe = WebView(this@MainActivity)
+                probe.settings.javaScriptEnabled = false
+                probe.settings.blockNetworkLoads = false
+                val handedOff = java.util.concurrent.atomic.AtomicBoolean(false)
+
+                fun handoff(rawUrl: String?) {
+                    val url = rawUrl?.trim().orEmpty()
+                    if (url.isEmpty() || url == "about:blank") return
+                    if (!handedOff.compareAndSet(false, true)) return
+                    val uri = runCatching { Uri.parse(url) }.getOrNull()
+                    logWebView("popup handoff: $url")
+                    runCatching { probe.stopLoading() }
+                    probe.destroy()
+                    if (uri == null) return
+                    val loopback = uri.host == "127.0.0.1" || uri.host == "localhost"
+                    if (loopback) {
+                        // 自己人的弹层：主 WebView 直接打开（等价于单窗口浏览器行为）
+                        webView.post { webView.loadUrl(url) }
+                        return
+                    }
+                    val launched = runCatching {
+                        startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    }.isSuccess
+                    if (!launched) {
+                        logWebView("popup handoff: no browser for ${uri.scheme}; loading in-app")
+                        webView.post { webView.loadUrl(url) }
+                    }
+                }
+
+                probe.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        v: WebView?, request: WebResourceRequest?,
+                    ): Boolean {
+                        handoff(request?.url?.toString()); return true
+                    }
+
+                    override fun onPageStarted(v: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        // 有些站点的弹窗是直接 document.write 一个带脚本的页，首帧就是最终 URL
+                        if (!url.isNullOrEmpty() && !url.startsWith("about:")) handoff(url)
+                    }
+                }
+                transport.webView = probe
+                msg.sendToTarget()
+                // 兜底：弹窗既没跳转也没加载（例如被站点自己取消）→ 释放资源
+                webView.postDelayed({
+                    if (!handedOff.get() && probe.url == null) runCatching { probe.destroy() }
+                }, 3000)
+                return true
             }
 
             /**
