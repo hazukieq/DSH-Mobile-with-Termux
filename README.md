@@ -109,6 +109,22 @@ gradle -p . assembleRelease -Pabi=arm64-v8a
 | [docs/LAN_WEBUI.md](docs/LAN_WEBUI.md) | 局域网访问手机里的原生 WebUI |
 | [docs/ENGINE_RESTART.md](docs/ENGINE_RESTART.md) | 受控重启路径与端口竞态 |
 | [docs/android-agent-routes.md](docs/android-agent-routes.md) | 能力桥路由（agent 视角） |
+| [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md) | 安全与审计：权限表、对外组件、网络面、自带审计脚本与审计 prompt |
+
+## 安全与审计
+
+装之前不想只凭「开源所以安全」？这套东西是**可自证**的：
+
+- 一条命令取证：`scripts/audit-apk.sh app-release.apk` —— 签名指纹、权限清单、导出
+  组件、内置载荷哈希、APK 内所有 URL，一次全打出来。
+- 逐项对照：[docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md) 有权限用途表（每条权限
+  给不给的代价）、导出组件清单、网络面（默认只有 `127.0.0.1` 与模型 API）、数据落盘
+  位置与清除方式、供应链来源与 `engine-manifest.json` 校验方法。
+- 想交给 AI 或外部审计员：该文档第 8 节有一段可直接粘贴的审计 prompt（要求逐条跑命令、
+  不接受「复述文档」当结论）。
+
+关键事实：**没有我们的服务器，没有遥测/统计/广告**；引擎、会话、凭证都在 App 私有目录；
+桥与 WebUI 只绑回环，桥请求必须带每次启动随机生成的 token；局域网 WebUI 默认关闭。
 
 ## 风险与反馈
 

@@ -28,6 +28,10 @@ App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）
 - `LAN_WEBUI.md` · `LAN_WEBUI.en.md` —— 局域网 WebUI 与代理。
 - `NARROW_UI.md` · `NARROW_UI.en.md` —— 窄屏布局。
 
+## 安全 / 审计
+- `SECURITY-AUDIT.md` —— 权限表、对外组件、网络面、数据落盘、供应链校验、审计 prompt；
+  配套脚本 `scripts/audit-apk.sh`（取证）+ `scripts/lib/manifest-components.py`（解析）。
+
 ## 实测记录（回归证据，按日期）
 - `testing/` 下其它文件同规则：一个主题一份，含设备/版本/方法/结论。
 
