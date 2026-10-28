@@ -30,7 +30,7 @@ object TermuxDotfiles {
     private const val TRASH_CLI_MARKER = "DSH Mobile trash-cli"
     private const val APP_DOC_ASSET = "agents/DSH-MOBILE.md"
     private const val APP_DOC_MARKER = "dsh-mobile app doc v"
-    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v69 "
+    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v73 "
     private const val CDP_HELPER_ASSET = "termux/webview-cdp.mjs"
     private const val CDP_WRAPPER_ASSET = "termux/dsh-mobile.sh"
     private const val CDP_HELPER_MARKER = "DSH Mobile helper"
@@ -111,7 +111,7 @@ object TermuxDotfiles {
      * 修复 $PREFIX/bin 里由 App 管理的脚本权限（v1.3.31 权限事故）。
      *
      * 背景：Java 在 Android 上新建文件是 0600；之前部署门脚本/包装器时没有 chmod，
-     * 且用户升级后「安装运行时」步骤被跳过，导致 native/appshot/shot/alarm/record 等
+     * 且用户升级后「安装运行时」步骤被跳过，导致 native/appshot/shot/record 等
      * 新脚本一直不可执行。这里每次启动都幂等地把已知脚本 chmod 0755（存在才改），
      * 同时把 bootstrap 遗留的 toybox 同名符号链接替换掉（写穿会导致脚本失效）。
      */
@@ -123,8 +123,8 @@ object TermuxDotfiles {
             // 我们管理的脚本（$PREFIX/bin 与 engine/bin 同目录）
             val names = listOf(
                 "rm", "trash-cli", "dsh-mobile", "_dsh_http.sh", "notify", "scr", "say",
-                "psx", "killx", "loop", "fast", "linux", "dsh-update",
-                "shot", "appshot", "alarm", "record", "native", "media",
+                "loop", "fast", "dsh-update",
+                "shot", "appshot", "record", "native", "media",
             )
             var fixed = 0
             var removedLinks = 0

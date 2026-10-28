@@ -1,14 +1,15 @@
 package app.dsh.mobile.engine
 
 /**
- * 一条可执行命令的描述（终端会话、Linux 环境启动、门脚本共用）。
+ * 一条可执行命令的描述（终端会话与门脚本共用）。
  *
- * 设计动机（2026-10-18 新增终端 + Linux 环境）：
- * - 终端会话与 `linux run` 门脚本都要「以某个 shell 启动、给定 cwd 与 env」，
- *   而具体是 `/system/bin/sh`（Android 侧）还是 `proot -0 -r rootfs /bin/sh`（Linux 侧）
- *   属于上层策略。把「怎么起」抽象成纯数据，执行层（PTY / ProcessBuilder）只消费它，
- *   两侧都不用互相 import。
- * - 本类刻意不依赖 Android API：便于单测与跨包（term / linux / engine）复用。
+ * 设计动机（2026-10-18 新增终端时引入）：
+ * - 终端会话要「以某个 shell 启动、给定 cwd 与 env」，执行层（PTY / ProcessBuilder）
+ *   只消费这份纯数据，不必知道上层怎么挑 shell。
+ * - 本类刻意不依赖 Android API：便于单测与跨包（term / engine）复用。
+ *
+ * 注：proot / Linux 发行版子系统已于 2026-10-28 移除（原 `Kind` 枚举与
+ * `distroId` 字段一并删除）；现在只有 Android 侧终端一种会话。
  */
 data class ShellSpec(
     /** 可执行文件绝对路径；PTY 层直接 execve 它，不走 PATH 解析 */
@@ -21,16 +22,4 @@ data class ShellSpec(
     val env: List<String> = emptyList(),
     /** 会话标题（终端 tab / 通知里显示） */
     val title: String = "",
-    /** 会话类型：决定 UI 角标与「关闭后是否回落到普通 shell」等行为 */
-    val kind: Kind = Kind.ANDROID,
-    /** 关联的 Linux 发行版 id（kind == LINUX 时有效，如 "alpine"） */
-    val distroId: String? = null,
-) {
-    enum class Kind {
-        /** 直接跑 Android 侧 shell（app 沙箱 / bionic 环境，PATH 由 EngineConfig 组装） */
-        ANDROID,
-
-        /** 跑在 proot 里的 Linux 用户空间（发行版 rootfs） */
-        LINUX,
-    }
-}
+)

@@ -1,12 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Dsh" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#FF101418</item>
-        <item name="android:navigationBarColor">#FF101418</item>
-        <item name="android:windowBackground">#FF101418</item>
+    <style name="Theme.Dsh" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#FFF6F7F9</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#FFFFFFFF</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#FFF6F7F9</item>
         <!-- v1.2.45：全部 AlertDialog 统一深色圆角皮肤。此前只有少数弹窗手动
              setBackgroundDrawableResource(bg_dialog_rounded)，其余仍是框架默认
              （部分 ROM 上是方形浅色"老安卓"样式，用户实测反馈）。 -->
+        <!-- v2.5.43：所有对话框统一为浅色（终端除外 → Theme.Dsh.Terminal 保留深色）。 -->
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Light.Dialog</item>
+    </style>
+
+    <!-- 终端页沿用深色弹框（终端本身是深色，弹框跟着深色才不割裂）。 -->
+    <style name="Theme.Dsh.Terminal" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#FF101418</item>
+        <item name="android:navigationBarColor">#FF101418</item>
+        <item name="android:windowBackground">#FF101418</item>
         <item name="android:alertDialogTheme">@style/Theme.Dsh.Dialog</item>
     </style>
 
@@ -27,5 +38,22 @@
         <item name="android:colorAccent">#FF7DD3FC</item>
         <item name="android:textColorPrimary">#FFE8ECF2</item>
         <item name="android:textColorSecondary">#FF9AA5B4</item>
+    </style>
+
+    <!-- v2.5.42：设置页浅色主题（用户要求原生设置改用浅色，与 WebUI 默认浅色一致）。 -->
+    <style name="Theme.Dsh.Light" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#FFF6F7F9</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#FFFFFFFF</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#FFF6F7F9</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Light.Dialog</item>
+    </style>
+
+    <style name="Theme.Dsh.Light.Dialog" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/bg_dialog_rounded_light</item>
+        <item name="android:colorAccent">#FF2563EB</item>
+        <item name="android:textColorPrimary">#FF10141A</item>
+        <item name="android:textColorSecondary">#FF6B7280</item>
     </style>
 </resources>

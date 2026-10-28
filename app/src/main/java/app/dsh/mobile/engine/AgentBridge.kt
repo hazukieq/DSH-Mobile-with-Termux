@@ -168,7 +168,7 @@ object AgentBridge {
      * 为什么需要文件而不是只靠环境变量：dsh 的 subprocess 在构造子进程环境时会
      * **剔掉所有 `DSH_*` 变量**（`dsh-subprocess` 的 `scrubbedParentEnv`），
      * 于是 AI 的 bash 工具、WebUI 侧边栏终端里都没有 `DSH_BRIDGE_TOKEN`，
-     * 所有门脚本（pkg / notify / scr / say / linux / dsh-update）请求桥都被 403。
+     * 所有门脚本（pkg / notify / scr / say / dsh-update）请求桥都被 403。
      * 文件放在 App 私有目录、权限 0600：只有同一 uid 的 App 子进程可读，
      * 第三方 App 依然拿不到。
      */
@@ -462,8 +462,10 @@ object AgentBridge {
                             obj.put(
                                 "hint",
                                 "Opened (hand-off). To wait for the user coming back from another app " +
-                                    "(payment/OAuth), call POST /wait-app with the target package; " +
-                                    "do not screenshot in a loop and do not open it twice."
+                                    "(payment/OAuth), call POST /wait-app with the target package. " +
+                                    "Payment deep links only launch the app - landing on a pay page is not " +
+                                    "guaranteed, so never try to verify or drive the payment UI. " +
+                                    "Do not screenshot in a loop and do not open it twice."
                             )
                         }
                     } else {
@@ -575,7 +577,6 @@ object AgentBridge {
             method == "GET" && path == "/screenshot" -> screenshot(query)
             method == "GET" && path == "/calib" -> calib(ctx, query)
             method == "GET" && path == "/yolo" -> yoloBench(ctx)
-            method == "GET" && path == "/icons" -> yoloBench(ctx)
             method == "GET" && path == "/log" -> logHose(ctx, query)
             method == "GET" && path == "/app-screenshot" -> appScreenshot(query)
             method == "GET" && path == "/process" -> processInfo()
@@ -605,11 +606,14 @@ object AgentBridge {
             method == "GET" && path == "/interference" -> interference(query)
             method == "POST" && path == "/overlay" -> overlay(ctx, body)
             method == "POST" && path == "/launch" -> launch(ctx, body)
-            method == "POST" && path == "/launch-intent" -> launchIntent(ctx, body)
+            // /launch-intent 与 /open 的 component 分支等价（extras/flags 都支持），
+            // 统一走 openTarget，避免两套组件解析与回执格式。
+            method == "POST" && path == "/launch-intent" -> openTarget(ctx, body)
             method == "POST" && path == "/open" -> openTarget(ctx, body)
             method == "POST" && path == "/wait-app" -> waitApp(ctx, body)
             method == "POST" && path == "/tap-id" -> tapId(body)
-            method == "POST" && path == "/wait-text" -> waitText(body)
+            // /wait-text 是 /wait 的别名（同一套节点树轮询），只保留一个实现。
+            method == "POST" && path == "/wait-text" -> wait(body, "wait-text")
             method == "POST" && path == "/scroll-edge" -> scrollEdge(body)
             method == "GET" && path == "/notif" -> notif()
             method == "GET" && path == "/plugin/list" -> pluginList()
@@ -1964,7 +1968,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      */
     private fun tapViaShell(x: Float, y: Float): Boolean {
         val c = shotCtx ?: return false
-        if (Privilege.getMode(c) == PrivMode.NORMAL) return false
+        if (!Privilege.isElevated(c)) return false
         return Privilege.runPrivileged(c, "input tap ${x.toInt()} ${y.toInt()}") != null
     }
 
@@ -2116,7 +2120,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 if (pt == null) {
                     return 400 to """{"ok":false,"error":"via=shell needs x/y, or text/desc that resolves on screen"}"""
                 }
-                if (Privilege.getMode(shotCtx ?: svc) == PrivMode.NORMAL) {
+                if (!Privilege.isElevated(shotCtx ?: svc)) {
                     return 400 to """{"ok":false,"error":"via=shell requires Shizuku or root","how_to_fix":"enable privilege in settings, or drop via:shell"}"""
                 }
                 val okShell = tapViaShell(pt.first, pt.second)
@@ -3556,7 +3560,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      *  v1.2.31 实测：screenContains 的节点树 IPC 在请求线程上偶发挂起
      *  （found 分支 Read timed out），故改走 dumpScreenJson —— 与 /screen
      *  同一条已验证路径，且整体包 try/catch。 */
-    private fun wait(body: String): Pair<Int, String> {
+    private fun wait(body: String, label: String = "wait"): Pair<Int, String> {
         val svc = DshAccessibilityService.instance
             ?: return a11yGone()
         return try {
@@ -3565,7 +3569,7 @@ document.getElementById('api').textContent = checks.map(function(c){
                 return 400 to """{"ok":false,"error":"missing text"}"""
             }
             val gone = obj.optBoolean("gone", false)
-            val timeout = obj.optLong("timeoutMs", 5000L).coerceIn(100L, 15000L)
+            val timeout = obj.optLong("timeoutMs", 8000L).coerceIn(200L, 60000L)
             val deadline = System.currentTimeMillis() + timeout
             while (System.currentTimeMillis() < deadline) {
                 // 单次读取同样受超时约束：僵死时不再无限期阻塞轮询循环
@@ -3585,7 +3589,11 @@ document.getElementById('api').textContent = checks.map(function(c){
                 }
                 Thread.sleep(200)
             }
-            200 to """{"ok":false,"error":"timeout: text ${if (gone) "still present" else "not found"}"}"""
+            200 to JSONObject().put("ok", false)
+                .put("error", "timeout: text " + (if (gone) "still present" else "not found"))
+                .put("failedAt", label).put("text", text).put("gone", gone).put("timeoutMs", timeout)
+                .put("hint", "text did not " + (if (gone) "disappear" else "appear") +
+                    " in time; check the page state or retry with a looser anchor").toString()
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"${e.message}"}"""
         }
@@ -4000,28 +4008,6 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 确定性导航的快捷命令（android.settings.DISPLAY_SETTINGS 等），
      * 供 scr macro 的设置直达与 loop 的 intent 动作共用。
      */
-    private fun launchIntent(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val act = obj.optString("action")
-        val component = obj.optString("component").ifBlank { obj.optString("activity") }.orEmpty()
-        if (act.isBlank() && component.isBlank()) {
-            return 400 to """{"ok":false,"error":"need 'action' and/or 'component'"}"""
-        }
-        if (component.isNotBlank()) return launchComponent(ctx, component, obj)
-        return runCatching {
-            val intent = android.content.Intent(act)
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            obj.optString("data").takeIf { it.isNotBlank() }?.let {
-                intent.data = android.net.Uri.parse(it)
-            }
-            applyIntentExtras(intent, obj)
-            ctx.startActivity(intent)
-            noteOpen(ctx, "Intent(" + act + ")")
-            200 to """{"ok":true,"launched":"$act"}"""
-        }.getOrElse { 500 to """{"ok":false,"error":"${it.message}"}""" }
-    }
-
     /**
      * 按显式 component 启动 Activity（v1.3.27）。
      *
@@ -4785,31 +4771,6 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     /** POST /wait-text —— 等文本出现/消失（v1.2.141）：{text, gone?, timeoutMs?} */
-    private fun waitText(body: String): Pair<Int, String> {
-        val svc = DshAccessibilityService.instance
-            ?: return a11yGone()
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val text = obj.optString("text")
-        val gone = obj.optBoolean("gone", false)
-        val timeoutMs = obj.optLong("timeoutMs", 8000L).coerceIn(200L, 60_000L)
-        if (text.isBlank()) return 400 to """{"ok":false,"error":"text required"}"""
-        val t0 = System.currentTimeMillis()
-        val deadline = t0 + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            val dump = svc.dumpScreenCompact("all")
-            if (dump.contains(text, true) != gone) {
-                return 200 to """{"ok":true,"text":"$text","gone":$gone,"waitedMs":${System.currentTimeMillis() - t0}}"""
-            }
-            Thread.sleep(200)
-        }
-        return 200 to JSONObject().put("ok", false).put("error", "timeout")
-            .put("failedAt", "wait-text").put("text", text).put("gone", gone).put("timeoutMs", timeoutMs)
-            .put("screenHash", runCatching { svc.dumpScreenCompact("all").hashCode() }.getOrDefault(0))
-            .put("hint", "text did not ${if (gone) "disappear" else "appear"} in time; check the page state or retry with a looser anchor")
-            .toString()
-    }
-
     /** POST /scroll-edge —— 滚到顶/底（v1.2.141）：{direction: top|bottom} */
     private fun scrollEdge(body: String): Pair<Int, String> {
         val svc = DshAccessibilityService.instance

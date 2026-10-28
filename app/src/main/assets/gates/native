@@ -154,7 +154,7 @@ case "${1:-}" in
     PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
     BIN="$PREFIX/bin"
     bad=0
-    for n in _dsh_http.sh notify scr say psx killx loop fast linux dsh-update shot appshot alarm record native dsh-mobile rm trash-cli; do
+    for n in _dsh_http.sh notify scr say loop fast dsh-update shot appshot record native dsh-mobile rm trash-cli; do
       f="$BIN/$n"
       if [ ! -e "$f" ]; then echo "MISSING   $n"; bad=$((bad+1)); continue; fi
       if [ -L "$f" ]; then echo "SYMLINK   $n -> $(readlink "$f")"; bad=$((bad+1)); continue; fi

@@ -479,6 +479,8 @@ object EngineConfig {
         //     default only carries workspace-write + danger-full-access, and losing
         //     `read-only` would remove a preset the WebUI offers.
         //   · sandbox-policy needs workspaceRoot (schema marks it required).
+        // 内置社区插件解压后的绝对路径（overlay 的相对路径是相对 $PREFIX 解析的，这里必须给绝对路径）
+        val bundledAbs = File(File(ctx.filesDir, "dsh-home"), "profiles/web/node_modules").absolutePath
         val body = """
             |# [dsh-android] Android compatibility overlay (auto-generated, do not edit)
             |# Sandbox backends (landlock/seatbelt) do not exist on Android, and any
@@ -623,7 +625,7 @@ object EngineConfig {
             |      name: ./android-plugins/android-fetch-auto.mjs
             |
             |# Narrow-screen UI fixes (v1.2.175 - v1.2.181). Each is a *client plugin
-            |# package* (directory form, e.g. narrow-sidebar/package.json): the package
+            |# package* (directory form, e.g. mobile-ui/package.json): the package
             |# declares dsh.client + exports["./client"], and the engine's client-modules
             |# scanner discovers it from Loader entries and injects the browser bundle.
             |# Why plugins instead of patching the engine source: the user asked for a
@@ -633,20 +635,13 @@ object EngineConfig {
             |# dsh-mobile-ui (v0.1.17, by the user's earlier mobile-ui work): the Android
             |# app-style layer over the shipped Web UI. One client plugin that turns the
             |# sidebar into a popup drawer, collapses the conversation header behind an
-            |# info button, and adapts the composer; the host half registers three
-            |# rollback routes (/__mobile-ui/{state,rollback,restore}). Everything is gated
-            |# on html[data-dsh-mobile] so the desktop layout is untouched.
+            |# info button, and adapts the composer. There is no in-page rollback any more:
+            |# if the skin breaks the UI, recover from the native settings screen
+            |# ("Stock UI"), which flips dsh_ui/stock_ui, skips this block and deletes the
+            |# deployed mobile-ui folder. Everything is gated on html[data-dsh-mobile].
             |- insert:
             |    - id: mobile-ui
             |      name: ./android-plugins/mobile-ui/index.js
-            |
-            |# Narrow-screen welcome page (v1.3.0): the desktop layout pins the copy block at
-            |# 520px absolute, which overflows a phone viewport; this client plugin turns it
-            |# into a normal flow column and hides the oversized illustration. (ASCII only:
-            |# the i18n gate rejects CJK inside Kotlin string literals.)
-            |- insert:
-            |    - id: android-narrow-welcome
-            |      name: ./android-plugins/narrow-welcome/index.js
             |
             |# v1.3.68 background progress: watch the current session DOM (thinking / step)
             |# and report it to native through DshNative for the notification / floating
@@ -654,6 +649,19 @@ object EngineConfig {
             |- insert:
             |    - id: mobile-progress
             |      name: ./android-plugins/mobile-progress/index.js
+            |
+            |# v2.5.44 bundled community plugins (shipped in assets/bundled-plugins.zip,
+            |# extracted into profiles/web/node_modules on first start). They are ordinary
+            |# node packages: `dsh plugin remove <id>` or deleting the folder disables one;
+            |# creating ${'$'}DSH_HOME/.dsh-bundled-off stops the extractor from restoring them.
+            |# Remove/comment these three lines to keep the packages on disk but unloaded.
+            |- insert:
+            |    - id: dshmarket
+            |      name: ${bundledAbs}/dshmarket/lib/index.js
+            |    - id: dsh-mnemon
+            |      name: ${bundledAbs}/dsh-mnemon/lib/index.js
+            |    - id: dsh-genui
+            |      name: ${bundledAbs}/dsh-genui/lib/index.js
             |
             |""".trimMargin()
         runCatching {
@@ -676,7 +684,7 @@ object EngineConfig {
             // 新增插件的步骤：① 在 assets 建目录（含这三个文件）
             //               ② 在此列表追加目录名
             //               ③ 在 overlay 的 insert 段追加一条 entry（指向 index.js）
-            listOf("narrow-welcome", "mobile-ui", "mobile-progress").forEach { pkg ->
+            listOf("mobile-progress", "mobile-ui").forEach { pkg ->
                 listOf("package.json", "index.js", "client.js").forEach { fileName ->
                     val src = ctx.assets.open("android-plugins/$pkg/$fileName")
                         .use { it.readBytes() }
@@ -763,35 +771,25 @@ object EngineConfig {
         // 当前只有一项 —— node-pty 的**真**实现（转发到 App 的 libdshpty.so），
         // 替换构建期那个「spawn() 直接 throw」的空壳，WebUI 侧边栏终端才能用。
         applyRuntimeOverlays(ctx, root)
+        // v2.5.45：补齐 npm/pnpm/corepack 入口。运行时只带 node + corepack 本体
+        // （lib/node_modules/corepack），bin/ 里没有 npm/pnpm/npx，导致 dsh-market
+        // 的自动配置与 `dsh plugin add` 全部报「找不到 npm/corepack」。
+        ensureNodeTooling(ctx, root)
         // 引擎侧 Android 补丁（2026-10-18）：dsh-subprocess-local 把「终端进程检查」
         // 限定在 linux/darwin/win32，android 直接抛 "terminal inspection is unsupported
         // on platform android" → WebUI 侧边栏终端打不开。Android 有 /proc，检查器可用。
         patchEngineForAndroid(root)
-        // ── Linux 环境（2026-10-18）────────────────────────────────────────────
-        // 终端 + proot 发行版上线后，AI 侧也要能用：`linux run <id> <cmd>` 门脚本
-        // 直接 exec `<home>/proot/bin/proot`。这里注入路径与 PROOT_* 三件套，
-        // 让门脚本不必自己去猜目录布局。
-        // 注意：**只注入路径，不检查安装状态** —— rootfs 没装时门脚本会明确报错
-        // （「distro not installed」），比建 env 时静默跳过更好排查。
-        val linuxHome = app.dsh.mobile.linux.LinuxEnv.home(ctx)
-        val linuxProotBin = java.io.File(linuxHome, "proot/bin")
-        val linuxProotLib = java.io.File(linuxHome, "proot/lib")
-        val linuxProotReady = java.io.File(linuxProotBin, "proot").isFile
         val env = mutableListOf(
-            "PATH=" + (
-                listOf(File(root, "bin")) +
-                    listOfNotNull(linuxProotBin.takeIf { linuxProotReady }) +
-                    listOf("/system/bin", "/system/xbin")
-                ).joinToString(":"),
+            "PATH=" + (listOf(File(root, "bin"), File(dshHome(ctx), "local/bin"),
+                File(dshHome(ctx), ".local/share/pnpm")) +
+                listOf("/system/bin", "/system/xbin")).joinToString(":"),
             "DSH_SHZ_PORT=${ShizukuHttpBridge.port(port)}",
             // 桥 token（v1.2.99）：只交给引擎子进程，供 scr/notify 等闸门脚本鉴权。
             // 第三方 App 拿不到 → 无法调用读屏/点击/通知等设备能力。
             "DSH_BRIDGE_TOKEN=${AgentBridge.currentToken().orEmpty()}",
-            "LD_LIBRARY_PATH=" + (
-                listOf(File(root, "lib")) +
-                    listOfNotNull(linuxProotLib.takeIf { linuxProotReady })
-                ).joinToString(":"),
+            "LD_LIBRARY_PATH=" + listOf(File(root, "lib")).joinToString(":"),
             "PREFIX=$root",
+            "COREPACK_HOME=${File(dshHome(ctx), ".cache/corepack").absolutePath}",
             // SHELL（v1.3.1，issue #18「终端错误」）：必须显式注入。
             // 引擎的 dsh-subprocess-local 按 `process.env.SHELL || os.userInfo().shell`
             // 推导默认 shell（terminalEnvironment），而 runtime 里的 node 是 Termux 官方
@@ -832,19 +830,6 @@ object EngineConfig {
             // （"no sandbox backend usable on host"），故固定 danger-full-access；
             // 真实安全边界是 App 的权限模式（Normal/Shizuku/Root）与 su 闸门。
             "DSH_PERMISSION_MODE=danger-full-access",
-            // ── Linux 环境（2026-10-18）────────────────────────────────────────
-            // 门脚本 `linux` 靠这四个变量定位 proot 与 rootfs 根目录。
-            // PROOT_LOADER 显式覆盖：Termux 的 proot 编译期把 loader 路径写死成
-            // /data/data/com.termux/files/usr/libexec/proot/loader，本机不存在；
-            // proot 5.1.107 支持 PROOT_LOADER 覆盖（src/execve/enter.c:571）。
-            "DSH_LINUX_HOME=" + linuxHome.absolutePath,
-            "PROOT_LOADER=" + java.io.File(linuxHome, "proot/libexec/proot/loader").absolutePath,
-            "PROOT_TMP_DIR=" + java.io.File(linuxHome, "tmp").absolutePath,
-            "PROOT_NO_SECCOMP=1",
-            // 默认发行版：终端「linux exec」不带 id 时用它（第一个已安装的）
-            "DSH_LINUX_DEFAULT=" + runCatching {
-                app.dsh.mobile.linux.LinuxEnv.installedIds(ctx).firstOrNull().orEmpty()
-            }.getOrDefault(""),
             *(bootId?.let { arrayOf("DSH_ANDROID_BOOT_ID=$it") } ?: emptyArray()),
         )
         // 包管理器镜像（2026-10-05，Issue 反馈「pnpm 连不上 GitHub」）：
@@ -1189,6 +1174,48 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
      *  - 目标已是 overlay 版本（内容一致）→ 跳过；
      *  - 目标是**真** node-pty（有 build/Release 等）→ 不动，避免破坏未来真机可用的预编译。
      */
+    /**
+     * 生成 bin/{corepack,npm,npx,pnpm} 四个 POSIX 壳脚本。
+     *
+     * 运行时（engine-dsh-aarch64.zip）只提供 `bin/node` 与 `lib/node_modules/corepack`，
+     * 没有 npm/pnpm 入口；而 dsh 的插件安装器与 dsh-market 都按 PATH 找它们。
+     * 这里用 corepack 做唯一实现来源，npm/pnpm/npx 都是它的转发壳，避免再塞一份 npm 进 APK。
+     */
+    private fun ensureNodeTooling(ctx: android.content.Context, root: File) {
+        val bin = File(root, "bin")
+        if (!bin.isDirectory) return
+        val node = File(bin, "node")
+        val corepackJs = File(root, "lib/node_modules/corepack/dist/corepack.js")
+        // corepack 的 dist/ 下每个工具都有自己的 JS 入口（npm.js/npx.js/pnpm.js），
+        // 只有 corepack.js 本体是 Android shell 包装脚本。所以：
+        //   corepack → 直接执行那个 shell 包装脚本
+        //   npm/npx  → node corepack/dist/<tool>.js（corepack 自带的转发实现）
+        //   pnpm     → 优先用随包附带的 pnpm（离线可用），否则退回 corepack 版
+        val shims = mapOf(
+            "corepack" to "exec \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/corepack.js\" \"\$@\"",
+            "npm" to "exec \"\$(dirname \"\$0\")/node\" \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/npm.js\" \"\$@\"",
+            "npx" to "exec \"\$(dirname \"\$0\")/node\" \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/npx.js\" \"\$@\"",
+            "pnpm" to "PNPM_JS=\"\$(dirname \"\$0\")/../dsh-home/profiles/web/node_modules/pnpm/bin/pnpm.cjs\"; [ -f \"\$PNPM_JS\" ] && exec \"\$(dirname \"\$0\")/node\" \"\$PNPM_JS\" \"\$@\"; exec \"\$(dirname \"\$0\")/node\" \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/pnpm.js\" \"\$@\"",
+        )
+        shims.forEach { (name, body) ->
+            val f = File(bin, name)
+            val want = "#!/system/bin/sh\n# generated by DSH Mobile: forwards to corepack\n$body\n"
+            val have = runCatching { if (f.isFile) f.readText() else "" }.getOrDefault("")
+            if (have == want && f.canExecute()) return@forEach
+            runCatching {
+                f.writeText(want)
+                f.setExecutable(true, false)
+                Log.i(TAG, "node tooling shim written: bin/$name")
+            }.onFailure { Log.w(TAG, "node tooling shim failed ($name): ${it.message}") }
+        }
+        if (!corepackJs.isFile) Log.w(TAG, "corepack.js missing at ${corepackJs.absolutePath}")
+        if (!node.isFile) Log.w(TAG, "node missing at ${node.absolutePath}")
+        // pnpm 的全局安装目录（dsh 的 PATH 探测器会查这两处）
+        File(dshHome(ctx), "local/bin").mkdirs()
+        File(dshHome(ctx), ".local/share/pnpm").mkdirs()
+        File(dshHome(ctx), ".cache/corepack").mkdirs()
+    }
+
     private fun applyRuntimeOverlays(ctx: android.content.Context, root: File) {
         // ① 与 node-pty 无关的 overlay：pkg 的前端（Termux 仓库 + dpkg 的 node 驱动）。
         //    `pkg` 门脚本只负责 exec node bin/pkg.js；这里保证脚本每次启动都是最新版。
@@ -1228,7 +1255,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
      * 每次 App 启动都确认一次 Agent 侧产物（门脚本 / shz / su 闸门 / runtime overlay）。
      *
      * 为什么需要：这些文件以前只在「装运行时」那一步部署；用户升级 APK 后如果运行时
-     * 目录已存在，启动流程会跳过安装步骤，新版本新增的门脚本（比如 appshot/alarm/
+     * 目录已存在，启动流程会跳过安装步骤，新版本新增的门脚本（比如 appshot/record/
      * record）就永远不落地 —— Agent 调 `appshot` 会 command not found。这里做幂等复查，
      * 缺什么补什么（applyAgentGates 内部按文件写，成本毫秒级）。
      */
@@ -1237,6 +1264,78 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             .onFailure { Log.w(TAG, "ensureAgentArtifacts failed: ${it.message}") }
         // v1.3.63：给已安装的第三方插件打内容锚定补丁（genui 的思考行缺图标）。
         DshPluginPatches.ensure(ctx)
+        // v2.5.43：内置 dshmarket / dsh-mnemon / dsh-genui（离线可用；agent 可删可改）。
+        runCatching { ensureBundledPlugins(ctx) }
+            .onFailure { Log.w(TAG, "ensureBundledPlugins failed: ${it.message}") }
+    }
+
+    /** 发行版内置的三个社区插件（离线可用，可由 agent/用户移除或改动）。 */
+    private val BUNDLED_PLUGINS = listOf("dshmarket" to "1.73.1", "dsh-mnemon" to "0.5.36", "dsh-genui" to "0.3.1")
+
+    /** 关掉内置插件自动落地的标记文件（agent 可 touch 它，或直接删 node_modules 目录）。 */
+    private fun bundledPluginsMarker(home: File) = File(home, ".dsh-bundled-off")
+
+    /**
+     * 把 assets/bundled-plugins.zip（含依赖树）解到 `$DSH_HOME/profiles/web/node_modules/`，
+     * 并补写 package.json dependencies。三条语义：
+     *  1. 幂等：三个包都在就跳过；
+     *  2. 尊重删除：任一包目录被删掉、或存在 `.dsh-bundled-off` 标记 → 不重装（避免“删了又回来”）；
+     *  3. 不覆盖已有：解压只在目标文件不存在时写入，用户改过的插件不会被重置。
+     */
+    fun ensureBundledPlugins(ctx: android.content.Context) {
+        // 注意：DSH_HOME 是 filesDir/dsh-home（不是 engineRoot 下的 dsh-home）
+        val home = File(ctx.filesDir, "dsh-home")
+        val profile = File(home, "profiles/web")
+        val modules = File(profile, "node_modules")
+        if (bundledPluginsMarker(home).exists()) {
+            Log.i(TAG, "bundled plugins disabled by marker, skip")
+            return
+        }
+        if (!modules.isDirectory) modules.mkdirs()
+        val missing = BUNDLED_PLUGINS.filter { !File(modules, it.first).isDirectory }
+        // pnpm 也在同一个包里（dsh-market 需要它），老版本装机后目录里没有，必须补一次
+        val needPnpm = !File(modules, "pnpm").isDirectory
+        if (missing.isEmpty() && !needPnpm) { repairPackageJson(profile); return }
+        // 只要其中一个缺失就整体补齐（其它已存在的同名文件不覆盖）
+        runCatching {
+            ctx.assets.open("bundled-plugins.zip").use { input ->
+                java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+                    while (true) {
+                        val e = zip.nextEntry ?: break
+                        val rel = e.name.removePrefix("node_modules/")
+                        if (rel.isEmpty() || rel == e.name) continue
+                        val out = File(modules, rel)
+                        if (e.isDirectory) { out.mkdirs(); continue }
+                        if (out.exists()) continue
+                        out.parentFile?.mkdirs()
+                        out.outputStream().use { zip.copyTo(it) }
+                    }
+                }
+            }
+        }.onSuccess { Log.i(TAG, "bundled plugins installed: ${missing.joinToString { it.first } }${if (needPnpm) "+pnpm" else ""}") }
+            .onFailure { Log.w(TAG, "bundled plugins extract failed: ${it.message}") }
+        repairPackageJson(profile)
+    }
+
+    /** 清理历史版本写坏的 profile package.json（只清理自己插入的三条，并校验 JSON 通过才落盘）。 */
+    private fun repairPackageJson(profile: File) {
+        val pkg = File(profile, "package.json")
+        if (!pkg.exists()) return
+        runCatching {
+            var text = pkg.readText()
+            val before = text
+            BUNDLED_PLUGINS.forEach { (name, ver) ->
+                text = text.replace("\n    \"$name\": \"$ver\",", "")
+                    .replace("\n    \"$name\": \"$ver\"", "")
+            }
+            text = text.replace(Regex(",\\s*\\}"), "}").replace(Regex("\\{\\s*,"), "{")
+            if (text != before) {
+                runCatching { org.json.JSONObject(text) }.onSuccess {
+                    pkg.writeText(text)
+                    Log.i(TAG, "package.json repaired (removed stray bundled-plugin entries)")
+                }.onFailure { Log.w(TAG, "package.json still invalid after repair: ${it.message}") }
+            }
+        }.onFailure { Log.w(TAG, "package.json repair failed: ${it.message}") }
     }
 
     /**
@@ -1244,9 +1343,33 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
      * 新加门脚本只改这里，部署与完整性探针共用同一份，避免探针漏检新脚本。
      */
     private val AGENT_GATES = listOf(
-        "_dsh_http.sh", "notify", "scr", "say", "psx", "killx", "loop", "fast",
-        "linux", "dsh-update", "shot", "appshot", "alarm", "record", "native", "media", "docs",
+        "_dsh_http.sh", "notify", "scr", "say", "loop", "fast",
+        "dsh-update", "shot", "appshot", "native", "media", "docs",
     )
+
+    /**
+     * 特权门脚本：只有 ROOT / SHIZUKU 模式下才部署。
+     * NORMAL 下它们必然失败（`screenrecord` 要 shell uid），留在 bin 里只会让 agent
+     * 撞墙 —— 所以「不部署」而不是「部署后报错」。切换回 NORMAL 时同步删除。
+     */
+    private val AGENT_GATES_PRIV = listOf("record")
+
+    /**
+     * 修复移动端界面（设置 → 一键还原 UI）。
+     *
+     * 语义：**不是**退回桌面版 WebUI，而是把被改坏的 mobile-ui 恢复成 App 内置的那一份。
+     * 做法：删掉 dsh-home/android-plugins/mobile-ui/ 下已部署的文件，重启引擎时按
+     * assets 重新部署；WebUI 侧的面板/抽屉状态由插件自己按默认值重建。
+     *
+     * 返回是否真的删到了东西（用于给用户一个诚实的回执）。
+     */
+    fun repairMobileUi(ctx: android.content.Context): Boolean = runCatching {
+        val dir = java.io.File(java.io.File(engineRoot(ctx), "dsh-home"), "android-plugins/mobile-ui")
+        val existed = dir.exists()
+        if (existed) dir.deleteRecursively()
+        Log.i(TAG, "repairMobileUi: existed=$existed deleted=${!dir.exists()} path=${dir.path}")
+        existed && !dir.exists()
+    }.onFailure { Log.w(TAG, "repairMobileUi failed: ${it.message}") }.getOrDefault(false)
 
     /** 权限位（用于诊断日志，如 0600/0755）。 */
     private fun octalMode(f: File): String = runCatching {
@@ -1284,11 +1407,10 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             val bashPath = File(root, "bin/bash").absolutePath
             val libDir = File(root, "lib").absolutePath
             val broken = mutableListOf<String>()
-            // psx/killx（v1.2.52 恢复）：v1.2.50 把门脚本从 Kotlin 字符串搬到 assets 时
-            // 漏掉了这两个，但种子仍在教 agent 使用 → agent 照着调用得到 command not found
-            // （Agent 审计 N8 实测）。它们解决的是真问题：agent 常以 `bash -c '... pkill -f X'`
-            // 形式执行，完整命令行含 pattern 会命中自己并自杀，必须按 comm 匹配。
-            AGENT_GATES.forEach { name ->
+
+            val elevated = Privilege.isElevated(ctx)
+            if (!elevated) AGENT_GATES_PRIV.forEach { runCatching { File(bindir, it).delete() } }
+            (AGENT_GATES + if (elevated) AGENT_GATES_PRIV else emptyList()).forEach { name ->
                 val dst = File(bindir, name)
                 runCatching {
                     val text = ctx.assets.open("gates/$name").use { it.readBytes().toString(Charsets.UTF_8) }
@@ -1303,7 +1425,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
                     // ⚠️ v1.3.31 权限事故：$PREFIX/bin 里 bootstrap 留下的同名条目可能是
                     // 指向 toybox 的符号链接；直接 writeText 会写穿到 toybox 本体（或失败）。
                     // 必须先删除再写。且 Java 在 Android 上新建文件是 0600 —— 不 chmod 的话
-                    // native/appshot/shot/alarm/record 这些新脚本全都不可执行。
+                    // native/appshot/shot/record 这些新脚本全都不可执行。
                     if (runCatching { java.nio.file.Files.isSymbolicLink(dst.toPath()) }.getOrDefault(false) || !dst.isFile) dst.delete()
                     dst.writeText(normalized)
                     dst.setReadable(true, false)
@@ -1311,7 +1433,8 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
                     if (!dst.canExecute()) Log.w(TAG, "agent gate $name is NOT executable after chmod")
                 }.onFailure { Log.w(TAG, "agent gate $name deploy failed: ${it.message}") }
             }
-            Log.i(TAG, "agent gates deployed (${AGENT_GATES.size}): ${AGENT_GATES.joinToString(" ")}")
+            Log.i(TAG, "agent gates deployed (${AGENT_GATES.size + if (elevated) AGENT_GATES_PRIV.size else 0}, " +
+                "elevated=$elevated): ${(AGENT_GATES + if (elevated) AGENT_GATES_PRIV else emptyList()).joinToString(" ")}")
             // v1.8.2（点击链路提案 P1-4）：PP-OCRv6 tiny 兜底 —— 脚本放 bin、模型放 share。
             // 只部署 tiny（6MB）；python/onnxruntime 由 /ocr?engine=ppocr6&ensure=1 显式安装。
             runCatching {
@@ -1361,14 +1484,15 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
                 dst.setReadable(true, true)
     }.onFailure { Log.w(TAG, "lan-web-proxy deploy failed: ${it.message}") }
 
-            listOf("notify", "scr", "say", "psx", "killx", "loop", "fast", "linux", "dsh-update").forEach { File(bindir, it).setExecutable(true, false) }
+            listOf("notify", "scr", "say", "loop", "fast", "dsh-update").forEach { File(bindir, it).setExecutable(true, false) }
             // 已下线的门脚本（v1.3.0 USB 桥回退）：清掉设备上的旧副本
-            listOf("pc").forEach { runCatching { File(bindir, it).delete() } }
+            // v2.5.43：proot 子系统移除后，老设备上残留的 linux 门脚本也一并清掉
+            listOf("pc", "linux").forEach { runCatching { File(bindir, it).delete() } }
             File(bindir, "_dsh_http.sh").setReadable(true, false)
 
             // 部署后自检（v1.2.52）：逐个校验首行不含 \r 且指向存在的解释器。
             // 失败不静默——写进 engine.log 并给出明确原因，避免「看起来像文件丢了」的误判。
-            AGENT_GATES.forEach { name ->
+            (AGENT_GATES + if (elevated) AGENT_GATES_PRIV else emptyList()).forEach { name ->
                 val f = File(bindir, name)
                 val head = runCatching {
                     f.inputStream().use { ins ->

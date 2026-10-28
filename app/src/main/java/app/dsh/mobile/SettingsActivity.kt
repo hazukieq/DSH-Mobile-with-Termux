@@ -2,7 +2,6 @@ package app.dsh.mobile
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.Manifest
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.net.Uri
@@ -16,6 +15,7 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import app.dsh.mobile.engine.EngineConfig
 import app.dsh.mobile.engine.PrivMode
 import app.dsh.mobile.engine.Privilege
 import app.dsh.mobile.engine.RuntimeUpdater
@@ -218,38 +218,10 @@ class SettingsActivity : Activity() {
         }
         refreshNotifRow()
 
-        // —— 权限中心：麦克风（语音输入需要 RECORD_AUDIO） ——
-        // 已授权时点击提示无需重复授权；未授权时弹系统授权框（本 Activity 有权请求）。
-        findViewById<LinearLayout>(R.id.rowMic).setOnClickListener {
-            if (hasMicPermission()) {
-                Toast.makeText(this, getString(R.string.mic_granted), Toast.LENGTH_SHORT).show()
-            } else {
-                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
-            }
-        }
-        refreshMicRow()
-
-
-        // —— 社区插件（v1.2.113）：一键安装 dsh 生态插件 ——
-        findViewById<LinearLayout>(R.id.rowPlugin).setOnClickListener {
-            startActivity(Intent(this, PluginStoreActivity::class.java))
-        }
 
         // —— 终端（2026-10-18）：原生 PTY 终端页 ——
         findViewById<LinearLayout>(R.id.rowTerminal).setOnClickListener {
             startActivity(app.dsh.mobile.term.TerminalActivity.intent(this))
-        }
-
-        // —— Linux 环境（2026-10-18）：proot 发行版管理 ——
-        findViewById<LinearLayout>(R.id.rowLinux).setOnClickListener {
-            startActivity(Intent(this, app.dsh.mobile.linux.LinuxEnvActivity::class.java))
-        }
-
-        // —— 运行时热更新（2026-10-18）：当前运行时版本 + 暂存/回滚状态 ——
-        // 暂存（stage）是 agent 侧动作（`dsh-update stage <zip|url>`），这里只做
-        // 「看状态 + 一键应用/回滚」；不做文件选择器，避免把 160MB 包的导入路径搬进 UI。
-        findViewById<LinearLayout>(R.id.rowRuntimeUpdate).setOnClickListener {
-            showRuntimeDialog()
         }
 
         // 自定义指令（v1.3.2，issue #19）：在 App 的环境说明之上补写用户自己的长期指令。
@@ -259,23 +231,33 @@ class SettingsActivity : Activity() {
             startActivity(android.content.Intent(this, UserPromptActivity::class.java))
         }
 
-        // 语音服务（v1.2.78）：识别 + 合成合并入口，归入扩展中心分组
-        findViewById<LinearLayout>(R.id.rowVoiceService).setOnClickListener {
-            startActivity(Intent(this, app.dsh.mobile.VoiceServiceActivity::class.java))
-        }
-
-        // 本地识别应用（v1.2.85）：**直接可见的一行**，不用钻进语音服务页再点问号
-        // （主人反馈：「设置里面好像没有下载入口」—— 原来藏在 语音服务 → ? → 弹窗 三层里）
-        findViewById<LinearLayout>(R.id.rowAsrApps).setOnClickListener {
-            startActivity(Intent(this, app.dsh.mobile.AsrAppActivity::class.java))
-        }
-
         // —— 其他：重启引擎 ——
         // restart() 自身立即返回（内部串行 + 先置「启动中」），不需要再套线程；
         // 状态栏/主界面会随 state 流转自动刷新
         findViewById<LinearLayout>(R.id.rowRestart).setOnClickListener {
             (application as DshApp).supervisor.restart()
             Toast.makeText(this, getString(android.R.string.ok), Toast.LENGTH_SHORT).show()
+        }
+
+        // —— 其他：一键还原 UI（v2.5.42）——
+        // 用户语义：把被改坏的 mobile-ui 恢复成 App 内置版本，**不是**切回桌面版 WebUI。
+        // 页面本身可能已经坏了（没有逃生口），所以入口放在原生设置，并先弹确认。
+        findViewById<LinearLayout>(R.id.rowStockUi).setOnClickListener {
+            android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.setting_stock_ui)
+                .setMessage(R.string.setting_stock_ui_confirm)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    val deleted = EngineConfig.repairMobileUi(this)
+                    (application as DshApp).supervisor.restart()
+                    Toast.makeText(
+                        this,
+                        if (deleted) getString(R.string.setting_stock_ui_done)
+                        else getString(R.string.setting_stock_ui_none),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                .show()
         }
 
         // —— 其他：语言 Language（v1.2.120：en/de/zh 三选一，默认 en）——
@@ -363,16 +345,13 @@ class SettingsActivity : Activity() {
             it.text = getString(
                 if (rootOk) R.string.setting_root_status_yes else R.string.setting_root_status_no
             )
-            it.setTextColor(if (rootOk) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
+            it.setTextColor(if (rootOk) 0xFF059669.toInt() else 0xFF6B7280.toInt())
         }
         refreshShizuku()
         refreshAccess()
         refreshStorageRow()
         refreshTtsRow()
         refreshNotifRow()
-        refreshMicRow()
-        refreshLinux()
-        refreshRuntime()
         // 缩放副标题文案无需变；图标着色按打开时状态由静态 XML 决定
     }
 
@@ -384,32 +363,6 @@ class SettingsActivity : Activity() {
      * 只读标记文件（engine/.runtime-version、engine.new/、engine.old/），不扫全树，
      * 所以放在 onResume 的 refreshAll 里是安全的（<5ms）。
      */
-    private fun refreshRuntime() {
-        val v = findViewById<TextView>(R.id.valRuntime)
-        val st = runCatching { RuntimeUpdater.status(this) }.getOrNull()
-        if (st == null) {
-            v.text = getString(R.string.setting_runtime_none)
-            v.setTextColor(0xFF8A94A3.toInt())
-            return
-        }
-        val none = getString(R.string.setting_runtime_none)
-        val installed = st.installedVersion.ifBlank { none }
-        v.text = when {
-            st.stagedVersion != null ->
-                getString(R.string.setting_runtime_ver_staged, installed, st.stagedVersion)
-            st.rollbackVersion != null ->
-                getString(R.string.setting_runtime_ver_rollback, installed)
-            else -> installed
-        }
-        v.setTextColor(
-            when {
-                st.phase != "idle" -> 0xFFFFB74D.toInt()      // 进行中：琥珀
-                st.stagedVersion != null -> 0xFF6EE7B7.toInt() // 有待应用的新版：绿
-                else -> 0xFF8A94A3.toInt()
-            }
-        )
-    }
-
     /**
      * 运行时详情对话框：已安装/来源/暂存/回滚/引擎状态 + 动作列表。
      *
@@ -417,6 +370,8 @@ class SettingsActivity : Activity() {
      * 「检查更新」走 [RuntimeUpdater.feedCheck]（feed 以 dsh 版本为键，见 RuntimeFeed），
      * 「拉取并应用」= `dsh-update pull --apply` 的 UI 等价物。
      */
+    /** 注意：v2.5.43 起设置页不再暴露入口；保留供未来“诊断”入口复用，agent 侧用 `dsh-update` 门脚本。 */
+    @Suppress("unused")
     private fun showRuntimeDialog() {
         val st = runCatching { RuntimeUpdater.status(this) }.getOrNull() ?: return
         val none = getString(R.string.setting_runtime_none)
@@ -506,7 +461,6 @@ class SettingsActivity : Activity() {
             return
         }
         Toast.makeText(this, R.string.setting_runtime_pulling, Toast.LENGTH_LONG).show()
-        refreshRuntime()
         awaitPullThenApply()
     }
 
@@ -521,7 +475,6 @@ class SettingsActivity : Activity() {
         val tick = object : Runnable {
             override fun run() {
                 if (isFinishing || isDestroyed) return
-                refreshRuntime()
                 val st = runCatching { RuntimeUpdater.status(this@SettingsActivity) }.getOrNull()
                 if (st != null && st.phase == "idle" && st.lastAction == "pull") {
                     if (st.lastOk) {
@@ -554,7 +507,6 @@ class SettingsActivity : Activity() {
             },
             Toast.LENGTH_LONG,
         ).show()
-        refreshRuntime()
         if (err == null) scheduleRuntimeRefresh()
     }
 
@@ -569,7 +521,6 @@ class SettingsActivity : Activity() {
         val tick = object : Runnable {
             override fun run() {
                 if (isFinishing || isDestroyed) return
-                refreshRuntime()
                 val phase = runCatching { RuntimeUpdater.status(this@SettingsActivity).phase }
                     .getOrDefault("idle")
                 if (phase == "idle" || System.currentTimeMillis() - start > 180_000L) return
@@ -577,15 +528,6 @@ class SettingsActivity : Activity() {
             }
         }
         handler.postDelayed(tick, 1_500)
-    }
-
-    /** Linux 环境入口：显示已安装发行版数量（0 时提示"未安装"） */
-    private fun refreshLinux() {
-        val v = findViewById<TextView>(R.id.valLinux)
-        val n = runCatching { app.dsh.mobile.linux.LinuxEnv.installedIds(this).size }.getOrDefault(0)
-        v.text = if (n == 0) getString(R.string.setting_linux_none)
-        else getString(R.string.setting_linux_count, n)
-        v.setTextColor(if (n > 0) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
     }
 
     /** 权限中心：所有文件访问状态（MANAGE_EXTERNAL_STORAGE，Android 11+ 系统设置页授予；
@@ -597,7 +539,7 @@ class SettingsActivity : Activity() {
             android.content.pm.PackageManager.PERMISSION_GRANTED
         val v = findViewById<TextView>(R.id.valStorage)
         v.text = getString(if (granted) R.string.storage_granted else R.string.storage_denied)
-        v.setTextColor(if (granted) 0xFF6EE7B7.toInt() else 0xFFFFB74D.toInt())
+        v.setTextColor(if (granted) 0xFF059669.toInt() else 0xFFB45309.toInt())
     }
 
     /** 权限中心：TTS 引擎可用性（列出 TextToSpeechService 提供方，不触发绑定） */
@@ -605,7 +547,7 @@ class SettingsActivity : Activity() {
         val n = TtsManager.engineCount(this)
         val v = findViewById<TextView>(R.id.valTts)
         v.text = if (n == 0) getString(R.string.tts_missing) else getString(R.string.tts_engines, n)
-        v.setTextColor(if (n > 0) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
+        v.setTextColor(if (n > 0) 0xFF059669.toInt() else 0xFF6B7280.toInt())
     }
 
     /** 权限中心：通知权限（Android 13+ 运行时授权；低版本默认持有） */
@@ -617,40 +559,7 @@ class SettingsActivity : Activity() {
         else true
         val v = findViewById<TextView>(R.id.valNotif)
         v.text = getString(if (granted) R.string.notif_granted else R.string.notif_denied)
-        v.setTextColor(if (granted) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
-    }
-
-    /** 麦克风权限是否已授予（语音输入的前提） */
-    private fun hasMicPermission(): Boolean =
-        checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-
-    /** 麦克风权限状态行：已授权（绿）/ 未授权（灰，点击授权） */
-    private fun refreshMicRow() {
-        val granted = hasMicPermission()
-        val v = findViewById<TextView>(R.id.valMic)
-        v.text = getString(if (granted) R.string.mic_granted else R.string.mic_denied)
-        v.setTextColor(if (granted) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt())
-    }
-
-    /** 权限回调：麦克风授权结果 → 刷新状态行 */
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        if (requestCode == REQ_MIC) {
-            refreshMicRow()
-            val ok = grantResults.isNotEmpty() &&
-                grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED
-            Toast.makeText(
-                this,
-                getString(if (ok) R.string.mic_granted else R.string.mic_denied),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        v.setTextColor(if (granted) 0xFF059669.toInt() else 0xFF6B7280.toInt())
     }
 
     /** Shizuku 三态刷新（已授权绿 / 等待授权黄 / 未运行灰） */
@@ -659,13 +568,13 @@ class SettingsActivity : Activity() {
         when {
             Privilege.shizukuUsable() -> {
                 v.text = getString(R.string.setting_shizuku_granted)
-                v.setTextColor(0xFF6EE7B7.toInt())
+                v.setTextColor(0xFF059669.toInt())
             }
             Privilege.shizukuServerRunning() -> {
                 // v1.2.158 隐私修复：这里**不再**自动请求（拒绝后回调又会回到此处 →
                 // 死循环弹窗）。改为展示状态 + 允许点击该行**显式**重新申请。
                 v.text = getString(R.string.setting_shizuku_request)
-                v.setTextColor(0xFFFFB74D.toInt())
+                v.setTextColor(0xFFB45309.toInt())
                 v.isClickable = true
                 v.setOnClickListener {
                     Privilege.requestShizukuPermission(SHIZUKU_REQ, this@SettingsActivity, explicit = true)
@@ -673,7 +582,7 @@ class SettingsActivity : Activity() {
             }
             else -> {
                 v.text = getString(R.string.setting_shizuku_absent)
-                v.setTextColor(0xFF8A94A3.toInt())
+                v.setTextColor(0xFF6B7280.toInt())
             }
         }
     }
@@ -687,7 +596,7 @@ class SettingsActivity : Activity() {
         findViewById<TextView>(R.id.valAccess).text =
             getString(if (on) R.string.state_on else R.string.state_off)
         findViewById<TextView>(R.id.valAccess).setTextColor(
-            if (on) 0xFF6EE7B7.toInt() else 0xFF8A94A3.toInt()
+            if (on) 0xFF059669.toInt() else 0xFF6B7280.toInt()
         )
     }
 
@@ -794,17 +703,17 @@ class SettingsActivity : Activity() {
         container.addView(TextView(this).apply {
             text = getString(R.string.progress_section_title)
             textSize = 13f
-            setTextColor(0xFF7DD3FC.toInt())
+            setTextColor(0xFF2563EB.toInt())
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setPadding(dp(8), dp(18), dp(8), dp(8))
         })
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = getDrawable(R.drawable.bg_card)
+            background = getDrawable(R.drawable.bg_card_light)
         }
         fun valueView(): TextView = TextView(this).apply {
             textSize = 14f
-            setTextColor(0xFF8A94A3.toInt())
+            setTextColor(0xFF6B7280.toInt())
         }
         fun row(title: String, value: TextView, onClick: (() -> Unit)?): LinearLayout {
             return LinearLayout(this).apply {
@@ -820,7 +729,7 @@ class SettingsActivity : Activity() {
                 addView(TextView(this@SettingsActivity).apply {
                     text = title
                     textSize = 16f
-                    setTextColor(0xFFFFFFFF.toInt())
+                    setTextColor(0xFF10141A.toInt())
                 }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                 addView(value)
             }
@@ -981,12 +890,12 @@ class SettingsActivity : Activity() {
                 addView(TextView(this@SettingsActivity).apply {
                     text = label
                     textSize = 16f
-                    setTextColor(0xFFFFFFFF.toInt())
+                    setTextColor(0xFF10141A.toInt())
                 })
                 if (sub.isNotEmpty()) addView(TextView(this@SettingsActivity).apply {
                     text = sub
                     textSize = 12f
-                    setTextColor(0xFF8A94A3.toInt())
+                    setTextColor(0xFF6B7280.toInt())
                 })
             }
             return LinearLayout(this).apply {
@@ -1052,7 +961,7 @@ class SettingsActivity : Activity() {
             .setView(box)
             .setNegativeButton(android.R.string.cancel, null)
             .create()
-        privPickDialog?.window?.setBackgroundDrawableResource(R.drawable.bg_dialog_rounded)
+        privPickDialog?.window?.setBackgroundDrawableResource(R.drawable.bg_dialog_rounded_light)
         privPickDialog?.show()
     }
 
@@ -1109,7 +1018,7 @@ class SettingsActivity : Activity() {
     private fun AlertDialog.Builder.showStyled(): AlertDialog =
         create().apply {
             setOnShowListener {
-                window?.setBackgroundDrawableResource(R.drawable.bg_dialog_rounded)
+                window?.setBackgroundDrawableResource(R.drawable.bg_dialog_rounded_light)
             }
             show()
         }
@@ -1118,7 +1027,6 @@ class SettingsActivity : Activity() {
         const val SHIZUKU_REQ = 4202
 
         /** 麦克风权限请求码（权限中心「麦克风」行） */
-        const val REQ_MIC = 4203
         const val PREFS_UI = DshApp.PREFS_UI
         const val KEY_PAGE_SCALE = "page_scale"
         const val KEY_LANDSCAPE = "landscape"

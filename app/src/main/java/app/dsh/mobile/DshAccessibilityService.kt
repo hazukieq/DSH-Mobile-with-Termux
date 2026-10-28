@@ -12,7 +12,6 @@ import android.util.Base64
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import app.dsh.mobile.engine.CloudAsr
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -98,9 +97,6 @@ class DshAccessibilityService : AccessibilityService() {
             // tickerBar().startPolling()
             }
         }.onFailure { android.util.Log.w("DshA11y", "overlay show failed: ${it.message}") }
-        // 语音输入（v1.2.65）：麦克风回调由服务自己持有 —— 旧版在 MainActivity 里赋值，
-        // 主界面没活着时点麦克风完全无响应（且面板因窗口 token 不合法从未显示过）。
-
         // 保活看门狗（v1.2.91，主人要求「利用无障碍/悬浮窗机制保活」）
         //
         // ## 为什么用无障碍服务做保活
@@ -144,14 +140,6 @@ class DshAccessibilityService : AccessibilityService() {
         }, "ocr-warmup").apply { isDaemon = true }.start()
     }
 
-    // ==================== 语音输入编排（v1.2.65） ====================
-    //
-    // 由无障碍服务托管，不依赖 MainActivity 存活：
-    //  点悬浮窗麦克风 → 检查权限/离线模型 → 弹底部输入面板 → 实时识别 → 编辑后发送。
-    // 发送经 VoiceBridge 转给 MainActivity 的 WebView 注入（主界面不在时给明确提示）。
-
-    @Volatile private var voicePanel: VoicePanel? = null
-
     /** 事件线程：追加一条变化（计数器 O(1)，不用 deque.size() 的 O(n) 遍历） */
     private fun addChange(entry: String) {
         changeLog.addFirst(entry)
@@ -174,47 +162,11 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 语音会话代次（v1.2.65）。
-     *
-     * 用于作废「在途的异步回调」：用户点麦克风时，模型可能正在后台加载
-     * （`CloudAsr` 启动），回调会启动识别。若用户在这期间点了取消，
-     * 那个迟到的回调仍会把识别拉起来 —— 表现为「点了取消，过几秒又开始听」。
-     * 每次 stop 都自增，回调里比对代次，不一致就直接丢弃。
-     */
-    @Volatile private var voiceGeneration = 0
-
-    /** 是否处于"已震过开始"的聆听态（用于停止时配对震动，避免重复触发） */
-    @Volatile private var recordingForBuzz = false
-
-    /**
-     * 云识别**本轮已并入面板的完整文本**（v1.2.92）。
-     *
-     * 取代了旧的 [lastCloudSegment] 单段比较：那个只记"上一段"，遇到 A→B→A 的
-     * 重复回调就失效了。这里记的是**累积台账**，能同时处理增量语义（追加）与
-     * 累积语义（整段替换），也能识别"这段已经并过了"。
-     */
-    @Volatile private var cloudCommitted: String = ""
-
-    /**
-     * 音频资源释放的**单线程**执行器。
-     *
-     * `stop()` 会 join 识别线程（阻塞），必须在后台做；用单线程串行还能保证
-     * 「先 stop 旧的、再 start 新的」不会交错（否则新会话可能被迟到的 stop 干掉）。
-     */
-    private val voiceStopExecutor =
-        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-            Thread(r, "voice-audio-ctl").apply { isDaemon = true }
-        }
-
-    /** 面板是否已显示（供外部查询） */
-    fun isVoicePanelVisible(): Boolean = voicePanel?.isVisible == true
-
-    /**
      * 实验性开关切换时由设置页调用（v1.2.96）：实时显隐悬浮窗。
      *
      * · 开：resetHidden + show（resetHidden 必须先行——hide 会把 hidden 置 true
      *   粘住进程，直接 show 会早退）
-     * · 关：hide（语音入口在悬浮球上，随之一并收起；读屏/点击等 Agent 能力不受影响）
+     * · 关：hide（读屏/点击等 Agent 能力不受影响）
      * 服务未连接时静默跳过——下次 onServiceConnected 会按开关决定是否显示。
      */
     fun setOverlayEnabled(on: Boolean) {
@@ -271,311 +223,6 @@ class DshAccessibilityService : AccessibilityService() {
     private fun stopKeepAliveWatchdog() {
         keepAlive?.let { keepAliveHandler.removeCallbacks(it) }
         keepAlive = null
-    }
-
-    /**
-     * 语音开关的触感反馈（v1.2.73，主人要求）。
-     *
-     * 开始聆听 = 短促单震；结束/取消 = 双震（不同节奏让用户"闭着眼也能分辨状态"）。
-     * 需要 `VIBRATE` 权限（已补进 manifest）；无震动马达或权限缺失时静默跳过。
-     * 用 API 26+ 的 VibrationEffect；更老系统退回已废弃的 vibrate(ms)。
-     */
-    private fun buzz(pattern: LongArray) {
-        runCatching {
-            // 用 VIBRATOR_SERVICE 即可（API 31+ 虽标记废弃，但仍返回默认马达）——
-            // 本项目编译用的是精简 android stub（Context.VIBRATOR_MANAGER /
-            // VibratorManager 不在其中），走废弃路径可避免依赖新常量。
-            @Suppress("DEPRECATION")
-            val v = getSystemService(android.content.Context.VIBRATOR_SERVICE)
-                as? android.os.Vibrator ?: return@runCatching
-            if (!v.hasVibrator()) return@runCatching
-            val effect = if (pattern.size == 1) {
-                android.os.VibrationEffect.createOneShot(
-                    pattern[0], android.os.VibrationEffect.DEFAULT_AMPLITUDE,
-                )
-            } else {
-                android.os.VibrationEffect.createWaveform(pattern, -1)
-            }
-            v.vibrate(effect)
-        }.onFailure { Log.w("DshA11y", "vibrate failed: ${it.message}") }
-    }
-
-    /** 开始聆听：单短震 */
-    private fun buzzStart() = buzz(longArrayOf(40L))
-
-    /** 结束/取消聆听：双震（长-短，与开始区分） */
-    private fun buzzStop() = buzz(longArrayOf(0L, 30L, 70L, 30L))
-
-    /**
-     * 麦克风点击入口 —— **开关语义**（v1.2.65）。
-     *
-     * 点一次开始聆听；聆听中再点一次 = 取消聆听**并关闭下方语音栏**。
-     * 旧版这里只有「开始」语义，再点会重新走一遍流程，导致
-     * 上方的 listening 状态取消了、下方面板还开着（用户实测反馈的 UI 不同步）。
-     */
-    fun startVoiceInput() {
-        // 已在聆听 / 面板已显示 → 本次点击是「取消」
-        if (voicePanel?.isVisible == true || StatusOverlay.isListening()) {
-            Log.i("DshA11y", "mic toggle: cancelling")
-            stopListening()
-            voicePanel?.hide(stopAudio = false)   // 已停过，避免重复
-            return
-        }
-        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
-            != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            StatusOverlay.flashNotice(getString(R.string.voice_need_permission), 4_000L)
-            return
-        }
-        // 三个通道任一可用就放行（优先级见 listenIntoPanel）：
-        // 系统识别 → 云端 API（已配 key）
-        val usable = AsrManager.isAvailable(this) || CloudAsr.isConfigured(this)
-        if (!usable) {
-            StatusOverlay.flashNotice(getString(R.string.voice_no_service), 4_000L)
-            return
-        }
-        buzzStart()   // 开始聆听：短震一次（主人要求"打开语音加震动"）
-        showVoicePanelAndListen()
-    }
-
-    private fun showVoicePanelAndListen() {
-        val panel = voicePanel ?: VoicePanel(this).also { voicePanel = it }
-        // 面板隐藏（任何路径：Send / Close / 返回键）都必须停掉麦克风，
-        // 否则系统一直显示「正在使用麦克风」——用户实测反馈的真 bug
-        panel.onHide = { stopListening() }
-        panel.show(
-            onSend = { text ->
-                stopListening()
-                VoiceBridge.send(this, text)
-            },
-            onRetry = {
-                // 重说：先复位 UI 状态，再重新起一轮识别
-                //（重复 stop 会造成 stopped/listening 抖动，故只复位不重停）
-                StatusOverlay.setListening(false)
-                listenIntoPanel()
-            },
-            onClose = { stopListening() },
-        )
-        listenIntoPanel()
-    }
-
-    /**
-     * 停止一切识别并**释放麦克风**，复位悬浮窗状态。
-     *
-     * ## 为什么分两步（v1.2.65 二次修复）
-     * `SpeechService.stop()` 内部是 `interrupt()` + **`join()`** —— 它会**阻塞调用线程**
-     * 直到识别线程退出；而识别线程可能正阻塞在 `AudioRecord.read()` 上（缓冲区时长）。
-     * 在主线程调用 = 主线程被卡住 + 麦克风迟迟不释放（用户实测「取消后还要等几秒」）。
-     *
-     * 所以：
-     *  ① **立刻**在调用线程做 UI 复位与代次作废（用户即时看到状态变化）
-     *  ② 把真正耗时的 `stop/shutdown/close` 丢到后台串行线程执行（不阻塞 UI）
-     *
-     * ⚠️ 三件事缺一不可：
-     *  · AsrManager.stop()      —— 系统识别的释放
-     *  · CloudAsr.stop()        —— 云端通道（含录音线程 + AudioRecord）
-     *  · StatusOverlay.setListening(false) —— 悬浮窗状态点回灰色
-     */
-    private fun stopListening() {
-        voiceGeneration++          // 作废所有在途回调（加载完成/识别结果）
-        stopWatchdog()
-        // 只有"确实在聆听中"才震 —— stopListening 会被多条路径重复调用（幂等收口），
-        // 不加这个判断会出现连点麦克风时连环震动
-        if (recordingForBuzz) {
-            recordingForBuzz = false
-            buzzStop()             // 结束/取消聆听：双震（与开始区分）
-        }
-        // ① 立即反馈（调用线程可能就是主线程）
-        runCatching { AsrManager.stop() }
-        StatusOverlay.setListening(false)
-        Log.i("DshA11y", "voice: stop requested (gen=$voiceGeneration)")
-        // ② 后台串行释放音频资源（stop() 会 join 识别线程，不能在主线程等）
-        voiceStopExecutor.execute {
-            runCatching { CloudAsr.stop() }   // 云端通道（含录音线程）
-            Log.i("DshA11y", "voice: mic released (background)")
-        }
-    }
-
-    // ==================== 麦克风占用兜底（v1.2.65） ====================
-    //
-    // 用户实测：「只要打开过一次语音，右上角就持续提示占用了语音通道」。
-    // 根因：面板消失有多条路径（点 Close / 点 Send / 返回键 / 系统移除窗口），
-    // 只有走 VoicePanel.hide() 的才会触发 onHide 回调；返回键等路径直接由系统
-    // 移除窗口，回调不触发 → 识别继续跑 → AudioRecord 一直占着麦克风。
-    //
-    // 兜底：识别期间起一个看门狗，每 1.5s 检查面板是否还在；
-    // 面板不在了（无论什么原因消失）就立即停识别释放麦克风。
-
-    private val watchdogHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var watchdog: Runnable? = null
-
-    private fun startWatchdog() {
-        stopWatchdog()
-        val r = object : Runnable {
-            override fun run() {
-                val panelAlive = voicePanel?.isVisible == true
-                if (!panelAlive) {
-                    Log.i("DshA11y", "watchdog: panel gone → releasing mic")
-                    stopListening()
-                    return
-                }
-                watchdogHandler.postDelayed(this, 1_500L)
-            }
-        }
-        watchdog = r
-        watchdogHandler.postDelayed(r, 1_500L)
-    }
-
-    private fun stopWatchdog() {
-        watchdog?.let { watchdogHandler.removeCallbacks(it) }
-        watchdog = null
-    }
-
-    /**
-     * 开始一次识别，结果写进面板。通道优先级见下方注释。
-     *
-     * ⚠️ 历史坑（v1.2.65）：旧逻辑在模型后台加载时错误回落到系统识别，
-     * 而系统识别在无 Google App 的设备上会立刻报错并清掉 listening 状态，
-     * 表现为「点了没反应，再点一下才行」。现在不存在这个分支（本地模型已移除）。
-     */
-    private fun listenIntoPanel() {
-        val panel = voicePanel
-
-        // 通道优先级（v1.2.75，主人决定去掉本地模型）：
-        //   ① 系统自带识别（零配置、离线、质量好）—— 有就用它
-        //   ② 系统没有 → 云端 API（免费或自建，只要 OpenAI 兼容即可）
-        // 不再保留离线 Vosk：small 模型质量太差，大模型（228MB）又不划算，
-        // 本项目追求"干更多事"而非塞满体积（主人决策）。
-        if (AsrManager.isAvailable(this)) {
-            startSystemListening(panel)
-            return
-        }
-        if (CloudAsr.isConfigured(this)) {
-            startCloudListening(panel)
-            return
-        }
-
-        // 两条路都不可用：明确告诉用户去配云端 API（设置页有入口）
-        panel?.setHint(getString(R.string.voice_no_service))
-        StatusOverlay.setListening(false)
-    }
-
-    /**
-     * ① 系统自带识别（首选）。
-     *
-     * 系统 SpeechRecognizer 通常自带离线包且质量好、零配置、不联网 ——
-     * 只要设备有识别服务就用它（主人指定「软件优先使用系统自带识别」）。
-     */
-    private fun startSystemListening(panel: VoicePanel?) {
-        StatusOverlay.setListening(true)
-        recordingForBuzz = true   // 与 buzzStart() 配对
-        startWatchdog()           // 面板消失即释放麦克风
-        AsrManager.start(
-            ctx = this,
-            onPartial = { t -> panel?.setText(t, final = false) },
-            onFinal = { t ->
-                panel?.setText(t, final = true)
-                // ⚠️ v1.2.182（用户反馈「语音输入完会闪一下」）：这里**不再**
-                // 立即 setListening(false)。
-                // 根因：setListening(false) → setIdle() → 若悬浮窗是"因干活自动展开"
-                // 的状态，会立刻 expandLevel=0 收起 —— 视觉上就是识别出文字的那一瞬
-                // 悬浮球/面板猛地缩一下（用户说的"闪一下"）。
-                // 现在保持聆听态直到面板隐藏（发送/关闭时 onHide → stopListening），
-                // 状态切换与面板退出动画同步发生，不再有突兀的收起。
-                stopWatchdog()
-            },
-            onError = { msg ->
-                // 系统识别中途失败（如没装离线包）→ 若配了云端，自动切过去接着听
-                Log.w("DshA11y", "system asr error: $msg")
-                if (CloudAsr.isConfigured(this)) {
-                    // ⚠️ v1.2.92：切通道前**清空面板里系统识别的残留**。
-                    // 云端通道是「追加」语义，旧版直接切过去 → 系统识别留下的半句
-                    // 会和云端结果拼在一起，主人实测「一次性复制两段发出去」。
-                    panel?.setText("", final = false)
-                    cloudCommitted = ""      // 新通道从零开始记账
-                    panel?.setHint(getString(R.string.voice_switching_cloud))
-                    stopWatchdog()
-                    startCloudListening(panel)
-                } else {
-                    panel?.setHint(msg)
-                    StatusOverlay.setListening(false)
-                    stopWatchdog()
-                }
-            },
-            onEnd = {
-                stopWatchdog()
-                // 空文本（误触/没听清）→ 收起面板并回空闲；
-                // 有文本 → 保持聆听态让用户编辑/发送，避免"闪一下"（见 onFinal 注释）
-                if (voicePanel?.currentText().isNullOrEmpty()) {
-                    voicePanel?.hide(stopAudio = false)
-                    StatusOverlay.setListening(false)
-                }
-            },
-        )
-    }
-
-    /**
-     * ② 云端识别（系统识别不可用时）。
-     *
-     * 准流式：录音期间按停顿切段、每段立刻上传，文字边录边追加到面板
-     * （实测硅基流动没有 WebSocket 流式接口，见 CloudAsr 的注释）。
-     */
-    private fun startCloudListening(panel: VoicePanel?) {
-        val gen = ++voiceGeneration
-        recordingForBuzz = true
-        cloudCommitted = ""     // 本轮已并入面板的文本台账
-        StatusOverlay.setListening(true)
-        panel?.setHint(getString(R.string.voice_cloud_listening))
-        startWatchdog()
-        CloudAsr.start(
-            ctx = this,
-            onSegment = { text ->
-                if (gen != voiceGeneration) return@start
-                val seg = text.trim()
-                if (seg.isEmpty()) return@start
-                // ⚠️ v1.2.92 重写合并逻辑（旧版只比较"上一段"→ A→B→A 挡不住，
-                // 且无法区分「本段是新增」还是「整句重发」）。
-                //
-                // 按**已并入台账**判断，两种语义都能正确处理：
-                //  · 增量接口（每段只是新句）→ 台账里没有 → 追加
-                //  · 累积接口（每段是到目前为止的全文）→ 本段以台账开头 → 整段替换
-                //  · 完全重复的一段（重试/边界）→ 台账里已有 → 丢弃
-                val committed = cloudCommitted
-                val merged = when {
-                    committed.isEmpty() -> seg
-                    seg == committed -> {
-                        Log.i("DshA11y", "cloud segment identical, skipped: '$seg'")
-                        return@start
-                    }
-                    seg.startsWith(committed) -> {
-                        // 累积语义：本段已包含之前全部内容 → 直接替换，避免"你好 你好世界"
-                        Log.i("DshA11y", "cloud segment cumulative, replacing")
-                        seg
-                    }
-                    committed.contains(seg) -> {
-                        Log.i("DshA11y", "cloud segment already merged, skipped: '$seg'")
-                        return@start
-                    }
-                    else -> "$committed $seg"
-                }
-                cloudCommitted = merged
-                panel?.setText(merged, final = false)
-            },
-            onStatus = { msg ->
-                if (gen == voiceGeneration) panel?.setHint(msg)
-            },
-            onEnd = {
-                if (gen == voiceGeneration) {
-                    stopWatchdog()
-                    // 同系统通道（v1.2.182）：有文本就保持聆听态，等用户发送/关闭；
-                    // 空文本才收起并回空闲 —— 避免识别结束时悬浮窗突然收起（"闪一下"）。
-                    if (voicePanel?.currentText().isNullOrEmpty()) {
-                        voicePanel?.hide(stopAudio = false)
-                        StatusOverlay.setListening(false)
-                    }
-                }
-            },
-        )
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -650,12 +297,7 @@ class DshAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         ticker?.stopPolling()
         if (instance === this) instance = null
-        // 释放麦克风：服务被销毁（无障碍被关闭/系统回收）时若还在识别，
-        // AudioRecord 会随进程残留，系统一直显示麦克风占用
-        stopListening()
         stopKeepAliveWatchdog()
-        runCatching { voicePanel?.dispose() }   // v1.2.188：同步移除，不等 180ms 动画
-        voicePanel = null
         // v1.4.9：只有在用无障碍窗口时才跟着收；应用悬浮窗保留（否则切 App/服务重启浮窗就消失）
         runCatching { StatusOverlay.onAccessibilityLost() }
         super.onDestroy()

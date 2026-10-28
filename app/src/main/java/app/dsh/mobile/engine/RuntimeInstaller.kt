@@ -25,21 +25,6 @@ import java.util.zip.ZipInputStream
  */
 class RuntimeInstaller(private val ctx: Context) {
 
-    data class Manifest(val version: String, val url: String?, val sha256: String?)
-
-    private val root get() = EngineConfig.engineRoot(ctx)
-    private val stampFile get() = File(root, ".runtime-version")
-
-    fun readManifest(): Manifest {
-        val raw = ctx.assets.open("runtime/MANIFEST.json").bufferedReader().use { it.readText() }
-        val obj = JSONObject(raw)
-        return Manifest(
-            version = obj.getString("version"),
-            url = obj.optString("url").takeIf { it.isNotEmpty() },
-            sha256 = obj.optString("sha256").takeIf { it.isNotEmpty() },
-        )
-    }
-
     /** 确保运行时就绪；已安装且版本匹配且关键资产完整则跳过。
      *  @param onProgress 解压进度 0f..1f（仅解压阶段有值；频繁调用方自行节流）
      *
@@ -51,57 +36,7 @@ class RuntimeInstaller(private val ctx: Context) {
         // 2026-10-18 架构切换：包名 = com.termux 后，运行时 = Termux 官方 bootstrap
         // （<files>/usr）+ 内置适配版 dsh 引擎（不走 npm）。
         BootstrapInstaller.ensure(ctx, onProgress)
-        if (true) return
-        // ── 热更新中断恢复（2026-10-18）──────────────────────────────────────
-        // apply/rollback 中间被系统杀进程会留下半交换的目录布局（engine 缺失、
-        // engine.old 还在…）。必须先把它修成可启动状态，再做版本判断 —— 否则下面
-        // 的解压重装会把用户的运行时目录结构彻底改写。幂等、极廉价。
-        RuntimeUpdater.recoverIfNeeded(ctx)
-
-        val manifest = readManifest()
-
-        // ── 热更新保护（2026-10-18）──────────────────────────────────────────
-        // 背景：agent/用户可以在运行时把新的 runtime 树换进 engine/（RuntimeUpdater），
-        // 换完 engine/.runtime-version 与 assets/runtime/MANIFEST.json 的版本**必然不同**
-        // —— 旧逻辑据此判定「版本变了，该重装」，下一次 App 启动就会把热更新静默回退成
-        // APK 内置版本（用户视角：明明更新成功了，重启又变回去）。
-        //
-        // 因此：带 .runtime-source=external 标记的树不再参与和各 assets 的版本比对，
-        // 只做完整性探针（该探针本来就是防「半解压空壳」的，热更新的树同样需要）。
-        // 探针失败 = 这棵外部树已经不可用：清掉标记落回下面的 assets 重装兜底，
-        // 保证「宁可回到出厂运行时，也不留一个起不来的引擎」。
-        if (File(root, RuntimeUpdater.SOURCE_MARKER).isFile) {
-            if (isRootComplete()) {
-                Log.i(
-                    TAG,
-                    "runtime ${stampVersion()} is externally installed (hot update); " +
-                        "skipping asset reinstall (assets ${manifest.version})",
-                )
-                return
-            }
-            Log.w(TAG, "externally installed runtime is incomplete; falling back to asset install")
-            File(root, RuntimeUpdater.SOURCE_MARKER).delete()
-        }
-
-        if (EngineConfig.nodeBin(ctx).exists() &&
-            stampFile.exists() && stampFile.readText().trim() == manifest.version &&
-            isRootComplete()
-        ) {
-            Log.i(TAG, "runtime ${manifest.version} already installed (assets verified)")
-            return
-        }
-        if (isRootComplete()) {
-            // 版本变了才重装，属正常升级
-        } else {
-            Log.w(TAG, "runtime install incomplete (missing assets); forcing reinstall")
-        }
-        install(manifest, onProgress)
     }
-
-    /** engine/.runtime-version 的当前值（诊断日志用；不抛异常） */
-    private fun stampVersion(): String =
-        runCatching { if (stampFile.isFile) stampFile.readText().trim() else "?" }
-            .getOrDefault("?")
 
     /**
      * 运行时根目录完整性探针（任意目标目录版）。
@@ -140,93 +75,6 @@ class RuntimeInstaller(private val ctx: Context) {
         target.mkdirs()
         unzip(zip, target, onProgress)
         restoreExecBits(target)
-    }
-
-    private fun isRootComplete(): Boolean = probeRootComplete(root)
-
-    private fun install(manifest: Manifest, onProgress: (Float) -> Unit) {
-        Log.i(TAG, "installing runtime ${manifest.version}")
-        installing = true
-        try {
-            val assetZip = File(ctx.cacheDir, "runtime.zip")
-            try {
-                // 【v1.2.97】空间预检（用户邮件反馈：覆盖升级后引擎反复崩溃重启）。
-                // 覆盖升级 = 旧 runtime（~450MB）还在盘上 + zip 缓存（~170MB）+ 新解压
-                // （~450MB）峰值同卷并存，空间紧张的设备解压半途 ENOSPC → 部分文件
-                // 落地 → isRootComplete 探针失败 → 删了再装 → 更紧 → **无限崩溃重启**，
-                // 而"回滚旧版"因旧 runtime 已装好且版本匹配（跳过重装）反而不受影响。
-                // 与其让用户看玄学退避，不如一开始就给出明确错误。
-                fun mb(v: Long) = v / (1L shl 20)
-                fun requireFree(needMb: Long) {
-                    val usable = root.usableSpace
-                    check(usable >= needMb * (1L shl 20)) {
-                        ctx.getString(
-                            R.string.error_runtime_no_space,
-                            needMb, mb(usable),
-                        )
-                    }
-                }
-                requireFree(600)   // 覆盖升级峰值：旧 runtime + zip 缓存 + 新解压并存
-                ctx.assets.open("runtime.zip").use { input ->
-                    assetZip.outputStream().use { input.copyTo(it) }
-                }
-                // 解压前再校验一次：此时 zip 真实大小已知
-                requireFree(assetZip.length() / (1L shl 20) + 400)
-            } catch (e: Exception) {
-                // 路径 2：远程下载（必须带 SHA-256）
-                val url = manifest.url ?: throw IllegalStateException(
-                    ctx.getString(R.string.error_runtime_no_source), e,
-                )
-                downloadTo(url, assetZip)
-                manifest.sha256?.let { expected ->
-                    val actual = sha256(assetZip)
-                    check(actual.equals(expected, ignoreCase = true)) {
-                        "Runtime checksum mismatch: expected=$expected actual=$actual"
-                    }
-                }
-            }
-
-            // v1.2.21 事故修复：原 root.deleteRecursively() 会把 engine/ 整个删光，
-            // prefix 里的用户数据一起陪葬；且删除 70MB 目录耗时较长，
-            // 与用户点扩展下载并发 → 刚发布的扩展目录被删到只剩 lib → rename 报
-            // 「扩展目录发布失败」。现在按 zip 实际顶层目录（bin/etc/lib/share/usr）
-            // 精确替换，prefix 里的用户资产永不触碰。
-            root.mkdirs()
-            val topDirs = java.util.zip.ZipFile(assetZip).use { zf ->
-                zf.entries().asSequence()
-                    .map { it.name.substringBefore('/') }
-                    .filter { it.isNotEmpty() }
-                    .toSet()
-            }
-            topDirs.forEach { top ->
-                File(root, top).deleteRecursively()
-            }
-
-            // 解压 + 恢复可执行位（与热更新共用 extractZip，见其注释）
-            extractZip(assetZip, root, onProgress)
-            stampFile.writeText(manifest.version)
-            // 出厂安装的树没有 .runtime-source 标记：语义上「来源=assets」。
-            // 若上一棵树是热更新（external），走到这里说明它已被判定不可用并回退，
-            // 标记在 ensureInstalled 里已删除，这里再保险清一次。
-            File(root, RuntimeUpdater.SOURCE_MARKER).delete()
-            assetZip.delete()
-            Log.i(TAG, "runtime installed at $root (kept top dirs: ${topDirs.joinToString()})")
-        } finally {
-            installing = false
-        }
-    }
-
-    private fun downloadTo(url: String, dest: File) {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 15_000
-        conn.readTimeout = 60_000
-        conn.instanceFollowRedirects = true
-        // getInputStream 隐式触发连接；非 2xx 视为失败
-        val code = conn.responseCode
-        check(code in 200..299) { "Download failed with HTTP $code: $url" }
-        conn.inputStream.use { input ->
-            dest.outputStream().use { input.copyTo(it) }
-        }
     }
 
     private fun unzip(zip: File, target: File, onProgress: (Float) -> Unit) {

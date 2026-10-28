@@ -106,24 +106,6 @@
     <!-- Extension Center (v1.2.0): red = not downloaded, yellow = downloaded but inactive, green = activated -->
     <string name="settings_section_ext">Extensions</string>
     <!-- v1.2.113：社区插件中心 -->
-    <string name="setting_plugin">Community Plugins</string>
-    <string name="setting_plugin_sub">One-click install dsh ecosystem plugins</string>
-    <string name="plugin_center_title">Community Plugins</string>
-    <string name="plugin_center_sub">One-click install dsh ecosystem plugins (npm)</string>
-    <string name="plugin_install">Install</string>
-    <string name="plugin_uninstall">Uninstall</string>
-    <string name="plugin_uninstalling">Uninstalling…</string>
-    <string name="plugin_installing">Installing…</string>
-    <string name="plugin_installed">Installed</string>
-    <string name="plugin_failed">Failed: %1$s</string>
-    <string name="plugin_empty">No compatible community plugins yet — they will appear here automatically</string>
-    <string name="plugin_search_hint">Search community plugins…</string>
-    <string name="plugin_searching">Searching npm…</string>
-    <string name="plugin_search_none">No matching plugins on npm</string>
-    <string name="plugin_search_fail">npm search failed — showing bundled picks</string>
-    <string name="plugin_search_clear">Clear</string>
-    <string name="plugin_search_btn">Search</string>    <string name="plugin_manual_title">Manual install</string>
-    <string name="plugin_catalog_title">Catalog</string>
     <string name="setting_ext">Extension Center</string>
     <string name="setting_ext_sub">Download Python, Git, JDK and other environments — activated ones merge into the engine</string>
     <string name="setting_ext_active_count">%1$d activated</string>
@@ -183,19 +165,19 @@ They will be re-downloaded and reinstalled (with dependency closures). If a "per
     <string name="about_title">About</string>
     <string name="about_app_name">DSH Mobile</string>
     <string name="about_version">Version %1$s</string>
-    <string name="about_intro">DSH Mobile is a local engine shell for DeepSeek Harness (DSH) on Android: it runs the full Node.js agent engine inside the phone\'s sandbox — no server needed, and no data ever leaves the device.</string>
-    <string name="about_based">Built on the DeepSeek Harness (dsh) agent framework, open-sourced by DeepSeek in Aug 2026</string>
-    <string name="about_author">Author: Soodok</string>
+    <string name="about_intro">DSH Mobile is an Android shell for DeepSeek Harness (DSH): the full agent engine runs inside a stock Termux prefix, with terminal, file tools and accessibility automation built in. No server needed; sessions and credentials stay on device.</string>
+    <string name="about_based">Engine %1$s · upstream DeepSeek Harness (dsh) · MIT</string>
+    <string name="about_author">Original author Soodok · maintained by hazukieq</string>
     <string name="about_open_source">Source code</string>
-    <string name="about_repo">github.com/Soodok/Deepseek-Harness-Local-Android</string>
+    <string name="about_repo">github.com/hazukieq/DSH-Mobile-with-Termux</string>
     <string name="about_copied">Repo URL copied</string>
     <string name="about_check_update">Check for updates</string>
-    <string name="about_update_idle">Tap to check GitHub Releases</string>
+    <string name="about_update_idle">Tap to check the latest GitHub release</string>
     <string name="about_update_checking">Checking…</string>
     <string name="about_update_available">New version %1$s available · tap to open</string>
     <string name="about_update_latest">Already on the latest version</string>
     <string name="about_update_failed">Check failed: %1$s</string>
-    <string name="about_privacy_note">Privacy: the engine, sessions and credentials all stay on this device. The optional cloud ASR/TTS endpoints are self-hosted, used only to convert speech, and carry no analytics or tracking of any kind.</string>
+    <string name="about_privacy_note">Privacy: engine, sessions, credentials and chat history stay on device. Network is used only when you run a web search or configure a cloud model API. No telemetry, analytics or tracking.</string>
     <string name="setting_access_open_failed">Could not open accessibility settings</string>
     <string name="ext_repo_line">Termux repo · %1$s</string>
     <string name="ext_state_installing">Installing…</string>
@@ -271,92 +253,20 @@ You can still continue without updating, but the interface will not display.</st
     <string name="overlay_idle">Idle</string>
     <string name="overlay_working">Working · %1$s</string>
     <string name="overlay_turn_done">Conversation finished</string>
-    <string name="a11y_voice_input">Voice input</string>
-    <string name="overlay_listening">Listening…</string>
     <string name="overlay_speak_now">Speak now</string>
-    <string name="voice_close">Close</string>
-    <string name="voice_hint_placeholder">Recognized text (editable)</string>
-    <string name="voice_retry">Speak again</string>
-    <string name="voice_send">Send</string>
-    <string name="voice_sent">Sent to AI</string>
-    <string name="voice_sent_to">Sent to: %1$s</string>
-    <string name="voice_not_sent">Not sent — the text is still in the input box</string>
-        <string name="voice_cloud_listening">Cloud ASR listening…</string>
-    <string name="voice_switching_cloud">Switching to cloud ASR…</string>
-    <string name="setting_cloud_asr">Cloud speech recognition</string>
-    <string name="setting_cloud_asr_sub">Used when the device has no built-in recognizer</string>
-    <string name="cloud_asr_title">Cloud speech recognition</string>
-    <string name="cloud_asr_desc">Used only when the device has no built-in recognizer. Audio is uploaded for transcription.</string>
-    <string name="cloud_asr_key">API Key</string>
-    <string name="cloud_asr_key_hint">Paste your API key</string>
-    <string name="cloud_asr_endpoint">Endpoint</string>
-    <string name="cloud_asr_model">Model</string>
-        <string name="cloud_asr_save">Save</string>
         <string name="tts_voice_xiaoxiao">Xiaoxiao · female (recommended)</string>
     <string name="tts_voice_yunxi">Yunxi · male</string>
     <string name="tts_voice_xiaoyi">Xiaoyi · female</string>
     <string name="tts_voice_yunjian">Yunjian · male (calm)</string>
-            <string name="asrapp_title">Speech recognizer</string>
-    <string name="asrapp_subtitle">Install our offline recognizer, then follow the steps below to download a model and activate it.</string>
-    <string name="asrapp_open_failed">Cannot open: %1$s</string>
 
     <!-- 主卡片：我们的识别服务 -->
-    <string name="asrapp_ours">DSH offline recognition</string>
-    <string name="asrapp_ours_desc">System-level recognizer. Local inference via sherpa-onnx, models from a China-reachable mirror. No desktop icon - open it from here.</string>
-    <string name="asrapp_download">Download from GitHub Releases</string>
-    <string name="asrapp_installed_open">Installed - tap to open</string>
 
     <!-- 教程：四步 -->
-    <string name="asrapp_guide_title">Setup guide</string>
-    <string name="asrapp_step1_title">1. Download the APK</string>
-    <string name="asrapp_step1_body">Tap the entry above to open the GitHub Releases page in your browser, then download the latest dsh-asr-service arm64-v8a APK (about 31 MB). Install it and allow installation from your browser when prompted. It will not add an icon to your home screen.</string>
-    <string name="asrapp_step2_title">2. Open it and download a model</string>
-    <string name="asrapp_step2_body">Open it from this page (the entry above) or from the system Voice input settings. Go to Models and download one. zipformer-zh-14m-int8 is small and fast - good to start with. Pick paraformer-zh-int8 if you want better accuracy and have space. Models stay on your device; the download source follows your system language (HuggingFace official for English, a China-reachable mirror for Chinese) and can be overridden in the app settings.</string>
-    <string name="asrapp_step3_title">3. Make it the system recognizer</string>
-    <string name="asrapp_step3_body">Inside the app, tap Set as system default. It needs Shizuku or root; without either, go to Settings - Languages &amp; input - Voice input and pick the app there. On ROMs that redirect that page, you can instead choose it directly here in DSH Mobile (see the Recognition engine setting).</string>
-    <string name="asrapp_step4_title">4. Activate it in DSH Mobile</string>
-    <string name="asrapp_step4_body">Go back to Voice services - Speech recognition and set Recognition engine to the DSH offline recognizer. Then tap the floating microphone: recognition now runs fully offline. Tap Run check inside the recognizer app any time to verify every step.</string>
 
-    <string name="asrapp_trouble_title">If something does not work</string>
-    <string name="asrapp_trouble_body">No icon after install: expected - it is a service plugin, open it from this page. Model download fails: check the network, the mirror is hf-mirror.com. Voice input still uses the wrong engine: set it explicitly under Recognition engine. Recognition returns nothing: run Run check in the app, it names the missing step.</string>
 
-    <string name="asrapp_repo_title">Project page</string>
-    <string name="asrapp_repo_desc">Source code, other ABIs and release notes.</string>
 
-<string name="asrapp_entry">Local recognizer apps</string>
-    <string name="asrapp_entry_sub">Install our offline speech recognizer for the system</string>
-<string name="asr_help_title">Why a speech service?</string>
-    <string name="asr_help_body_1">Why configure this?</string>
-    <string name="asr_help_body_2">Android only offers speech recognition if the device has a recognizer installed. Many phones (especially Chinese ROMs) ship without one, so voice input fails outright.</string>
-    <string name="asr_help_body_3">Two ways to fix it:</string>
-    <string name="asr_help_body_4">A) Install a local recognizer app — it registers as a system recognition service, and this app uses it automatically. Nothing to fill in here. Recommended (all verified to declare android.speech.RecognitionService):</string>
-    <string name="asr_help_body_5">  · Sayboard (Vosk) — github.com/ElishaAz/Sayboard
-    F-Droid, active. Import vosk-model-cn-0.22 (~1.3GB) for much better Chinese.</string>
-    <string name="asr_help_body_6">  · whisperIME — github.com/woheller69/whisperIME
-    F-Droid, active. Multilingual Whisper (~435MB), good Chinese.</string>
-    <string name="asr_help_body_7">  · whisperIMEplus — github.com/woheller69/whisperIMEplus
-    Faster ONNX version, updated more often.</string>
-    <string name="asr_help_body_8">Then pick it under Settings &gt; System &gt; Languages &amp; input &gt; Voice input.</string>
-    <string name="asr_help_body_9">B) Use a cloud ASR service — paste its OpenAI-compatible transcription endpoint, model name and API key below. Providers with free tiers: SiliconFlow (siliconflow.cn), Groq (groq.com), Alibaba DashScope, Zhipu BigModel, Volcengine Ark, or your own server (whisper.cpp).</string>
-    <string name="asr_help_body_10">Leave the fields empty to use the system recognizer only.</string>
         
     
-    <string name="voice_rate_label">Rate %1$s</string>
-    <string name="asr_engine_label">Recognition engine</string>
-    <string name="asr_engine_hint">Pick the recognizer directly. Needed because the system "Voice input" settings page is redirected on many ROMs, so the DSH plugin cannot be selected there.</string>
-    <string name="asr_engine_system">System default</string>
-    <string name="asr_engine_plugin">DSH offline recognition (plugin)</string>
-<string name="voice_service_title">Voice services</string>
-    <string name="voice_service_asr">Speech recognition</string>
-    <string name="voice_service_asr_desc">System recognizer first; your own API is used when the device has none.</string>
-    <string name="voice_asr_free">Free API</string>
-    <string name="voice_asr_custom">Own API</string>
-    <string name="voice_service_tts">Speech synthesis</string>
-    <string name="voice_service_tts_desc">Microsoft Edge neural voices, connected directly from the app (no relay server).</string>
-    <string name="voice_tts_on">Edge neural voice</string>
-    <string name="voice_tts_off">System engine</string>
-    <string name="setting_voice_service">Voice services</string>
-    <string name="setting_voice_service_sub">Recognition + synthesis, both configurable here</string>
     <string name="tts_voice_xiaobei">Xiaobei · northeastern accent</string>
     <string name="tts_voice_xiaoni">Xiaoni · shaanxi accent</string>
 <string name="cloud_tts_title">Cloud text-to-speech</string>
@@ -373,13 +283,6 @@ You can still continue without updating, but the interface will not display.</st
     <string name="cloud_tts_need_endpoint">Enter the service URL first</string>
     <string name="setting_cloud_tts">Cloud text-to-speech</string>
     <string name="setting_cloud_tts_sub">Neural voices, falls back to system</string>
-<string name="cloud_asr_saved">Saved</string>
-    <string name="cloud_asr_clear">Clear key</string>
-    <string name="cloud_asr_need_key">Enter an API key first</string>
-    <string name="cloud_asr_free_hint">Pick any provider you trust - tap ? for a list of services with free tiers</string>
-<string name="voice_need_permission">Microphone permission required for voice input</string>
-    <string name="voice_no_service">no speech recognition on this device — install the Google app or type instead</string>
-    <string name="voice_recognized">recognized, sending</string>
     <string name="overlay_tts_done">Conversation finished</string>
     <string name="a11y_action_tap">Tap</string>
     <string name="a11y_action_input">Typing</string>
@@ -388,21 +291,7 @@ You can still continue without updating, but the interface will not display.</st
     <string name="a11y_action_screen">Reading screen</string>
     <string name="error_engine_start">Engine start failed: %1$s</string>
 
-    <string name="setting_asr">Speech recognition</string>
-    <string name="setting_asr_sub">Offline ASR models · download on demand</string>
-    <string name="asr_state_ready">Ready</string>
-    <string name="asr_state_none">Not downloaded</string>
-    <string name="voice_need_app">Open the app once to send voice input</string>
-    <string name="voice_need_app_hint">Voice panel works anywhere; sending requires the main screen</string>
-    <string name="setting_mic">Microphone</string>
-    <string name="setting_mic_sub">Voice input (speech recognition) · tap to grant</string>
-    <string name="mic_granted">Granted</string>
-    <string name="mic_denied">Not granted · tap to enable</string>
     <string name="overlay_a11y_open">Open %1$s</string>
-    <string name="voice_no_session">No conversation to send to — open one first</string>
-    <string name="voice_opening_session">Opening conversation…</string>
-    <string name="voice_session_timeout">Conversation did not open, try again</string>
-    <string name="voice_send_failed">Send failed: %1$s</string>
         <string name="setting_lan_web">LAN access to WebUI</string>
     <string name="setting_lan_web_sub">Let another device on this network use the WebUI. Off by default.</string>
     <string name="lan_web_consent">This exposes the agent running on this phone — it can read/write files, run commands and control the screen — to every device on this network.\n\nOnly use it on a trusted network (e.g. home Wi-Fi). Anyone who reaches the address can control this phone until you turn this switch off.</string>
@@ -420,16 +309,13 @@ You can still continue without updating, but the interface will not display.</st
     <string name="splash_loading">Loading the interface…</string>
     <string name="splash_hint">Please wait a few seconds…</string>
 
-    <!-- Terminal + Linux environment (2026-10-18) -->
+    <!-- Terminal (2026-10-18) -->
     <string name="terminal_title">Terminal</string>
     <string name="terminal_back">Back</string>
     <string name="terminal_new">New session</string>
     <string name="terminal_menu">Session menu</string>
     <string name="terminal_close_session">Close session</string>
     <string name="terminal_close">Close</string>
-    <string name="terminal_choose_shell">Choose shell</string>
-    <string name="terminal_linux_env">Linux environment…</string>
-    <string name="terminal_profile_unavailable">Profile %1$s is unavailable — opened the Android shell instead</string>
     <string name="terminal_create_failed">Could not start the terminal session</string>
     <string name="terminal_menu_new">New session…</string>
     <string name="terminal_menu_paste">Paste</string>
@@ -441,27 +327,8 @@ You can still continue without updating, but the interface will not display.</st
     <string name="terminal_menu_close_all">Close all sessions</string>
     <string name="terminal_clipboard_empty">Clipboard is empty</string>
     <string name="terminal_copied">Copied %1$d characters</string>
-    <string name="linux_title">Linux environment</string>
-    <string name="linux_subtitle">proot userland under %1$s · download happens on demand, China mirrors first</string>
-    <string name="linux_size_mb">%1$d MB</string>
-    <string name="linux_distro_desc">%1$s · default shell %2$s · runs under proot, no root needed</string>
-    <string name="linux_install">Install</string>
-    <string name="linux_remove">Remove</string>
-    <string name="linux_remove_confirm">Remove %1$s and its rootfs? Installed packages inside it will be lost.</string>
-    <string name="linux_open_terminal">Open terminal</string>
-    <string name="linux_installed">Installed · %1$s</string>
-    <string name="linux_not_installed">Not installed</string>
-    <string name="linux_proot_missing">Not installed · proot payload is downloaded on first install</string>
-    <string name="linux_preparing">Preparing…</string>
-    <string name="linux_install_ok">%1$s installed</string>
-    <string name="linux_install_failed">Install failed: %1$s</string>
-    <string name="linux_footnote">Rootfs and proot are fetched from their official/China mirrors at install time — nothing of them ships inside the APK. Termux packages are licensed individually (proot is GPL-2.0).</string>
     <string name="setting_terminal">Terminal</string>
     <string name="setting_terminal_sub">A real terminal in the agent\'s own environment (same PATH, same tools)</string>
-    <string name="setting_linux">Linux environment</string>
-    <string name="setting_linux_sub">Install Alpine or Ubuntu (proot) and open its shell</string>
-    <string name="setting_linux_none">None</string>
-    <string name="setting_linux_count">%1$d installed</string>
 
     <!-- 运行时热更新（2026-10-18）：agent 用 dsh-update 门脚本换运行时，这里只做状态展示 -->
     <string name="setting_runtime_update">Runtime update</string>
@@ -542,4 +409,9 @@ engine: %6$s</string>
     <string name="progress_overlay_denied_title">Floating window needs permission — tap to grant</string>
     <string name="settings_a11y_enabled_not_connected">On (not connected)</string>
     <string name="settings_a11y_disabled_by_system">Granted but disabled by Android (tap to re-enable)</string>
+    <string name="setting_stock_ui">Reset mobile UI</string>
+    <string name="setting_stock_ui_sub">Re-deploy the built-in mobile skin and restart the engine. Use this when the mobile UI is broken.</string>
+    <string name="setting_stock_ui_confirm">Re-deploy the built-in mobile UI and restart the engine? Layout tweaks you made are lost; chat history is not affected.</string>
+    <string name="setting_stock_ui_done">Mobile UI restored; restarting the engine</string>
+    <string name="setting_stock_ui_none">Mobile UI was already the built-in copy; restarting the engine</string>
 </resources>

@@ -20,6 +20,7 @@
             android:layout_height="48dp"
             android:padding="12dp"
             android:src="@drawable/ic_back"
+            android:tint="#FF10141A"
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/settings_back" />
 

@@ -28,6 +28,12 @@ class AboutActivity : Activity() {
         findViewById<TextView>(R.id.txtVersion).text =
             getString(R.string.about_version, versionName())
 
+        // v2.5.43：引擎版本动态显示（BootstrapInstaller.ENGINE_VERSION = dsh-engine-0.2.1-rc.2-20261019）
+        val engineRaw = app.dsh.mobile.engine.BootstrapInstaller.ENGINE_VERSION
+        val engineLabel = Regex("""dsh-engine-([0-9][^-]*(?:-[a-zA-Z0-9.]+)?)""")
+            .find(engineRaw)?.groupValues?.getOrNull(1) ?: engineRaw
+        findViewById<TextView>(R.id.txtBased).text = getString(R.string.about_based, engineLabel)
+
         // 开源地址：点击复制到剪贴板（WebView 只放行回环，外链交系统浏览器亦可，复制更轻）
         findViewById<android.view.View>(R.id.rowRepo).setOnClickListener {
             val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager

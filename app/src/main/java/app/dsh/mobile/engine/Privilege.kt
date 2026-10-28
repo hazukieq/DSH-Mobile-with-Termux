@@ -64,6 +64,10 @@ object Privilege {
         Log.i(TAG, "priv mode -> $mode")
     }
 
+    /** 是否处于特权模式（ROOT / SHIZUKU）。凡「需要 shell 身份」的能力都应先过这一道，
+     *  避免各调用点各写一遍 `getMode(...) == NORMAL` 的否定判断。 */
+    fun isElevated(ctx: Context): Boolean = getMode(ctx) != PrivMode.NORMAL
+
     fun isOnboarded(ctx: Context): Boolean = prefs(ctx).getBoolean(KEY_ONBOARDED, false)
 
     fun markOnboarded(ctx: Context) {

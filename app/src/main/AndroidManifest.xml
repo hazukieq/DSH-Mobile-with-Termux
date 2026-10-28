@@ -4,19 +4,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- v1.3.30：Agent 原生控制 API 读取联网状态（GET /status） -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- APK 型扩展（扩展中心）触发系统安装器（v1.2.127，如 dsh-asr-service） -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Android 14+ 要求前台服务声明类型；specialUse 类型不会被系统限时强杀（dataSync 6h 上限的规避） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Android 13+ 通知为运行时权限，任务进度通知需要 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- 语音输入（v1.2.58）：ASR 需要麦克风 -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- 语音输入开/关的触感反馈（v1.2.73）：无此权限时 Vibrator 调用被静默忽略 -->
-    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- v1.2.161：验证码提示条用普通浮层通道（无障碍不在位时也能显示） -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 所有文件访问：普通模式下授权 AI 在共享存储（/sdcard）建目录与读写 ——
@@ -26,24 +20,13 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
-    <!-- ⚠️ Android 11+ 的 package visibility（v1.2.83，调研发现的关键坑）：
-         不声明 <queries> 时，App **看不到**用户后来安装的语音识别服务，
-         SpeechRecognizer.isRecognitionAvailable() 会返回 false ——
-         这正是「装了本地识别应用却依然用不了」的根因。
-         声明后系统才会把符合该 intent 的服务暴露给本应用。 -->
+    <!-- ⚠️ Android 11+ 的 package visibility：
+         不声明 <queries> 时 App 无法枚举系统服务/后装 App。 -->
     <queries>
-        <intent>
-            <action android:name="android.speech.RecognitionService" />
-        </intent>
-        <!-- 语音合成引擎同理（系统 TTS 枚举） -->
+        <!-- 语音合成引擎（系统 TTS 枚举） -->
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
-        <!-- ⚠️ 包名可见性（v1.2.87 修复）：上面两个 <intent> 只让**枚举**可见，
-             但「指定组件绑定」（createSpeechRecognizer(ctx, component)）与
-             queryIntentServices(带 setComponent) 需要**包名级**可见性。
-             缺它会表现为：语音服务页选不到插件、指定了也不生效。 -->
-        <package android:name="app.dsh.asr" />
         <!-- 跨 App 跳转/支付的可见性（v2.5.7）：不声明时 resolveActivity() 在 Android 11+
              对「用户后装的微信/支付宝」返回 null，表现为 /open 报 no handler for uri。 -->
         <intent>
@@ -151,28 +134,25 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
-
-        <activity
-            android:name=".PluginStoreActivity"
-            android:exported="false"
+            android:theme="@style/Theme.Dsh.Light"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <activity
             android:name=".AboutActivity"
             android:exported="false"
+            android:theme="@style/Theme.Dsh.Light"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <!-- 扩展中心（v1.2.0）：环境扩展下载/激活管理 -->
 
         <!-- 终端（2026-10-18）：原生 VT100/xterm 终端 + PTY 会话。
              注册为**第二个 LAUNCHER 入口**：它本身就是一个完整的终端 App
-             （桌面上有独立图标），从设置页也能进；Linux 环境页与 dsh 的 linux
-             门脚本都会拉起它。singleTask + onNewIntent 支持"从别处再开一个
-             发行版会话"时复用同一页面而不是堆 Activity。 -->
+             （桌面上有独立图标），从设置页也能进。singleTask + onNewIntent
+             支持复用同一页面而不是堆 Activity。 -->
         <activity
             android:name=".term.TerminalActivity"
             android:exported="true"
+            android:theme="@style/Theme.Dsh.Terminal"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
@@ -182,24 +162,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Linux 环境管理页（2026-10-18）：proot 发行版安装/删除/进入 -->
-        <activity
-            android:name=".linux.LinuxEnvActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
-
-        <!-- ASR 模型管理页（v1.2.64）：离线语音识别模型下载/加载。
-             此前漏注册 —— 设置页点击必崩 ActivityNotFoundException（模拟器实测确认）。 -->
-        <activity
-            android:name=".AsrAppActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
-
-        <activity
-            android:name=".VoiceServiceActivity"
-            android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <service
             android:name=".service.EngineService"

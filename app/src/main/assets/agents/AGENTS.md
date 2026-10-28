@@ -72,7 +72,8 @@ off. The per-endpoint list and the "service is off" ladder are in "Accessibility
   (prefer over `grep -r`); `pnpm` / `corepack` — offline package tooling.
 - `curl` — binary-safe wrapper over node fetch (`-s/-sS/-I/--json/-L/-X/-H/-d/-o/--max-time`);
   `-o` writes raw bytes.
-- `psx <pat>` / `killx <pat>` — list/kill by command **name (comm)** only. Prefer these over
+- `pgrep -x <name>` / `pkill -x <name>` — list/kill by command **name (comm)** only
+  (the `psx`/`killx` helpers were removed in 2.5.42; both landed in the Termux bootstrap). Prefer these over
   `pkill -f` or `ps | grep <cmdline>`: your own `bash -c` / `node -e` command line contains the
   pattern and you can end up killing yourself.
 - `say [-f] <text>` — speak via the system TTS engine (truncates at 4000 chars).
@@ -91,43 +92,13 @@ Use a controlled restart only; never kill the engine process yourself.
   restart ~8 seconds later**, so the command can print its result and you can reply before the
   engine stops. The current turn is still interrupted; tell the user first.
 - `POST /engine/restart` — Android bridge equivalent of Settings → 重启引擎 (202, asynchronous).
-- Do **not** `killx`/`pkill` the managed engine, and do **not** use the plugin market's
+- Do **not** `pkill` the managed engine, and do **not** use the plugin market's
   "立即重启" button: that helper SIGTERMs the host and spawns its own detached `dsh web`, which
   races the managed engine on port 3080 and leaves the WebView with
   `ERR_CONNECTION_REFUSED` / `ERR_INCOMPLETE_CHUNKED_ENCODING`. DSH Mobile now kills such foreign
   listeners before spawning, but the controlled paths remain the supported ones.
 - A restart ends the current turn. Tell the user before restarting; the assistant message produced
   after the restart usually cannot be delivered to the session.
-
-## Linux environment (proot, optional)
-
-Native `pkg install` (above) is the normal way to add tools. Separately, there is an optional **Linux userland**: a real distro rootfs
-(Alpine today, Ubuntu Base supported) executed through `proot` with fake root. It exists for
-the cases the bionic snapshot cannot serve: glibc-only binaries, `apt`/`apk` package
-managers, distro build dependencies, sshd-style daemons, and anything that assumes
-`/usr/bin/env bash` plus a normal `/etc`.
-
-- **Gate**: `linux <list|status|run|shell|exec|path> [id] [command...]`
-  - `linux list` — installed distro ids, one per line (empty output = none installed)
-  - `linux status [id]` — rootfs path + whether the proot payload is present
-  - `linux run <id> <cmd...>` — run a shell command **inside** the distro; stdout/stderr
-    stream through and the guest exit code is returned. Example:
-    `linux run alpine "apk add --no-cache curl && curl -sI https://example.com"`
-  - `linux exec <cmd...>` — same, but on the default distro (`$DSH_LINUX_DEFAULT`)
-  - `linux shell <id>` — interactive login shell (for a human at the terminal; you cannot
-    drive it from a tool call — use `run`)
-- **Installing a distro is a user action**: Settings → Linux environment → Install (or the
-  dedicated "DSH Terminal" launcher entry). Do not attempt to fetch or unpack a rootfs
-  yourself. If `linux list` is empty, tell the user which button to press and continue with
-  the bionic toolchain in the meantime.
-- Paths: rootfs at `$DSH_LINUX_HOME/distros/<id>/rootfs`, proot at `$DSH_LINUX_HOME/proot`.
-  Guest `$HOME` is `/root`; the host app files dir is bind-mounted so both sides can be
-  reached. The guest sees `/sdcard` when shared storage is mounted.
-- The user can watch (and type into) the same shells in the **Terminal** app; when a task
-  is easier to verify visually, suggest that instead of blind piping.
-- Prefer the native bionic toolchain for ordinary work: it costs no download and shares
-  `$HOME` with your tools. Reach for `linux` only when a glibc/apt dependency is the actual
-  blocker, and say which distro you used in your final report.
 
 ## UI Automation Workflow (role and continuation protocol)
 
@@ -284,7 +255,7 @@ The documented environment already puts `scr`, `loop`, `notify`, and `say` on yo
 - **Screenshots**: use `scr shot --save`; it returns a file path instead of base64. Read the file with the `read_image` tool only when pixels are needed; dump text and OCR lines cover common cases. Old shots are auto-cleaned (last 12 kept).
 - **OCR fallback**: when the accessibility tree exposes almost no text (ColorOS/OPPO browser, WebView, canvas-rendered apps), `scr dump` automatically appends offline OCR lines recognized from the screenshot (ML Kit, no network). The header then shows `ocr=Nlines/<ms>`; OCR lines are prefixed `o` (for example `o3 搜索 @540,2200 c`) and are valid tap targets/matching text exactly like normal nodes. Bridge `GET /ocr?force=1` returns raw OCR blocks with bounding boxes. Results are cached ~1.5s; avoid polling faster because screenshot capture is system-throttled. If a screen looks empty, OCR is already applied; do not conclude "nothing is on screen" from an empty dump alone.
 - **Local fast layer**: bridge `GET /local/status` reports `modelReady`/`serverRunning` for the on-device embedding model; `POST /local/ensure` starts the 15MB model download + `llama-server` in the background. Once running, `loop pick` resolves semantically similar labels locally in milliseconds before any cloud round-trip.
-- Commands: `scr tap <x> <y>` · `tap-text <t>` / `tap-desc <d>` · `long-press <x> <y> [ms]` · `swipe <x1> <y1> <x2> <y2> [ms]` · `key <back|home|recents|notifications|quick_settings>` · `input <text> [--target <hint>] [--append]` · `find <text> [--tap] [--back] [--max N]` (scroll until found) · `idle [ms]` (until the UI settles; also reports the foreground package) · `launch <pkg|label>` · `open <uri|pkg/cls|pkg>` (jump to another app/app link, v2.5.2; v2.5.7 also takes `intent://…` and rewrites `https://*.alipay.com` payment links to `alipays://`) · pay flow: `scr open "weixin://wxpay/bizpayurl?pr=…"` or `scr open "<https alipay link>"`, then `scr wait-app <com.tencent.mm|com.eg.android.AlipayGphone> --gone 60` and re-check the order via MCP; never poll screenshots and never open the pay link twice (fork repo: docs/PAYMENT-LINKS.md) · `wait-app <pkg> [--gone] [sec]` · `pkg` · `shot [--max N]` · `status "<text>" [--action <desc>]` (writes the overlay's **accessibility/app-action chain** — the
+- Commands: `scr tap <x> <y>` · `tap-text <t>` / `tap-desc <d>` · `long-press <x> <y> [ms]` · `swipe <x1> <y1> <x2> <y2> [ms]` · `key <back|home|recents|notifications|quick_settings>` · `input <text> [--target <hint>] [--append]` · `find <text> [--tap] [--back] [--max N]` (scroll until found) · `idle [ms]` (until the UI settles; also reports the foreground package) · `launch <pkg|label>` · `open <uri|pkg/cls|pkg>` (jump to another app/app link, v2.5.2; v2.5.7 also takes `intent://…` and rewrites `https://*.alipay.com` payment links to `alipays://`) · pay flow is **launch-only**: `scr open "weixin://wxpay/bizpayurl?pr=…"` / `scr open "<https alipay link>"` only starts WeChat/Alipay — landing on the pay page is **not** guaranteed, so never try to verify, scroll or click inside the payment app; just `scr wait-app <com.tencent.mm|com.eg.android.AlipayGphone> --gone 60`, then re-check the order via MCP. Never poll screenshots, never open the pay link twice (fork repo: docs/PAYMENT-LINKS.md) · `wait-app <pkg> [--gone] [sec]` · `pkg` · `shot [--max N]` · `status "<text>" [--action <desc>]` (writes the overlay's **accessibility/app-action chain** — the
   section under the tool chain, v2.5.6; the old bottom notice strip is gone) · `status-hide`.
 - **`scr changed`** checks "did the screen move?" in milliseconds. The event stream feeds a small what-changed log (window switches, appearing/updating texts); calling it returns and consumes the log, so prefer `scr changed` over a full `dump` whenever only a change signal is needed. `scr macro <back|home|recents|notifications|quick_settings|open-settings|sleep>` runs a deterministic common action in one command.
 - **`scr batch <json-file|->`** runs a gesture-only sequence in one turn. For multi-step target-state automation, prefer `loop run`. Step types and their exact field names are: `tap` (`text` | `desc` | `x`+`y`), `long_press` (`x`,`y`, optional `durationMs`), `swipe` (`x1`,`y1`,`x2`,`y2`, optional `durationMs`), `input` (`text`, optional `append`, `target`), `key` (`action`), `scroll_find` (`text`, optional `tap`,`back`,`maxSwipes`), `wait` (`text`, optional `gone`,`timeoutMs`), `idle` (optional `timeoutMs`), `sleep` (`ms`). The endpoint validates field names; a failing step aborts the batch unless it carries `"optional":true`. The response reports every step plus the fields it actually received.
@@ -327,7 +298,7 @@ another app's UI tree/pixels, inject input into another app, or read accessibili
 Need it (with the service off they answer the structured 503):
 
 - read the UI tree: `GET /screen`, `GET /screen-changed`, `GET /diff`, `GET /scene`,
-  `POST /wait`, `POST /wait-text`, `POST /idle`, `GET /interference`;
+  `POST /wait` (`/wait-text` is an alias of it), `POST /idle`, `GET /interference`;
 - inject input: `POST /tap`, `POST /tap-id`, `POST /gesture`, `POST /key`, `POST /input`,
   `POST /scroll-find`, `POST /scroll-center`, `POST /scroll-edge`, `POST /pick`,
   `POST /vision/tap`, `POST /vision/drag` (and the `scr` gate wrappers behind them, e.g.
@@ -423,9 +394,9 @@ before deep app work. Quick map:
 - `$PREFIX` = `<files>/usr` (Termux bootstrap; adapted engine at
   `$PREFIX/lib/node_modules/@deepseek-ai/dsh`). `$DSH_HOME` = `<files>/dsh-home`
   (profiles, sessions, workspaces, AGENTS.md).
-- Native gates already on PATH: `notify`, `scr` (dump/tap/tap-text), `say`, `psx`, `killx`,
-  `loop`, `fast`, `linux`, `dsh-update`, `trash-cli`, `shot` (system screenshot), `appshot`
-  (app-window screenshot), `alarm` (alarms/timers), `record` (screen recording; ROOT or SHIZUKU
+- Native gates already on PATH: `notify`, `scr` (dump/tap/tap-text), `say`,
+  `loop`, `fast`, `dsh-update`, `trash-cli`, `shot` (system screenshot), `appshot`
+  (app-window screenshot), `record` (screen recording; deployed only in ROOT or SHIZUKU
   mode only), `native` (app control/debug: status, settings read/write, open native pages),
   `media` (native audio playback: `media play <path|url> [title] [artist] [--loop]`, pause/resume/
   stop/status - system audio hardware + audio focus, no Termux audio stack needed).
@@ -525,8 +496,10 @@ pnpm.
 - "Settings" has two meanings: the **WebUI settings** is account menu -> 设置, a full-screen dialog
   overlay whose URL stays `/` (NOT a `/settings` route); the **native settings** is the top-bar gear
   (Android `SettingsActivity`). Do not try `GET /settings` and do not `am start` our own activities.
-- Same for "plugins" (web drawer plugins vs native plugin centre) and "terminal" (native terminal
-  activity vs the engine sidebar terminal).
+- "plugins" now has **only** the web layer: the drawer 插件 entry (已安装 / 插件市场 tabs, market
+  provided by the bundled `dshmarket` plugin). The old native plugin centre was removed — there is no
+  native activity for it, so never `am start` one.
+- "terminal" is still two layers: the native terminal activity vs the engine sidebar terminal.
 - If the layer is ambiguous, **ask the user which one** before spending more than two steps; if two
   probes fail, switch layer or ask instead of exploring further in the wrong layer.
 - `dsh-mobile ui` prints the layer map (JSON with `--json`).
@@ -537,7 +510,7 @@ The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button
 
 1. `dsh-mobile cdp drawer` opens the drawer **idempotently** (the 菜单 button is a toggle — clicking it
    twice closes the drawer, and then `click-text` matches page text instead of a nav item).
-2. Drawer buttons by aria-label: 新建会话 / 插件 / 插件市场 / 自动化任务 / 记忆系统 / 搜索会话 /
+2. Drawer buttons by aria-label: 新建会话 / 插件 / 自动化任务 / 记忆系统 / 搜索会话 /
    视图选项 / 添加工作区; the account menu is `button[aria-label="账号菜单"]` at the drawer bottom.
 3. Account menu items are `[role=menuitem]`: 设置 / 意见反馈 / 退出登录 ->
    `dsh-mobile cdp click-text 设置 --exact`; then `dsh-mobile cdp wait '[role=dialog]'`.
@@ -695,3 +668,19 @@ The only legitimate writer is the app itself (a new release bumps the seed versi
 - **坐标来源**：只能用当前屏幕 `/scene` 或 `/screen?format=json` 的 `bounds`/`center`，或上一次成功点击的回执；禁止目测/按比例估算/复用旧页面坐标（预览图 581×1280 ≠ 屏幕 1080×2376）。
 - **`ownOverlay:true`**：只表示落点在我们自己的无障碍悬浮窗上。自家控件（胶囊、工具条按钮）坐标手势有效；悬浮窗透明区（下方是第三方 App）会被吞，改节点动作或 `/overlay {"show":false}`。
 - 坐标点击回执含 `sent/dispatchedAt/window/node/staleFullScreenNode/ownOverlay`；`/act` 的 `tapXY` 与 `/tap` 同一套分发（默认手势，`{"smart":true}` 走节点语义）。`window.target` 指落点所在窗口（优先前台 App），看到 `ownOverlay:true` 说明点在我们自己的悬浮窗上，改用 `/overlay` 或节点点击。
+
+## Bundled plugins (dshmarket / dsh-mnemon / dsh-genui)
+
+Release builds ship these three plugins inside the APK and the app extracts them into
+`$DSH_HOME/profiles/web/node_modules/` on first start (offline, ~6 MB zip). They are normal
+packages — you own them:
+
+- **disable / remove**: `dsh plugin remove <name>` (or delete the directory
+  `$DSH_HOME/profiles/web/node_modules/<name>`). To stop the app from restoring them at boot,
+  create the marker file `$DSH_HOME/.dsh-bundled-off` (one line per name is optional; its mere
+  existence disables auto-restore).
+- **modify**: edit files in place; the extractor never overwrites an existing file, so your
+  edits survive restarts. Upgrading the APK does not reset them.
+- **re-enable**: delete `.dsh-bundled-off` and the target dir, then restart the engine.
+
+Versions bundled: dshmarket 1.73.1, dsh-mnemon 0.5.36, dsh-genui 0.3.1.

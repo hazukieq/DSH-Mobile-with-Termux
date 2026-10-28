@@ -12,7 +12,7 @@
 | `dsh-update restart`（agent 文档推荐） | 调 `POST /engine/restart`（delayMs=8000）→ 先打印结果、agent 先回复，8 秒后引擎才真正重启 | 适合 agent 主动重启；不会「命令没反应」 |
 | 通知栏「退出」 | 停止引擎/代理/推理子进程，写 `user_exited` 标记 | 之后**不会**自动拉起，直到用户再次打开 App |
 
-不要用 `killx`/`pkill` 杀受管引擎：supervisor 会自愈重启，但属于非受控路径，容易与外来进程抢端口。
+不要用 `pkill` 杀受管引擎：supervisor 会自愈重启，但属于非受控路径，容易与外来进程抢端口。
 
 ## 2. dshmarket「立即重启」竞态（已修）
 

@@ -1,24 +1,19 @@
-# Terminal + Linux environment
+# Terminal
 
-> Added 2026-10-18. Gives DSH Mobile the two things it did not have: a **real terminal**
-> and an **optional Linux userland** (proot distros). The point is to stop bionic-snapshot
-> boundaries from deciding what the agent can do — and to let the user see and take over
-> what the agent is running.
+> Added 2026-10-18. Gives DSH Mobile a **real terminal** so the user can see and take over
+> what the agent is running, instead of a single invisible `bash -c`.
+>
+> Changed 2026-10-28: the proot / Linux distro subsystem was removed entirely. The terminal
+> itself stays; there are no Alpine/Ubuntu sessions and no `linux` gate any more.
 
 ## Why
 
 The original design ships the Node.js runtime and toolchain as bionic binaries inside the
-APK (install and go), at three costs:
+APK (install and go), but offered **no terminal UI** — the only shell was the agent's
+invisible, non-interactive `bash -c`.
 
-1. **No terminal UI** — the only shell is the agent's `bash -c` tool: invisible, non-interactive;
-2. **Hard-coded Termux prefixes** — the deb installer's path rewrite deliberately skips
-   ELF binaries, so sshd / git-core style paths stay broken (the code comment literally says
-   "long-term solved by a PRoot live environment");
-3. **No glibc / apt world** — only the bionic closure plus 19 extensions.
-
-So this release does **not** replace that route; it adds a side branch: step into Linux when
-glibc/apt is the blocker, keep the zero-download bionic toolchain for everyday work. Both
-share the same `$HOME`.
+So this release does **not** replace that route; it puts the very same shell (same `$HOME`,
+same PATH / LD_LIBRARY_PATH) behind an interactive terminal.
 
 ## 1. Terminal
 
@@ -26,7 +21,6 @@ share the same `$HOME`.
 
 - **Launcher icon** `DSH Terminal` (a second LAUNCHER entry, independent of the main app icon)
 - **Settings → Extensions group → Terminal**
-- **Linux environment page → Open terminal** (straight into a distro)
 
 ### Architecture
 
@@ -40,7 +34,7 @@ soft keyboard / extra-keys row / paste
    TerminalSession ── reader thread ──▶ TerminalEmulator (VT100/xterm state machine + screen buffer)
         │ write()/resize()                  │ throttled onChanged
         ▼                                    ▼
-   dsh_pty.c (JNI) ── fork/execve + PTY ──▶ child (bash / proot)
+   dsh_pty.c (JNI) ── fork/execve + PTY ──▶ child (bash)
 ```
 
 - **PTY layer**: `dsh_pty.c` was refactored from a single engine child to a **session table**;
@@ -77,7 +71,7 @@ the emulator's `scrolledBack` (`viewTop < maxTop`). Touch scrolling was also inv
 to Android convention (swipe up showed history, swipe down jumped to the newest); it now
 follows the standard direction. With the soft keyboard open the system still uses the first
 back press to dismiss it (same as other terminal apps) — the second one is handled by the app.
-| New session | top-bar ＋; pick Android or an installed distro |
+| New session | top-bar ＋ |
 
 ### Environment: identical to the agent's
 
@@ -89,109 +83,7 @@ AI but not in my terminal"; replaying the agent's command in the terminal is a l
 If the engine runtime is not installed yet, it falls back to `/system/bin/sh` (toybox) and
 says so in the title.
 
-## 2. Linux environment (proot)
-
-### Distros
-
-| id | distro | package manager | default shell | download |
-|---|---|---|---|---|
-| `alpine` | Alpine Linux 3.20.3 (musl) | `apk` | `/bin/sh` | ≈ 3.5 MB |
-| `ubuntu` | Ubuntu Base 24.04.3 (glibc) | `apt` | `/bin/bash` | ≈ 30 MB |
-
-The ABI follows the built APK: `arm64-v8a → aarch64/arm64`, `x86_64 → x86_64/amd64`.
-
-### What install does
-
-1. **proot payload**: three `.deb`s from the official Termux repository
-   (`proot 5.1.107.96` + `libtalloc 2.5.0` + `libandroid-shmem 0.7`), SHA-256 verified,
-   `data.tar.xz` extracted, `data/data/com.termux/files/usr/**` flattened into
-   `<filesDir>/linux/proot/`. postinst scripts are **not** executed (same policy as the
-   Termux packages).
-2. **rootfs**: download `.tar.gz` from a mirror, extract into a temp dir, then **atomically
-   rename** into `distros/<id>/rootfs` (a failure never leaves half a rootfs behind).
-3. **post-config** (plain file writes, no chroot):
-   - `/etc/resolv.conf`: `223.5.5.5` / `8.8.8.8` / `1.1.1.1`
-   - `/etc/hosts`: dual-stack localhost
-   - Alpine: `/etc/apk/repositories` → Aliyun mirror (official CDN kept as a comment)
-   - Ubuntu: `/etc/apt/sources.list` → Aliyun `noble` (four components) + updates/security
-   - `/etc/profile.d/00-dsh.sh`: PS1, `LANG=C.UTF-8`
-   - `/tmp` mode 1777, `/root` present
-
-### Launch command (verified on the emulator)
-
-```sh
-PROOT_LOADER=<home>/proot/libexec/proot/loader \
-PROOT_TMP_DIR=<home>/tmp \
-LD_LIBRARY_PATH=<home>/proot/lib \
-PROOT_NO_SECCOMP=1 \
-<home>/proot/bin/proot \
-  --link2symlink --kill-on-exit -0 \
-  -r <rootfs> -b /dev -b /proc -b /sys -b <appFilesDir> [-b /storage/emulated/0:/sdcard] \
-  -w /root \
-  /usr/bin/env -i HOME=/root TERM=xterm-256color LANG=C.UTF-8 \
-      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin USER=root \
-      /bin/sh -l
-```
-
-Note the loader: Termux's proot has `/data/data/com.termux/files/usr/libexec/proot/loader`
-**compiled in**, which does not exist here. proot 5.1.107 honours the `PROOT_LOADER`
-override (`src/execve/enter.c:571`), so an env var points it into the app's private dir —
-**no ELF patching required**.
-
-### Layout
-
-```
-filesDir/linux/
-  proot/                 proot + libtalloc + libandroid-shmem + libexec/proot/loader
-  tmp/                   PROOT_TMP_DIR
-  distros/<id>/rootfs/   distro root filesystem
-  distros/<id>/.installed
-```
-
-### Mirrors & licensing
-
-- China-first: Aliyun for rootfs, official Termux for debs; on failure the list falls back to
-  the official CDNs. TUNA / USTC returned 403 to this host, so they are not used by default.
-- **Neither rootfs nor proot ships inside the APK**: the APK contains no third-party GPL
-  binary. proot is GPL-2.0 and each Termux package carries its own licence; the device fetches
-  them from upstream at install time.
-
-## 3. Agent integration
-
-Engine startup (`EngineConfig.buildEnv`) injects:
-
-| variable | value |
-|---|---|
-| `DSH_LINUX_HOME` | `<filesDir>/linux` |
-| `PROOT_LOADER` | `<home>/proot/libexec/proot/loader` |
-| `PROOT_TMP_DIR` | `<home>/tmp` |
-| `PROOT_NO_SECCOMP` | `1` |
-| `DSH_LINUX_DEFAULT` | first installed distro id |
-
-`<home>/proot/bin` is prepended to PATH and `<home>/proot/lib` appended to
-LD_LIBRARY_PATH. The `linux` gate is deployed from `assets/gates/linux` into `engine/bin/`:
-
-```
-linux list                  # installed distros, one per line
-linux status [id]           # rootfs path / proot readiness
-linux run <id> <cmd...>     # run inside the distro (streams stdout/stderr, returns guest exit code)
-linux shell <id> [cmd]      # login shell (interactive use)
-linux exec <cmd...>         # run on the default distro
-linux path <id>            # print the rootfs path
-```
-
-Examples:
-
-```sh
-linux exec "uname -a && cat /etc/os-release"
-linux run ubuntu "apt-get update && apt-get install -y jq"
-```
-
-`AgentContextSeed.kt` gained a "Linux environment" section: when to use it, that installing
-a distro is a **user** action, and that the bionic toolchain stays the default. The agent is
-explicitly told not to fetch rootfs images itself.
-
-## 6. Measured evidence (emulator, 2026-10-18)
+## 2. Measured evidence (emulator, 2026-10-18)
 
 Android 14 (API 34) x86_64 AVD `dsh36`, KVM; debug APK with the bundled x86_64 runtime.zip (160 MB).
 
@@ -205,77 +97,26 @@ Android 14 (API 34) x86_64 AVD `dsh36`, KVM; debug APK with the bundled x86_64 r
 | Alternate screen | `CSI ?1049h` shows only the ALT content; the main screen is restored afterwards |
 | Input | IME works; `adb shell input text` (hardware-key path via unicodeChar) works; extra-keys row scrolls to KBD |
 | KBD key | `dumpsys input_method` `mInputShown`: true → false after tapping |
-| Sessions | tab strip `Android \| Alpine Linux \| Ubuntu Base`, switch + create |
-| Distro install | Alpine (3.5 MB) and Ubuntu (30 MB) both finished in <10 s (Aliyun mirror) |
-| `linux` gate | `linux list` → `alpine`/`ubuntu`; `linux status` prints distro/installed/rootfs/proot/default |
-| Agent path | `linux exec uname -a` → `Linux localhost 6.1.23-android14-… x86_64 Linux` |
-| Ubuntu session | `/bin/ls /` lists the guest rootfs; `echo $PATH` is the guest PATH; `apt --version` → `apt 2.8.3 (amd64)` |
 
-### arm64 device re-test (Redmi K40 / Android 16 / LineageOS, 2026-10-18)
+### One issue found and fixed
 
-The same code on a real arm64 phone:
+**Printable input**: `adb shell input text` / hardware keyboards deliver `KeyEvent`s, not IME
+`commitText`; those characters were dropped. Now taken from `event.unicodeChar` and
+`ACTION_MULTIPLE`'s `characters`.
 
-| Check | Result |
-|---|---|
-| Build | `assembleDebug -Pabi=arm64-v8a` (light APK without runtime.zip, 23 MB) |
-| Install | Alpine installed in 16 s |
-| Alpine session | `uname -a` → `Linux localhost 4.19.325-cip131-… aarch64 Linux`; `ls /` works (no fork error) |
-| Package manager | `apk update` hits `mirrors.aliyun.com` (the mirror we configure) → `OK: 24059 distinct packages available` |
-| ABI handling | the x86_64 Alpine warning is absent on the phone; distro order keeps Alpine first |
+## 3. Limits
 
-This confirms the hypothesis that the x86_64 fork limitation does not affect phones:
-arm64 has no `fork` syscall (musl always uses `clone`), so Android's seccomp policy
-does not block it.
-
-### Two issues found and fixed
-
-1. **Duplicate guest env keys**: interactive sessions previously concatenated `guestEnv` + `hostEnv`, both carrying `PATH=`; the guest ended up with the host `/system/bin:/system/xbin` (`ls: command not found`). Now the guest env is rebuilt with `env -i` inside the guest, so host variables no longer leak.
-2. **Printable input**: `adb shell input text` / hardware keyboards deliver `KeyEvent`s, not IME `commitText`; those characters were dropped. Now taken from `event.unicodeChar` and `ACTION_MULTIPLE`'s `characters`.
-
-### Alpine on x86_64 emulators (important)
-
-Alpine installs and its shell starts, but **every external command** fails with
-`can't fork: Function not implemented`. The proot log pinpoints it:
-
-```
-proot info: vpid 1: seccomp SIGSYS: fork(...) = 0x39
-```
-
-On x86_64, musl implements `fork()` with the `fork(2)` syscall, which Android's app seccomp
-policy kills with SIGSYS (proot turns it into ENOSYS). **arm64 has no fork syscall** (musl
-always uses `clone`), so real phones are unaffected; glibc's Ubuntu Base uses `clone` and
-works on x86_64. The app compensates: on x86_64 the distro list puts Ubuntu first and the
-Alpine card shows this note.
-
-## 4. Limits
-
-- **No systemd / D-Bus / GUI** inside the container: processes and files only; run services
-  as foreground processes.
-- **Fake root is not root**: `-0` makes `id` print 0, but the underlying uid is still the
-  app's; device-level privileges, mounts and raw sockets remain unavailable (switch the
-  privilege mode for that).
-- **Overhead**: proot translates paths via ptrace; IO-heavy builds are noticeably slower than
-  the native bionic toolchain. Interactive commands are imperceptible.
-- **Disk**: Alpine ≈ 40 MB, Ubuntu ≈ 130 MB unpacked; the UI shows the size before installing.
-- **seccomp**: some syscalls are filtered on Android (hence `PROOT_NO_SECCOMP=1`); a rare
-  program may still abort.
-- **Uninstalling the app removes the rootfs** (it lives in private `filesDir`). Back it up if
-  you need it long-term.
 - **Resize does not reflow**: content is preserved and cropped/padded (same as most mobile
   terminals).
 
-## 5. Troubleshooting
+## 4. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `bash: not found` in the terminal | engine runtime not installed; the title shows `Android (toybox)` fallback |
-| `linux: proot not installed` | install any distro from the Linux environment page (it also installs the proot payload) |
-| no network inside the distro | check that `/etc/resolv.conf` was not overwritten; the app already holds INTERNET |
-| `apt` says `Release file ... not valid yet` | device clock is wrong; proot shares the host clock |
-| install stuck at 0% | mirror unreachable; retry on another network — install is idempotent (temp dir + atomic publish) |
 | garbled output | `TERM=xterm-256color` is injected automatically; check the remote program's terminfo |
 
-## 7. Rebuilding the runtime under the app's own package name (added 2026-10-18)
+## 5. Rebuilding the runtime under the app's own package name (added 2026-10-18)
 
 ### Why
 
@@ -370,7 +211,7 @@ favour of plain `bash -i`.
 - the script overlays rebuilt packages onto a collected base runtime; it does not build
   all 19 packages from scratch.
 
-## 8. Runtime hot-update: pulled by **dsh version** (added 2026-10-18, semantics fixed same day)
+## 6. Runtime hot-update: pulled by **dsh version** (added 2026-10-18, semantics fixed same day)
 
 ### Three different "versions" (the first cut conflated them)
 
@@ -481,7 +322,7 @@ of `pull --apply`).
 - it is still a runtime-only update: the APK, `dsh-home`, `workspaces` and sessions are
   untouched.
 
-## 9. WebUI sidebar terminal (node-pty bridge, added 2026-10-18)
+## 7. WebUI sidebar terminal (node-pty bridge, added 2026-10-18)
 
 ### Symptom
 
@@ -560,7 +401,7 @@ completion).
   effect, `kill('SIGKILL')` produced `exit {exitCode:0, signal:'SIGKILL'}`;
 - the app's own TerminalActivity still works; both share the PTY table without interference.
 
-## 10. The native runtime is not Termux: why `pkg` / `apt` do not work (added 2026-10-18)
+## 8. The native runtime is not Termux: why `pkg` / `apt` do not work (added 2026-10-18)
 
 ### In one line
 
@@ -584,7 +425,7 @@ work here.
    tree would put everything in the wrong place — the same issue that forced us to
    rebuild bash under the app's package name.
 
-### The two working ways to install software
+### The working way to install software
 
 **① Native extensions (the `pkg install` equivalent)**
 
@@ -606,21 +447,9 @@ Measured: `pkg install archivers` finished in **8.7 s** (download + unpack + act
 `pkg list/search/state` all work. A new shell (or an engine restart) is needed before the
 new bin/ shows up in PATH.
 
-**② A real distro package manager (apk / apt)**
-
-For dependency resolution and system-level tooling, use the proot Linux environment:
-
-```
-linux shell alpine        # inside: apk update && apk add python3
-linux run alpine apk --version
-linux shell ubuntu        # inside: apt update && apt install ...
-```
-
-Measured: `apk-tools 2.14.4 (aarch64)` runs fine inside Alpine.
-
 ### A real regression fixed along the way: rebuilt bash `test -x` was always false
 
-While investigating the `linux` gate's `proot: missing` report we found that our rebuilt
+While investigating a gate script we found that our rebuilt
 bash 5.3.20 returns **false for `[ -x <any file> ]`** (even `/system/bin/sh`), while
 `[ -e ]` works.
 
@@ -628,21 +457,22 @@ bash 5.3.20 returns **false for `[ -x <any file> ]`** (even `/system/bin/sh`), w
   `sh_eaccess()` uses **only** `faccessat(AT_EACCESS)` when configure detects
   `HAVE_FACCESSAT && AT_EACCESS` → every check fails.
 - Impact: every script using `[ -x ]` (gates, user build scripts) silently takes the wrong
-  branch; the `linux` gate therefore mis-reported a missing proot.
+  branch.
 - Fix: build with `ac_cv_func_faccessat=no` so bash falls back to `access(2)`; documented
   in `scripts/build-runtime-app-prefix.sh`. On the rebuilt runtime
-  `v1.3.2-app-prefix-arm64`, `[ -x ]` and `[ -x /system/bin/sh ]` behave correctly and
-  `linux status` reports `proot: ok` again.
+  `v1.3.2-app-prefix-arm64`, `[ -x ]` and `[ -x /system/bin/sh ]` behave correctly.
 
 ### Cheat sheet
 
 | Need | Use |
 |---|---|
 | python / git / ffmpeg etc. | `pkg install python` (app extension, prefix rewritten) |
-| real apt/apk dependency resolution and distro tooling | `linux shell alpine` / `linux shell ubuntu` |
 | copy Termux's `pkg`/`apt` over | ❌ prefix and dpkg database do not match; not feasible |
 
-## 11. A real package manager on the native runtime: dpkg + the Termux repository (added 2026-10-18)
+> 2026-10-28: the proot Linux subsystem is gone, so the `linux shell` route no longer
+> exists; use Termux-side extensions or bring your own environment when you need glibc/apt.
+
+## 9. A real package manager on the native runtime: dpkg + the Termux repository (added 2026-10-18)
 
 > The previous section explained why `apt`/`pkg` cannot work on the native runtime.
 > This section is the fix: cross-compile Termux's `dpkg` and `proot` under this app's
@@ -721,7 +551,7 @@ termux-keyring and ten-odd other packages and has not been cross-compiled yet. T
 `install/remove/list/search/info` already work. The apt layer (full version solving,
 `apt upgrade`, release signature verification) is the next step.
 
-## 12. Package name switched to `com.termux`: a full Termux environment plus the bundled adapted engine (2026-10-18)
+## 10. Package name switched to `com.termux`: a full Termux environment plus the bundled adapted engine (2026-10-18)
 
 ### Why change the package name
 
@@ -776,10 +606,9 @@ Fixes:
 pkg install vim          # native Termux apt (no proot, no rewriting)
 apt update && apt upgrade
 dsh-update status        # bundled engine version (engine upgrades with the APK)
-linux shell alpine       # distros still run under proot, independent of the Termux prefix
 ```
 
-## 13. dsh-update: engine-layer hot updates (restored 2026-10-18, verified on device)
+## 11. dsh-update: engine-layer hot updates (restored 2026-10-18, verified on device)
 
 After the rename to `com.termux` the runtime has two layers (previous section).
 **Hot update replaces only the engine layer**:

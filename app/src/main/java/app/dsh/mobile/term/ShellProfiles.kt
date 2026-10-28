@@ -3,18 +3,17 @@ package app.dsh.mobile.term
 import android.content.Context
 import app.dsh.mobile.engine.EngineConfig
 import app.dsh.mobile.engine.ShellSpec
-import app.dsh.mobile.linux.LinuxEnv
 import java.io.File
 
 /**
  * 会话「配方」工厂：把用户选择的 profile 翻译成一条 [ShellSpec]。
  *
- * 两类 profile（2026-10-18 终端功能）：
- *  - **Android 侧**：直接跑引擎自带的 bash（`engine/bin/bash`）——与 AI 的 shell
- *    工具**同一个环境**（PATH/LD_LIBRARY_PATH/PREFIX 全部来自 [EngineConfig.buildEnv]），
- *    所以终端里能直接 `node`、`git`、`python3`（装了扩展的话），所见即 AI 所得。
- *    引擎运行时尚未安装时回落到 `/system/bin/sh`（toybox），至少能用。
- *  - **Linux 侧**：proot 起的发行版 rootfs（Alpine/Ubuntu），见 [LinuxEnv]。
+ * 会话直接跑引擎自带的 bash（`engine/bin/bash`）——与 AI 的 shell 工具**同一个环境**
+ * （PATH/LD_LIBRARY_PATH/PREFIX 全部来自 [EngineConfig.buildEnv]），所以终端里能直接
+ * `node`、`git`、`python3`（装了扩展的话），所见即 AI 所得。引擎运行时尚未安装时回落
+ * 到 `/system/bin/sh`（toybox），至少能用。
+ *
+ * 注：proot / Linux 发行版 profile 已于 2026-10-28 移除。
  *
  * 为什么终端环境要完全复用 buildEnv 而不是自己拼 PATH：
  * 项目已经在 EngineConfig 里踩平了十几个硬编码路径坑（GIT_EXEC_PATH、PYTHONHOME、
@@ -27,8 +26,6 @@ object ShellProfiles {
     data class Profile(
         val id: String,
         val title: String,
-        val kind: ShellSpec.Kind,
-        val distroId: String? = null,
     )
 
     const val ID_ANDROID = "android"
@@ -67,7 +64,6 @@ object ShellProfiles {
                 cwd = cwd,
                 env = engineEnv + extra,
                 title = "Android (zsh)",
-                kind = ShellSpec.Kind.ANDROID,
             )
         }
         val spec = if (bash.isFile && bash.canExecute()) {
@@ -81,7 +77,6 @@ object ShellProfiles {
                 cwd = cwd,
                 env = engineEnv + extra,
                 title = "Android",
-                kind = ShellSpec.Kind.ANDROID,
             )
         } else {
             ShellSpec(
@@ -100,33 +95,19 @@ object ShellProfiles {
                     "PS1=\$ ",
                 ) + extra.filterNot { it.startsWith("PS1=" ) },
                 title = "Android (toybox)",
-                kind = ShellSpec.Kind.ANDROID,
             )
         }
         return spec
     }
 
-    /** Linux 发行版会话；未安装或 proot 缺失时返回 null */
-    fun linuxSpec(ctx: Context, distroId: String): ShellSpec? =
-        LinuxEnv.shellSpec(ctx, distroId, interactive = true)
+    /** 当前可用的 profile 列表（只剩 Android 侧一种） */
+    fun profiles(ctx: Context): List<Profile> = listOf(Profile(ID_ANDROID, "Android"))
 
-    /** 当前可用的 profile 列表（Android 恒有；Linux 仅列已安装的发行版） */
-    fun profiles(ctx: Context): List<Profile> {
-        val list = mutableListOf(Profile(ID_ANDROID, "Android", ShellSpec.Kind.ANDROID))
-        runCatching {
-            LinuxEnv.installedIds(ctx).forEach { id ->
-                val d = LinuxEnv.distros().firstOrNull { it.id == id }
-                if (d != null) {
-                    list += Profile(id, d.name, ShellSpec.Kind.LINUX, id)
-                }
-            }
-        }
-        return list
-    }
-
-    /** 按 profile id 取 spec；找不到返回 null */
-    fun specFor(ctx: Context, profileId: String): ShellSpec? = when (profileId) {
-        ID_ANDROID -> androidSpec(ctx)
-        else -> linuxSpec(ctx, profileId)
-    }
+    /**
+     * 按 profile id 取 spec。
+     *
+     * 旧版本可能把 `alpine`/`ubuntu` 之类的 id 存进 SharedPreferences，
+     * 现在一律回落到 Android 会话，避免升级后终端打不开。
+     */
+    fun specFor(ctx: Context, profileId: String): ShellSpec = androidSpec(ctx)
 }

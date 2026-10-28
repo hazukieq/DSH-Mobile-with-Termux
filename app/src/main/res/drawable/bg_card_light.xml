@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置页浅色分组卡片（v2.5.42）：白底 + 大圆角，与深色 bg_card 分开维护。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#FFFFFFFF" />
+    <corners android:radius="18dp" />
+</shape>

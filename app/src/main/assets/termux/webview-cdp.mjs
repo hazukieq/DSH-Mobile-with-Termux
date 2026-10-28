@@ -997,7 +997,7 @@ function cmdUi(args) {
     },
     ambiguous: {
       '设置': ['web: account menu -> 设置 (overlay, URL unchanged)', 'native: top-bar gear -> Android SettingsActivity'],
-      '插件': ['web: drawer -> 插件 / 插件市场', 'native: Settings -> plugin centre'],
+      '插件': ['web: drawer -> 插件（已安装 / 插件市场 两个 tab；市场由内置 dshmarket 插件提供）'],
       '终端': ['native terminal activity', 'engine right-pane terminal (PTY)'],
     },
     rule: 'If the layer is ambiguous (native / web / terminal), ask the user which one before trying more than two steps; never assume `am start` or GET /settings works.',

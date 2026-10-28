@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v69 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v73 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -37,10 +37,9 @@ Engine WebUI listens on `127.0.0.1:3080` (token-gated). Android native side adds
 | `notify [msg]` | system notification (use when a long task finishes) |
 | `scr dump` / `scr tap x y` / `scr tap-text text` | read UI hierarchy; tap by coordinates or text (needs the accessibility service) |
 | `say text` | speak through Android TTS |
-| `psx` / `killx` | list processes / kill by process name safely (does not match your own command line) |
+| `pgrep -x` / `pkill -x` | list / kill by process name (Termux bootstrap; `psx`/`killx` were removed in 2.5.42) |
 | `loop` | screen-action loop helper (`loop --help`) |
 | `fast on/off` | per-step "no thinking" mode while driving the UI |
-| `linux ...` | run commands inside an installed proot distro (Alpine/Ubuntu) |
 | `dsh-update check|pull|apply` | hot-update the dsh engine layer (not the APK) |
 | `trash-cli list|restore <kw|idx>|empty` | recover files deleted from `/sdcard` |
 
@@ -57,7 +56,7 @@ rest of the app must keep working when it is off. Full classification: `docs/A11
 reason; `GET /interference` is in the same gate set):
 
 - read the UI tree: `GET /screen`, `GET /screen-changed`, `GET /diff`, `GET /scene`,
-  `POST /wait`, `POST /wait-text`, `POST /idle`, `GET /interference` (`scr dump`,
+  `POST /wait` (`/wait-text` is an alias of it), `POST /idle`, `GET /interference` (`scr dump`,
   `scr changed`, `scr idle`, `scr find`, `scr interference`);
 - inject input: `POST /tap`, `POST /tap-id`, `POST /gesture`, `POST /key`, `POST /input`,
   `POST /scroll-find`, `POST /scroll-center`, `POST /scroll-edge`, `POST /pick`,
@@ -117,7 +116,7 @@ Groups (see the actual handlers for params):
 
 - Screen/UI: `GET /screen`, `/screen-changed`, `/frame-diff`, `/diff`, `/screenshot`, `/ocr`,
   `POST /tap`, `/tap-id`, `/gesture`, `/key`, `/input`, `/scroll-find`, `/scroll-center`,
-  `/scroll-edge`, `/wait`, `/wait-text`, `/idle`, `/interference`, `/launch`, `/launch-intent`,
+  `/scroll-edge`, `/wait` (`/wait-text` alias), `/idle`, `/interference`, `/launch`, `/launch-intent`,
   `/open`, `/wait-app`, `/batch`, `/loop/run`, `/pick`. `POST /launch` and `/launch-intent` accept
   `{"component":"pkg/cls"}` (plus optional `action`, `data`, `extras`); a missing component returns
   `{"ok":false,"error":"component not found: ..."}`, and a successful component start is flagged
@@ -165,7 +164,7 @@ overrides everything. `dsh-mobile cdp status` prints the flag state, the app pro
 discovery source (`via bridge|proc|scan|env`) and the devtools targets.
 Renderer console errors also land in logcat under the `chromium` tag (`[INFO:CONSOLE]`).
 
-### Screenshots, recording and alarms
+### Screenshots and recording
 
 - **App-internal screenshot (native)**: `appshot [--max N] [--out /path.png]` or
   `dsh-mobile appshot [out.png] [max]`. Kotlin-side `PixelCopy` captures the DSH Mobile window
@@ -175,10 +174,11 @@ Renderer console errors also land in logcat under the `chromium` tag (`[INFO:CON
   they can come out blank or stale.
 - **System screenshot** (whole screen, incl. status bar and other apps): `shot --out /path.png`.
   Uses the accessibility service; without it the gate explains what to enable.
-- **Screen recording**: `record start 60 /sdcard/Movies/demo.mp4`, `record stop`, `record status`.
-  `screenrecord` runs as shell/root, so this needs ROOT or SHIZUKU privilege mode; NORMAL mode
-  exits 3 with an explanation.
-- **Alarms/timers**: `alarm 07:30 "standup"`, `alarm timer 600 "tea"`, `alarm show`; standard
+- **Screen recording (privileged only)**: `record start 60 /sdcard/Movies/demo.mp4`, `record stop`,
+  `record status`. The gate is only deployed in ROOT / SHIZUKU mode (`screenrecord` needs shell
+  uid); in NORMAL mode the command does not exist at all — do not probe for it, use `shot` instead.
+- **Shell tap (privileged only)**: `scr tap --shell <x> <y>` likewise only exists in
+  ROOT / SHIZUKU mode; in NORMAL mode it exits 3 with an explanation.
   AlarmClock intents, retried through `shz` when background activity start is blocked.
 
 ## Native control / debug API (app internals for agents)
@@ -352,6 +352,10 @@ come back:
   `null` with an explanatory `hint`. **Launching another app never required accessibility** -
   `startActivity` is an ordinary API; the a11y service is only an *observer* of other apps'
   foreground state (Android exposes no other way to read that for third-party packages).
+- **Payment links are launch-only.** `weixin://wxpay/…`, `alipays://…` and `https://*.alipay.com`
+  links may land on the pay page, on the app home, or nowhere useful - the OS and the target app
+  decide. `/open` only guarantees "the app was started". Never try to verify, scroll or click inside
+  WeChat/Alipay to reach a payment screen; hand off, then `wait-app` for the user's return.
 - `wait-app` bodies: `{"package":"com.termux","until":"==","timeoutMs":60000}` (this app's package is
   `com.termux`, not `app.dsh.mobile` - that is only the Kotlin namespace); `until:"!="`
   waits for the app to leave (e.g. the user closed WeChat). Timeout is a 408 with the last known
@@ -416,7 +420,7 @@ The mobile UI replaces the engine app bar: the engine's own "打开侧边栏" bu
 (x ≈ -308) and must not be clicked. Use the mobile-ui app bar and real pointer events.
 
 1. Open the drawer: `dsh-mobile cdp click 'button[aria-label="菜单"]'` (top-left, aria-label 菜单).
-2. Drawer entries are buttons with these aria-labels: `新建会话`, `插件`, `插件市场`,
+2. Drawer entries are buttons with these aria-labels: `新建会话`, `插件`,
    `自动化任务`, `记忆系统`, `搜索会话`, `视图选项`, `添加工作区`; the account menu is
    `button[aria-label="账号菜单"]` near the bottom of the drawer.
 3. Click the account menu, then a menu item (they are `[role=menuitem]`):
@@ -463,7 +467,7 @@ Rules for reliable WebUI automation:
 - **Native terminal activity**: back arrow + title, `+` for a new session, menu; a tab strip when
   several sessions exist; the extra-key row (`ESC TAB CTRL ALT SHIFT ^C ^D ...`, sticky modifiers
   apply to the next input); `exit` closes its tab and the last tab asks whether to exit the app.
-- **First launch**: onboarding flow (language, permission mode, optional Linux userland), then the
+- **First launch**: onboarding flow (language, permission mode), then the
   engine boots and the Web UI appears behind the toolbar.
 
 ## Privilege modes and limits

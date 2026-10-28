@@ -14,7 +14,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import app.dsh.mobile.R
-import app.dsh.mobile.linux.LinuxEnvActivity
 
 /**
  * 终端页：一台手机上的「真终端」。
@@ -29,9 +28,10 @@ import app.dsh.mobile.linux.LinuxEnvActivity
  *
  * 入口：
  *  - 设置页 →「终端」；
- *  - 桌面图标（manifest 里 TerminalActivity 也注册了 LAUNCHER，作为独立终端 App）；
- *  - 意图带 `profile`（如 `alpine`）或 `distro` 直接进某个 Linux 发行版；
- *  - Linux 环境页的「打开终端」。
+ *  - 桌面图标（manifest 里 TerminalActivity 也注册了 LAUNCHER，作为独立终端 App）。
+ *
+ * 注：proot / Linux 发行版（含 `profile`/`distro` 意图、Linux 环境页入口）
+ * 已于 2026-10-28 移除，现在只会开 Android 侧会话。
  */
 class TerminalActivity : Activity() {
 
@@ -75,25 +75,14 @@ class TerminalActivity : Activity() {
         applyDisplayPrefs()
         wireTopBar()
 
-        val wanted = intent.getStringExtra(EXTRA_PROFILE)
-            ?: intent.getStringExtra(EXTRA_DISTRO)
-            ?: prefs.getString(KEY_LAST_PROFILE, ShellProfiles.ID_ANDROID)
-        openSession(wanted ?: ShellProfiles.ID_ANDROID)
-    }
-
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        val wanted = intent?.getStringExtra(EXTRA_PROFILE)
-            ?: intent?.getStringExtra(EXTRA_DISTRO)
-            ?: return
-        openSession(wanted)
+        openSession()
     }
 
     // ── UI 装配 ────────────────────────────────────────────────────────────
 
     private fun wireTopBar() {
         findViewById<android.widget.ImageView>(R.id.btnTermBack).setOnClickListener { onBack() }
-        findViewById<TextView>(R.id.btnTermNew).setOnClickListener { chooseShell() }
+        findViewById<TextView>(R.id.btnTermNew).setOnClickListener { openSession() }
         findViewById<TextView>(R.id.btnTermMenu).setOnClickListener { showMenu() }
     }
 
@@ -105,14 +94,8 @@ class TerminalActivity : Activity() {
 
     // ── 会话 ───────────────────────────────────────────────────────────────
 
-    private fun openSession(profileId: String) {
-        var spec = ShellProfiles.specFor(this, profileId)
-        if (spec == null) {
-            // Linux 发行版未安装 / proot 缺失：明确告知并回落到 Android 环境，
-            // 而不是静默给个空终端（用户会以为程序坏了）
-            toast(getString(R.string.terminal_profile_unavailable, profileId))
-            spec = ShellProfiles.androidSpec(this)
-        }
+    private fun openSession() {
+        val spec = ShellProfiles.androidSpec(this)
         val rows = if (termView.termRows > 0) termView.termRows else 24
         val cols = if (termView.termCols > 0) termView.termCols else 80
         val session = runCatching { TerminalSessions.create(spec, rows, cols) }.getOrNull()
@@ -128,7 +111,6 @@ class TerminalActivity : Activity() {
         }
         session.emulator.onTitle = { t -> runOnUiThread { if (active === session) tvTitle.text = t } }
         sessions += session
-        prefs.edit().putString(KEY_LAST_PROFILE, profileId).apply()
         attach(session)
     }
 
@@ -202,7 +184,6 @@ class TerminalActivity : Activity() {
      *  - 新建终端：立刻开一个同样 profile 的新会话，避免停在空白页
      */
     private fun promptExitAfterLastSession() {
-        val lastProfile = prefs.getString(KEY_LAST_PROFILE, ShellProfiles.ID_ANDROID) ?: ShellProfiles.ID_ANDROID
         // 自绘弹窗（v1.3.13）：框架 AlertDialog 在部分 ROM（vivo/ColorOS）上会给
         // 按钮区叠一层半透明底，观感像「弹框透明」。这里整块内容都用实心背景，
         // 标题/正文/按钮全部自己画，窗口背景透明只留圆角实心卡片。
@@ -236,7 +217,7 @@ class TerminalActivity : Activity() {
             tv.setOnClickListener { dialog.dismiss(); onClick() }
             buttons.addView(tv)
         }
-        action(getString(R.string.terminal_exit_confirm_new)) { openSession(lastProfile) }
+        action(getString(R.string.terminal_exit_confirm_new)) { openSession() }
         action(getString(R.string.terminal_exit_confirm_exit)) {
             closeAllAndFinish()
             finishAffinity()
@@ -264,32 +245,13 @@ class TerminalActivity : Activity() {
 
     // ── 菜单 ───────────────────────────────────────────────────────────────
 
-    private fun shellItems(): List<Pair<String, () -> Unit>> {
-        val items = mutableListOf<Pair<String, () -> Unit>>()
-        ShellProfiles.profiles(this).forEach { p ->
-            items += p.title to { openSession(p.id) }
-        }
-        items += getString(R.string.terminal_linux_env) to {
-            startActivity(Intent(this, LinuxEnvActivity::class.java))
-        }
-        return items
-    }
-
-    private fun chooseShell() {
-        val items = shellItems()
-        AlertDialog.Builder(this)
-            .setTitle(R.string.terminal_choose_shell)
-            .setItems(items.map { it.first }.toTypedArray()) { _, i -> items[i].second() }
-            .show()
-    }
-
     private fun showMenu() {
         val labels = mutableListOf<String>()
         val actions = mutableListOf<() -> Unit>()
         fun add(label: Int, act: () -> Unit) {
             labels += getString(label); actions += act
         }
-        add(R.string.terminal_menu_new) { chooseShell() }
+        add(R.string.terminal_menu_new) { openSession() }
         add(R.string.terminal_menu_paste) { pasteFromClipboard() }
         add(R.string.terminal_menu_copy_all) { copyAll() }
         add(R.string.terminal_menu_font_up) { bumpFont(+1f) }
@@ -297,7 +259,6 @@ class TerminalActivity : Activity() {
         add(R.string.terminal_menu_scroll_bottom) { termView.scrollToBottom() }
         add(R.string.terminal_menu_close) { active?.let { confirmClose(it) } }
         if (sessions.size > 1) add(R.string.terminal_menu_close_all) { closeAllAndFinish() }
-        add(R.string.terminal_linux_env) { startActivity(Intent(this, LinuxEnvActivity::class.java)) }
         AlertDialog.Builder(this)
             .setTitle(R.string.terminal_menu)
             .setItems(labels.toTypedArray()) { _, i -> actions[i]() }
@@ -416,17 +377,11 @@ class TerminalActivity : Activity() {
     }
 
     companion object {
-        const val EXTRA_PROFILE = "profile"
-        const val EXTRA_DISTRO = "distro"
-        private const val KEY_LAST_PROFILE = "term_last_profile"
         private const val KEY_FONT_SP = "term_font_sp"
         private const val DEFAULT_FONT_SP = 11.5f
         private const val MIN_FONT_SP = 8f
         private const val MAX_FONT_SP = 26f
 
-        fun intent(ctx: Context, profileId: String? = null): Intent =
-            Intent(ctx, TerminalActivity::class.java).apply {
-                if (!profileId.isNullOrBlank()) putExtra(EXTRA_PROFILE, profileId)
-            }
+        fun intent(ctx: Context): Intent = Intent(ctx, TerminalActivity::class.java)
     }
 }

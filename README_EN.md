@@ -35,7 +35,7 @@ DSH Mobile is the **complete Android port of [DeepSeek Harness](https://github.c
 - ❌ **Not a self-built AI agent framework** — agent logic, plugin system, and context management all belong to DeepSeek Harness. This project is a **port**, not a replacement, and it does not compete with upstream
 - ❌ **Not an on-device LLM app** — no model weights, no local inference. Models are reached through the API endpoint you configure, exactly as with desktop dsh
 - ❌ **Not a phone-automation agent** — accessibility screen reading/tapping is **one of the tools** handed to the agent, not the product itself
-- ❌ **Not a container-first solution** — the Node.js runtime and the whole toolchain ship as native Android (bionic) binaries inside the APK: install and go, with no container to initialise. There *is* an **optional** Linux userland (Alpine / Ubuntu Base under proot) and a **native terminal**, downloaded on demand, for the glibc/apt cases the bionic snapshot cannot serve
+- ❌ **Not a container-first solution** — the Node.js runtime and the whole toolchain ship as native Android (bionic) binaries inside the APK: install and go, with no container to initialise. A **native terminal** runs the agent's own shell for hands-on work
 
 In one line: **looking for a way to run dsh on Android without Termux? This is it.**
 
@@ -55,12 +55,11 @@ The runtime and toolchain ship in the APK, so you can start the upstream dsh eng
 
 ## ✨ What It Can Do on a Phone
 
-**A real terminal, plus an optional Linux userland (2026-10-18)**
+**A real native terminal (2026-10-18)**
 The app ships a **native terminal** — VT100/xterm emulation over a real PTY, not a WebView wrapper: its own launcher icon, multiple sessions, 5000 rows of scrollback, CJK wide characters, 256/true colour, an extra-keys row (Esc / Ctrl / Tab / arrows / PgUp…), adjustable font size and whole-buffer copy. It starts in **the same environment the agent uses** (same PATH, same extension toolchain), so whatever the agent can run, you can type yourself.
 
-On top of that you can install a **Linux userland**: an Alpine or Ubuntu Base rootfs run through `proot` as fake root — `apk` / `apt` work, glibc binaries run, and `sshd`-style or build workloads stop hitting hard-coded Termux prefixes. The rootfs and proot are **fetched on demand from official/China mirrors** (never redistributed inside the APK), and the terminal opens into them with one tap.
-
-The agent gets the same door: the `linux run <distro> <cmd>` gate executes a command inside the distro and returns its real exit code and output, while `linux list / status / exec / shell` cover management and the default distro. The split is deliberate — keep using the bionic toolchain for everyday work (zero download), step into Linux only when glibc/apt is the actual blocker.
+> Changed 2026-10-28: the optional proot/Linux-distro userland was removed from the app.
+> The native terminal stays; there are no Alpine/Ubuntu sessions and no `linux` gate any more.
 
 
 **Run the full Agent engine on your phone**
@@ -116,7 +115,7 @@ Every capability has its own document (design trade-offs, measured numbers, trou
 | [LAN WebUI](docs/LAN_WEBUI.en.md) | reverse proxy, 6-digit code, persistent reminder and stop chain |
 | [Notifications & background](docs/NOTIFICATIONS.en.md) | AI progress, task completion, LAN reminder, clean exit |
 | [Fast-path picker](docs/FAST_PATH_PICKER.md) | on-device UI element selection and discrimination |
-| [Terminal + Linux environment](docs/TERMINAL_AND_LINUX.en.md) | native PTY/VT100 terminal, proot distro install, the `linux` gate and dsh integration |
+| [Native terminal](docs/TERMINAL_AND_LINUX.en.md) | native PTY/VT100 terminal running the same environment as the agent |
 
 ## ⛔ Limits (please be aware)
 

@@ -167,10 +167,6 @@ class MainActivity : Activity() {
         // 把手：可拖到屏幕边缘任意位置（避让遮挡）；移动距离小于阈值视为点击唤回工具栏
         setupHandleBar()
 
-        // 语音输入（v1.2.65）：麦克风入口已移交无障碍服务（不再依赖本 Activity 存活）；
-        // 这里只注册「把文字送进 WebUI」的能力，供服务侧识别完成后调用。
-        VoiceBridge.registerSender { text -> sendVoiceText(text) }
-
         val app = application as DshApp
         // v1.2.187/188：用户从通知栏「退出」→ 结束界面并销毁 WebView，释放 ~380MB。
         // 用回调而不是"标记位"：Activity 不在时回调为 null，不会留下残留状态
@@ -1044,118 +1040,6 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
-    // ==================== 语音输入（v1.2.58 起，v1.2.65 移交服务托管） ====================
-    //
-    // 麦克风入口、识别编排、输入面板都在 DshAccessibilityService 侧
-    // （见其 startVoiceInput / VoicePanel）—— 因为它们需要 TYPE_ACCESSIBILITY_OVERLAY
-    // 窗口，且不应依赖本 Activity 存活。
-    // 本 Activity 只负责两件事：
-    //   ① 注册「把文字送进 WebUI 输入框」的能力（VoiceBridge.registerSender）
-    //   ② 用户从主界面发起语音时申请麦克风权限（onRequestPermissionsResult 回调里
-    //      转交服务；requestPermissions 是 Activity 才能做的事）
-
-    /**
-     * 发送语音文本：写进 WebUI 输入框并触发发送。
-     * 走 DOM 注入（而非引擎 API），因为要复用前端既有的发送流程。
-     */
-    /**
-     * 发送语音文本：写进 WebUI 输入框并触发发送。
-     *
-     * ⚠️ v1.2.65：按**实际结果**反馈，不再无条件弹「已发送」——
-     * 旧版注入失败（如停在首页无会话）也报成功，用户实测「实际无作用」却看到「已发送」。
-     *  · ok:*            → 已发送
-     *  · entering-session→ 已在进入会话，稍后自动重发一次
-     *  · no-input-found  → 明确提示「当前没有可发送的会话」
-     *  · err:*           → 报具体错误
-     */
-    /**
-     * 发送去重守卫（v1.2.90）。
-     *
-     * 🔴 主人实测「语音输入还是一次性复制两段发出去」。
-     * 除了面板按钮的 consumed 守卫，这里再按**文本内容 + 时间窗**兜一层：
-     * 相同文本在 [DEDUP_WINDOW_MS] 内只允许发送一次。
-     *
-     * 为什么需要两层：重复可能来自不同入口（面板按钮重复触发、服务回调重入、
-     * 重试路径），单堵一处不够。这一层是**最终防线**，且对"用户真的想连说两遍
-     * 同样的话"影响很小（1.5 秒内几乎不可能刻意重复）。
-     */
-    @Volatile private var lastSentText: String = ""
-    @Volatile private var lastSentAt: Long = 0L
-
-    private fun sendVoiceText(text: String) {
-        val now = System.currentTimeMillis()
-        if (text == lastSentText && now - lastSentAt < DEDUP_WINDOW_MS) {
-            logWebView("voice send deduped: '$text' within ${now - lastSentAt}ms")
-            return
-        }
-        lastSentText = text
-        lastSentAt = now
-        sendVoiceTextOnce(text, allowRetry = true)
-    }
-
-    private fun sendVoiceTextOnce(text: String, allowRetry: Boolean) {
-        val js = buildVoiceInputJs(text)
-        webView.evaluateJavascript(js) { raw ->
-            val result = jsResult(raw)
-            logWebView("voice send: $result")
-            when {
-                result.startsWith("ok:") -> {
-                    // v1.2.95：写入（paste）后先**校验是否真的落了地**再提交。
-                    // Lexical 等框架编辑器对合成 paste 的处理是异步的，且对
-                    // execCommand 会翻倍 —— 所以不能在 JS 里同步回退，改由
-                    // Kotlin 在 FIRE_DELAY_MS 后读框内容分派：
-                    //   · 框里 == 发送文本 → paste 成功 → 提交
-                    //   · 框里 != 文本     → paste 无效 → repair（execCommand）
-                    webView.postDelayed({ verifyWriteThenFire(text) }, FIRE_DELAY_MS)
-                }
-                result == "entering-session" && allowRetry -> {
-                    // 刚从首页点进会话：等 UI 渲染出输入框后重试一次。
-                    //
-                    // ⚠️ v1.2.94：重写前必须确认输入框里**没有我们那段文字**。
-                    // 旧版只判断"框里有没有字"，而"有字"既可能是「上次没写进去」，
-                    // 也可能是「上次写进去了、前端正在提交但还没清空」——
-                    // 后者会让我们把同一句话再写一遍 → 主人实测的「两段」。
-                    //
-                    // 现在按**文本内容**比对：只有框里既非空、又不是我们刚发的那段
-                    // （= 用户自己打的字），才放弃重写；否则按情况重写或补提交。
-                    Toast.makeText(this, getString(R.string.voice_opening_session), Toast.LENGTH_SHORT).show()
-                    webView.postDelayed({
-                        readSendText { inBox ->
-                            when {
-                                inBox == text -> {
-                                    // 正是我们那段、还躺在框里 → 补一次提交（令牌在写入时已发放）
-                                    logWebView("retry: our text still in box, submitting it")
-                                    fireSendKey()
-                                    webView.postDelayed({ pollSendVal(text, attempt = 0) }, POLL_MS)
-                                }
-                                inBox.isNotEmpty() -> {
-                                    // 是别的文字（用户自己打的）→ 绝不覆盖、绝不提交
-                                    logWebView("retry skipped: box has unrelated text, leaving it alone")
-                                    reportVoiceTarget("")
-                                }
-                                else -> {
-                                    // 框是空的 → 上次确实没写进去，安全重写
-                                    sendVoiceTextOnce(text, allowRetry = false)
-                                }
-                            }
-                        }
-                    }, 1_500L)
-                }
-                result == "entering-session" -> {
-                    Toast.makeText(this, getString(R.string.voice_session_timeout), Toast.LENGTH_LONG).show()
-                }
-                result == "no-input-found" -> {
-                    Toast.makeText(this, getString(R.string.voice_no_session), Toast.LENGTH_LONG).show()
-                }
-                else -> {
-                    Toast.makeText(
-                        this, getString(R.string.voice_send_failed, result), Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }
-    }
-
     /**
      * Web 内核版本门禁（v1.2.100）。
      *
@@ -1264,17 +1148,10 @@ class MainActivity : Activity() {
         return 0
     }
 
-    /** evaluateJavascript 的返回值带 JSON 引号与转义，统一清一遍 */
-    private fun jsResult(raw: String?): String =
-        raw?.trim('"')?.replace("\\u003d", "=")?.replace("\\", "") ?: ""
-
     /**
      * 解析 `evaluateJavascript` 返回的**字符串值**（v1.2.94）。
      *
-     * ⚠️ 不能复用 [jsResult]：它会把所有反斜杠删掉（那是为状态标记这种
-     * 纯 ASCII 短串设计的）。用来比对用户文本时，反斜杠/引号会被破坏，
-     * 导致"文字相同却判为不同" → 重写一遍 → 又是「两段」。
-     * 这里用 JSON 解析，完整保留原字符。
+     * 用 JSON 解析，完整保留反斜杠/引号等原字符（供文本比对使用）。
      */
     private fun jsString(raw: String?): String = runCatching {
         val s = raw?.trim().orEmpty()
@@ -1283,73 +1160,9 @@ class MainActivity : Activity() {
     }.getOrDefault(raw?.trim('"').orEmpty())
 
     /**
-     * 提交输入框内容：调用 JS 里的**同步钩子** `__dshFire()`。
-     *
-     * 钩子本身不排任何定时器 —— 谁调用它、什么时候调用，由 Android 侧决定。
-     * JS 端带 1.5 秒节流窗与空框守卫，重复调用不会造成重复发送。
-     */
-    private fun fireSendKey() {
-        webView.evaluateJavascript("(window.__dshFire && window.__dshFire()) || 'no-hook'") { raw ->
-            logWebView("voice fire: ${jsResult(raw)}")
-        }
-    }
-
-    /** 读输入框状态：empty/gone = 已提交；text = 仍在框里；none = 找不到元素 */
-    private fun readSendVal(cb: (String) -> Unit) {
-        webView.evaluateJavascript("window.__dshReadVal ? window.__dshReadVal() : 'none'") { raw ->
-            cb(jsResult(raw))
-        }
-    }
-
-    /**
-     * 校验 paste 写入是否落地，落地才提交；没落地走 repair（v1.2.95）。
-     *
-     * 为什么必须有这一步：Lexical 对合成 paste 的处理是**异步**的——JS 注入返回时
-     * 内容还没进编辑器。若不看结果直接提交，消息可能是旧的；若在 JS 里同步回退
-     * （execCommand），Lexical 会把文本翻倍（主人实测「你好你好」）。
-     * 所以「写入 → 校验 → 提交/补写」全部由 Android 侧时序驱动。
-     */
-    private fun verifyWriteThenFire(text: String) {
-        readSendText { inBox ->
-            when {
-                inBox == text -> {
-                    // paste 已落地 → 发放提交令牌并点击
-                    webView.evaluateJavascript("window.__dshTicket = true") { _ ->
-                        fireSendKey()
-                        webView.postDelayed({ pollSendVal(text, attempt = 0) }, POLL_MS)
-                    }
-                }
-                inBox.isEmpty() || inBox == "none" -> {
-                    // paste 无效（编辑器不认合成 paste）→ execCommand 补写
-                    logWebView("voice write: paste had no effect, repairing (execCommand)")
-                    webView.evaluateJavascript(buildVoiceRepairJs(text)) { raw ->
-                        logWebView("voice repair: ${jsResult(raw)}")
-                        readSendText { after ->
-                            if (after == text) {
-                                webView.evaluateJavascript("window.__dshTicket = true") { _ ->
-                                    fireSendKey()
-                                    webView.postDelayed({ pollSendVal(text, attempt = 0) }, POLL_MS)
-                                }
-                            } else {
-                                logWebView("voice write failed after repair: '$after'")
-                                Toast.makeText(this, getString(R.string.voice_not_sent), Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    }
-                }
-                else -> {
-                    // 框里是别的内容（用户自己打的字）→ 绝不覆盖，放弃本次发送
-                    logWebView("voice write: box holds unrelated text '$inBox', aborting")
-                    Toast.makeText(this, getString(R.string.voice_not_sent), Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
-
-    /**
      * 读输入框里的**实际文字**（v1.2.94）。
      *
-     * 与 [readSendVal] 的区别：那个只回答"空不空"，这个给出内容 —— 重试路径
+     * 与前端同步读值钩子的区别：那个只回答"空不空"，这个给出内容 ——
      * 必须靠它区分「我们刚写进去的那段」和「用户自己打的字」，
      * 否则会把用户的输入覆盖掉、或把我们那段提交两遍（主人实测的「两段」）。
      */
@@ -1357,86 +1170,6 @@ class MainActivity : Activity() {
         webView.evaluateJavascript("window.__dshText ? window.__dshText() : ''") { raw ->
             cb(jsString(raw))
         }
-    }
-
-    /**
-     * 轮询发送结果（v1.2.94 再修）。
-     *
-     * 判定源是**同步读值**（`__dshReadVal`），由 Android 侧定时轮询，前台后台一个样。
-     * 判定依据：前端提交后会把输入框清空。
-     *
-     * 🔴 v1.2.93 之前的版本在 4 秒超时后会**再点一次发送**，主人实测
-     * 「消息还是会被复制成两段」。那就是重复的来源：
-     *  · JS 的 1.5s 节流窗拦不住它（4s > 1.5s）
-     *  · Kotlin 的 1.5s 同文本去重也拦不住（重发在 sendVoiceTextOnce 内部，绕过它）
-     *  · 前端若因网络慢还没清空输入框，这一下就真的提交了第二遍
-     *
-     * 现在**绝不重发**：提交动作每段文字只做一次（JS 侧一次性令牌保证），
-     * 4 秒后仍没清空就如实报「未发出」，把判断权交回用户 —— 宁可少发，
-     * 不可重复发（重复消息会污染对话，用户很难撤销）。
-     *
-     * @param attempt 已轮询次数（上限 [MAX_POLL] ≈ 4 秒）
-     */
-    private fun pollSendVal(text: String, attempt: Int) {
-        readSendVal { st ->
-            when {
-                st == "empty" || st == "gone" -> reportVoiceTarget("")
-                st == "none" -> {
-                    // 输入框不在了（页面被导航走等）：按已提交处理，与旧版语义一致
-                    logWebView("voice send: input gone (assume committed)")
-                    reportVoiceTarget("")
-                }
-                attempt < MAX_POLL -> {
-                    webView.postDelayed({ pollSendVal(text, attempt + 1) }, POLL_MS)
-                }
-                else -> {
-                    // 超时仍未清空：**不再补发**（那正是「两段」的来源），如实报未发出
-                    logWebView("voice send: still in box after ${MAX_POLL * POLL_MS}ms, not retrying")
-                    Toast.makeText(this, getString(R.string.voice_not_sent), Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
-
-    /**
-     * 报告语音文本**真正落到了哪个对话**（v1.2.72）。
-     *
-     * 主人反复问「我都不知道他发哪个对话、究竟能不能发」—— 光靠 DOM 猜标题不可靠，
-     * 改用引擎自己的账本：发送成功后该会话的 `lastPromptAt` 会被刷新为刚刚，
-     * 于是「最近 20 秒内活跃过、且非空白」的那个会话就是真正的落点，报它的标题。
-     *
-     * @param domTitle DOM 里捞到的标题（兜底，通常为空或应用名）
-     */
-    private fun reportVoiceTarget(domTitle: String) {
-        Thread({
-            val now = System.currentTimeMillis()
-            val hit = runCatching {
-                app.dsh.mobile.engine.SessionReader.list(this)
-                    .firstOrNull { !it.blank && now - it.lastActiveAt < 20_000L }
-            }.getOrNull()
-            val name = hit?.title?.takeIf { it.isNotBlank() } ?: domTitle
-            val msg = if (name.isBlank()) getString(R.string.voice_sent)
-            else getString(R.string.voice_sent_to, name)
-            webView.post { runCatching { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() } }
-        }, "voice-target").apply { isDaemon = true; start() }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        if (requestCode == REQ_RECORD_AUDIO) {
-            val ok = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-            if (ok) {
-                // 授权成功 → 交给无障碍服务弹面板并开始识别（面板归服务托管）
-                DshAccessibilityService.instance?.startVoiceInput()
-            } else {
-                Toast.makeText(this, getString(R.string.voice_need_permission), Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
     override fun onDestroy() {
@@ -1451,12 +1184,9 @@ class MainActivity : Activity() {
             val sup = (application as DshApp).supervisor
             if (sup.onExplicitExit === exitCallback) sup.onExplicitExit = null
         }
-        // 注销语音发送能力：本 Activity 已销毁，服务侧再发会拿到明确的「需打开 App」提示
-        // （而不是把文字注入到一个已销毁的 WebView）
         stopHangWatchdog()
         splashWatchdog?.let { wd -> splash?.removeCallbacks(wd) }
         splashWatchdog = null
-        VoiceBridge.registerSender(null)
         // 释放未完成的文件选择请求，否则 WebView 侧回调悬空
         pendingFileCallback?.let { runCatching { it.onReceiveValue(null) } }
         pendingFileCallback = null
@@ -1604,12 +1334,6 @@ class MainActivity : Activity() {
         /** WebView 文件选择器的请求码（onShowFileChooser → onActivityResult） */
         private const val REQ_FILE_CHOOSER = 1001
 
-        /** 麦克风权限请求码（语音输入，v1.2.58） */
-        private const val REQ_RECORD_AUDIO = 1002
-
-        /** 发送去重窗口（v1.2.90）：同文本在此时间内只发一次，防重复 */
-        private const val DEDUP_WINDOW_MS = 1_500L
-
         /**
          * 页面卡死看门狗的时序（v1.2.100，issue #8）。
          * 探针注入极短 JS 并要求回执；连续 [HANG_FAIL_LIMIT] 次无响应即判定卡死。
@@ -1633,21 +1357,6 @@ class MainActivity : Activity() {
             "com.oplus.webview",
             "com.heytap.webview",
         )
-
-        /**
-         * 语音发送的 Android 侧时序（v1.2.92，v1.2.94 调整）。
-         *
-         * 全部走 Handler，不依赖 JS 定时器或渲染帧 —— 后台 WebView 既不产帧、
-         * JS 定时器也可能被节流，只有进程级 Handler 在前后台行为一致。
-         */
-        /** 写入输入框后、点发送键前的等待：给 React 受控组件落地 state 的时间 */
-        private const val FIRE_DELAY_MS = 250L
-        /** 结果轮询间隔 */
-        private const val POLL_MS = 100L
-        /** 轮询上限（× POLL_MS ≈ 4 秒）；超时只报未发出，**绝不重发**（防重复） */
-        private const val MAX_POLL = 40
-        /** 「输入框是否确定为空」的采样间隔（见 probeInputEmpty） */
-        private const val PROBE_INTERVAL_MS = 60L
 
         /**
          * 环境自检脚本：报告 WebView 版本与引擎所需关键 API 是否存在。
@@ -1788,9 +1497,9 @@ class MainActivity : Activity() {
       //     dispatch still sees the old content, which made the old in-JS fallback
       //     kick in and double the text anyway.
       // So this snippet does ONE thing only: fire the paste. Whether the write
-      // landed is checked by Kotlin (readSendText after FIRE_DELAY_MS), which
-      // falls back to buildVoiceRepairJs (execCommand, safe for framework-less
-      // editors) when the paste had no effect. No in-JS fallback here - any
+      // landed is checked by the Kotlin caller (readSendText), which falls back
+      // to buildVoiceRepairJs (execCommand, safe for framework-less editors)
+      // when the paste had no effect. No in-JS fallback here - any
       // synchronous second write races the paste and doubles the text.
       el.focus();
       // Ctrl+A keydown lets the editor select its own content first.
@@ -1885,7 +1594,7 @@ class MainActivity : Activity() {
          * 此时 execCommand 是标准路径且没有框架去双处理 DOM 变更，安全。
          *
          * ⚠️ 绝不能对 Lexical 这类框架编辑器使用（实测翻倍）——调用方必须先
-         * 用 readSendText 确认 paste 没生效才允许走这里（见 sendVoiceTextOnce）。
+         * 用 readSendText 确认 paste 没生效才允许走这里。
          */
         fun buildVoiceRepairJs(text: String): String {
             val escaped = org.json.JSONObject.quote(text)

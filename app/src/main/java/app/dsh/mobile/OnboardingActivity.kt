@@ -109,7 +109,7 @@ class OnboardingActivity : Activity() {
         // 先显示「检测中」，结果回填 UI。
         findViewById<TextView>(R.id.capRoot).apply {
             text = getString(R.string.ob_cap_root_checking)
-            setTextColor(0xFF8A94A3.toInt())
+            setTextColor(0xFF6B7280.toInt())
         }
         Thread({
             val hasRoot = Privilege.probe(this).hasRoot
@@ -118,7 +118,7 @@ class OnboardingActivity : Activity() {
                     text = getString(
                         if (hasRoot) R.string.ob_cap_root_present else R.string.ob_cap_root_absent
                     )
-                    setTextColor(if (hasRoot) 0xFF6EE7B7.toInt() else 0xFFFFB74D.toInt())
+                    setTextColor(if (hasRoot) 0xFF059669.toInt() else 0xFFB45309.toInt())
                 }
             }
         }, "probe-root").apply { isDaemon = true; start() }
@@ -167,13 +167,13 @@ class OnboardingActivity : Activity() {
         when {
             Privilege.shizukuUsable() -> {
                 v.text = getString(R.string.ob_cap_shizuku_present)
-                v.setTextColor(0xFF6EE7B7.toInt())
+                v.setTextColor(0xFF059669.toInt())
             }
             Privilege.shizukuServerRunning() -> {
                 // v1.2.158 隐私修复：不再在此自动请求（拒绝后回调会回到这里 → 死循环）。
                 // 引导页的显式入口是"选中 Shizuku 单选项"→ maybeRequestShizuku()。
                 v.text = getString(R.string.ob_cap_shizuku_request)
-                v.setTextColor(0xFFFFB74D.toInt())
+                v.setTextColor(0xFFB45309.toInt())
                 v.isClickable = true
                 v.setOnClickListener {
                     Privilege.requestShizukuPermission(SHIZUKU_REQ, this@OnboardingActivity, explicit = true)
@@ -181,7 +181,7 @@ class OnboardingActivity : Activity() {
             }
             else -> {
                 v.text = getString(R.string.ob_cap_shizuku_absent)
-                v.setTextColor(0xFFFFB74D.toInt())
+                v.setTextColor(0xFFB45309.toInt())
             }
         }
     }
@@ -205,8 +205,8 @@ class OnboardingActivity : Activity() {
      *    默认英语时用户看不出当前选的是哪个）。
      */
     private fun updateSelectionUi() {
-        val highlight = 0xFF7DD3FC.toInt()
-        val normal = 0xFF9CA3AF.toInt()
+        val highlight = 0xFF2563EB.toInt()
+        val normal = 0xFF6B7280.toInt()
 
         // —— 方向：竖屏/横屏/自动 ——
         val orientCards = listOf(
@@ -361,7 +361,7 @@ class OnboardingActivity : Activity() {
             }
         builder.create().apply {
             setOnShowListener {
-                window?.setBackgroundDrawableResource(R.drawable.bg_dialog_rounded)
+                window?.setBackgroundDrawableResource(R.drawable.bg_dialog_rounded_light)
             }
         }.show()
     }

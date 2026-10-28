@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 反射注入 descriptor 是这个项目已有的做法（见 `EngineProcess.pumpLoop`）。
  *
  * ## 契约
- * 见 `docs/DEV_TERMINAL_LINUX.md` §4.A。对外承诺的成员都保持原签名；
+ * 对外承诺的成员都保持原签名；
  * 额外成员只增不改（`onTerminated` 是 internal，给 [TerminalSessions] 维护列表用）。
  */
 class TerminalSession internal constructor(
@@ -290,7 +290,7 @@ object TerminalSessions {
      * 默认环境变量（"KEY=VALUE" 完整列表）。
      *
      * 注意这是**兜底**：`ShellProfiles.androidSpec` 会传入 `EngineConfig.buildEnv`
-     * 的完整引擎环境（PATH 里有 node/git/python 扩展），Linux 会话由 LinuxEnv 给。
+     * 的完整引擎环境（PATH 里有 node/git/python 扩展）。
      * 这里只保证「随便传个 /system/bin/sh 也能起一个可用的 shell」。
      */
     fun defaultEnv(): List<String> {

@@ -19,8 +19,7 @@ App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）
 - `PAYMENT-LINKS.md` —— 支付宝/微信支付链接与 `intent://` 改写。
 
 ## 终端 / 引擎 / 网络
-- `TERMINAL_AND_LINUX.md` · `TERMINAL_AND_LINUX.en.md` —— 内置终端与 Linux 环境。
-- `DEV_TERMINAL_LINUX.md` —— 开发终端细节。
+- `TERMINAL_AND_LINUX.md` · `TERMINAL_AND_LINUX.en.md` —— 内置终端（PTY / VT100，与 AI 同环境）。
 - `ENGINE_RESTART.md` —— 引擎重启与 WebView 返回栈。
 - `LAN_WEBUI.md` · `LAN_WEBUI.en.md` —— 局域网 WebUI 与代理。
 - `NARROW_UI.md` · `NARROW_UI.en.md` —— 窄屏布局。

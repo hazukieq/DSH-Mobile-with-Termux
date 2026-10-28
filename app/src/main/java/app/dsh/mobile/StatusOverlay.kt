@@ -100,14 +100,6 @@ object StatusOverlay {
     @Volatile private var wm: WindowManager? = null
 
     /**
-     * 麦克风点击回调（由 MainActivity 注入：需要 Activity 才能申请 RECORD_AUDIO 权限）。
-     * 为 null 时按钮点击无效果（权限未就绪）。
-     */
-
-    /** 识别中标记（用于把状态点染成录音色） */
-    @Volatile private var recording = false
-
-    /**
      * 是否「有活干」（执行中 / 录音 / 完成提示）。
      * 动作行（AI 正在干什么）只在有活干 + 展开态时显示 ——
      * 空闲时不该还挂着上一次的动作文案（主人要的是「现在在干什么」）。
@@ -120,15 +112,11 @@ object StatusOverlay {
      */
     @Volatile private var autoExpanded = false
 
-    /** 当前是否处于「聆听」状态（麦克风按钮的开关语义依赖它） */
-    fun isListening(): Boolean = recording
-
     /** 状态点配色（与 drawable 默认色一致，运行时切换） */
     private const val COLOR_IDLE = 0xFF9AA0A6.toInt()      // 中性灰
     private const val COLOR_WORKING = 0xFF7DD3FC.toInt()   // 强调蓝
     // v2.4.8（用户要求）：完成/结束时圆点变**红**，比绿色醒目，避免错过。
     private const val COLOR_DONE = 0xFFFF5A5F.toInt()      // 完成/结束：红
-    private const val COLOR_RECORDING = 0xFFF28B82.toInt() // 录音红
 
     fun isAvailable(): Boolean = DshAccessibilityService.instance != null
 
@@ -721,7 +709,7 @@ object StatusOverlay {
      * 取消待执行的「回空闲」。
      *
      * 🔴 这里修的是主人实测反馈的回归：「AI 正在做无障碍操作，悬浮窗却一直显示空闲」。
-     * 根因：`flashComplete`/`flashNotice` 用 `postDelayed` 排了一个「N 秒后 setIdle()」，
+     * 根因：`flashComplete` 等短暂提示用 `postDelayed` 排了一个「N 秒后 setIdle()」，
      * **从不取消**。流程实际是「上一轮结束 → flashComplete 排 6s 定时 → 用户马上又让 AI 干活
      * → setStatus(「执行中…」) 写入新状态 → 那个过期定时器到点触发 → 又把状态覆盖成「空闲」」。
      * 表现就是「AI 明明在动，悬浮窗永远空闲」。
@@ -738,7 +726,7 @@ object StatusOverlay {
      * 动作行显隐的**唯一判定点**：
      * 展开态（档位 ≥1）且有活干且有文案才显示。
      *
-     * 旧代码在 flashComplete/setListening 里直接 `visibility = VISIBLE`，
+     * 旧代码在 flashComplete 等状态更新里直接 `visibility = VISIBLE`，
      * 绕过了档位规则 —— 折叠态下球会被那行字撑成椭圆（实测）。
      */
     private fun refreshActionVisibility() {
@@ -1001,41 +989,6 @@ object StatusOverlay {
     private fun cancelCollapse() {
         collapsePending?.let { runCatching { mainHandler.removeCallbacks(it) } }
         collapsePending = null
-    }
-
-    /**
-     * 语音识别状态（v1.2.58）：把状态点染成录音色，动作行显示中间识别结果。
-     * @param listening true=正在听，false=结束
-     * @param partial 实时识别文本（listening 时刷新）
-     */
-    fun setListening(listening: Boolean, partial: String = "") {
-        main {
-            recording = listening
-            val ctx = appCtx ?: return@main
-            if (listening) {
-                cancelIdleReset()   // 同上：录音状态不能被过期的"回空闲"顶掉
-                working = true
-                statusText?.text = ctx.getString(R.string.overlay_listening)
-                statusDot?.background?.setTint(COLOR_RECORDING)
-                // v2.5.8：动作行已删除，实时识别结果直接显示在主体文字里
-                if (partial.isNotBlank()) statusText?.text = partial
-                refreshActionVisibility()
-            } else {
-                setIdle()
-            }
-        }
-    }
-
-    /** 识别失败/提示（短暂显示，然后回空闲） */
-    fun flashNotice(msg: String, holdMs: Long = 3_000L) {
-        main {
-            val s = statusText ?: return@main
-            working = true
-            s.text = msg
-            statusDot?.background?.setTint(COLOR_RECORDING)
-            refreshActionVisibility()
-            scheduleIdle(holdMs)   // 可取消：期间的任何新状态都会作废它
-        }
     }
 
     /**

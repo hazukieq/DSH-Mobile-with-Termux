@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#FF101418">
+    android:background="#FFF6F7F9">
 
     <!-- 顶部栏：返回箭头 + 标题 -->
     <LinearLayout
@@ -11,7 +11,7 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="#FF101418"
+        android:background="#FFF6F7F9"
         android:elevation="2dp">
 
         <ImageView
@@ -20,6 +20,7 @@
             android:layout_height="48dp"
             android:padding="12dp"
             android:src="@drawable/ic_back"
+            android:tint="#FF10141A"
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/settings_back" />
 
@@ -29,7 +30,7 @@
             android:layout_weight="1"
             android:gravity="center_vertical"
             android:text="@string/settings_title"
-            android:textColor="#FFFFFFFF"
+            android:textColor="#FF10141A"
             android:textSize="20sp"
             android:textStyle="bold" />
     </LinearLayout>
@@ -63,7 +64,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/bg_card">
+                android:background="@drawable/bg_card_light">
 
                 <!-- 横屏模式 -->
                 <LinearLayout
@@ -82,7 +83,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_display"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF5B8DEF" />
 
                     <LinearLayout
@@ -97,7 +98,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_landscape"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
@@ -105,7 +106,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_landscape_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -115,7 +116,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/setting_orient_portrait"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp"
                         android:layout_marginEnd="6dp" />
 
@@ -129,7 +130,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
                 <!-- 页面缩放 -->
                 <LinearLayout
@@ -148,7 +149,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_scale"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF7DD3FC" />
 
                     <LinearLayout
@@ -162,14 +163,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_scale"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_scale_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -179,7 +180,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="90%"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp"
                         android:layout_marginEnd="6dp" />
 
@@ -206,7 +207,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/bg_card">
+                android:background="@drawable/bg_card_light">
 
                 <!-- 运行权限模式 -->
                 <LinearLayout
@@ -225,7 +226,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_shield"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FFFF8A65" />
 
                     <LinearLayout
@@ -239,14 +240,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_priv_mode"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_priv_mode_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -256,7 +257,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/priv_normal"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp"
                         android:layout_marginEnd="6dp" />
 
@@ -270,7 +271,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
                 <!-- Root 能力状态 -->
                 <LinearLayout
@@ -286,7 +287,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_key"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FFFFB74D" />
 
                     <LinearLayout
@@ -300,14 +301,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_root_status"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_root_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -317,7 +318,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/setting_root_status_no"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp" />
                 </LinearLayout>
 
@@ -325,7 +326,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
                 <!-- Shizuku 状态 -->
                 <LinearLayout
@@ -341,7 +342,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_link"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF6EE7B7" />
 
                     <LinearLayout
@@ -355,14 +356,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_shizuku_status"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_shizuku_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -372,7 +373,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/setting_shizuku_absent"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp" />
                 </LinearLayout>
 
@@ -380,7 +381,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
                 <!-- 屏幕点击（无障碍） -->
                 <LinearLayout
@@ -399,7 +400,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_touch"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FFA78BFA" />
 
                     <LinearLayout
@@ -413,7 +414,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_access"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
@@ -421,7 +422,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_access_sub_off"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -431,7 +432,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/state_off"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp"
                         android:layout_marginEnd="6dp" />
 
@@ -457,7 +458,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_folder"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF64D2FF" />
 
                     <LinearLayout
@@ -471,14 +472,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_storage"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_storage_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -487,7 +488,7 @@
                         android:id="@+id/valStorage"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp"
                         android:layout_marginEnd="6dp" />
                 </LinearLayout>
@@ -508,7 +509,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_speaker"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF3FE295" />
 
                     <LinearLayout
@@ -522,14 +523,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_tts"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_tts_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -538,7 +539,7 @@
                         android:id="@+id/valTts"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp"
                         android:layout_marginEnd="6dp" />
                 </LinearLayout>
@@ -559,7 +560,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_bell"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FFF0B44A" />
 
                     <LinearLayout
@@ -573,14 +574,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_notif"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_notif_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -589,72 +590,11 @@
                         android:id="@+id/valNotif"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:textColor="#FF8A94A3"
+                        android:textColor="#FF6B7280"
                         android:textSize="14sp"
                         android:layout_marginEnd="6dp" />
                 </LinearLayout>
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="0.5dp"
-                    android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
-
-                <!-- 麦克风权限（v1.2.65）：语音输入需要 RECORD_AUDIO，
-                     与语音识别服务（设置页「扩展」分组）配套。 -->
-                <LinearLayout
-                    android:id="@+id/rowMic"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:background="?android:attr/selectableItemBackground">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_mic"
-                        android:background="@drawable/bg_icon_chip_soft"
-                        android:tint="#FFF28B82" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="14dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_mic"
-                            android:textColor="#FFFFFFFF"
-                            android:textSize="16sp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_mic_sub"
-                            android:textColor="#FF8A94A3"
-                            android:textSize="12sp"
-                            android:layout_marginTop="2dp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/valMic"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="#FF8A94A3"
-                        android:textSize="14sp"
-                        android:layout_marginEnd="6dp" />
-                </LinearLayout>
-
-                
-
-                
             </LinearLayout>
 
             <!-- ============ 扩展分组 ============ -->
@@ -673,61 +613,14 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/bg_card">
+                android:background="@drawable/bg_card_light">
 
-                <!-- 社区插件（v1.2.119）：一键安装 dsh 生态插件（与扩展中心同分组） -->
-                <LinearLayout
-                    android:id="@+id/rowPlugin"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:background="?android:attr/selectableItemBackground">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_puzzle"
-                        android:background="@drawable/bg_icon_chip_soft"
-                        android:tint="#FF7DD3FC" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="14dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_plugin"
-                            android:textColor="#FFFFFFFF"
-                            android:textSize="16sp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_plugin_sub"
-                            android:textColor="#FF8A94A3"
-                            android:textSize="12sp"
-                            android:layout_marginTop="2dp" />
-                    </LinearLayout>
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron" />
-                </LinearLayout>
 
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
                 <!-- 终端（2026-10-18）：原生 PTY 终端页，与扩展中心同分组。
                      为什么不放在"实验性"分组：它是正式功能，且是 dsh 在手机上
@@ -747,7 +640,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_terminal"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF7DD3FC" />
 
                     <LinearLayout
@@ -761,14 +654,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_terminal"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_terminal_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -779,149 +672,19 @@
                         android:src="@drawable/ic_chevron" />
                 </LinearLayout>
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="0.5dp"
-                    android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
-
-                <!-- Linux 环境（2026-10-18）：proot 发行版（Alpine/Ubuntu）管理 -->
-                <LinearLayout
-                    android:id="@+id/rowLinux"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:background="?android:attr/selectableItemBackground">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_linux"
-                        android:background="@drawable/bg_icon_chip_soft"
-                        android:tint="#FF8FD9A8" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="14dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_linux"
-                            android:textColor="#FFFFFFFF"
-                            android:textSize="16sp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_linux_sub"
-                            android:textColor="#FF8A94A3"
-                            android:textSize="12sp"
-                            android:layout_marginTop="2dp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/valLinux"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="#FF8A94A3"
-                        android:textSize="14sp"
-                        android:layout_marginEnd="6dp" />
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron" />
-                </LinearLayout>
 
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
-
-                <!-- 运行时热更新（2026-10-18）：显示当前运行时版本 + 暂存/回滚状态。
-                     暂存动作在 agent 侧（dsh-update 门脚本），这一行只做「看状态 +
-                     一键应用/回滚」—— 不做文件选择器，避免把 160MB 包的导入路径
-                     塞进 UI。 -->
-                <LinearLayout
-                    android:id="@+id/rowRuntimeUpdate"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:background="?android:attr/selectableItemBackground">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_restart"
-                        android:background="@drawable/bg_icon_chip_soft"
-                        android:tint="#FFC4B5FD" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="14dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_runtime_update"
-                            android:textColor="#FFFFFFFF"
-                            android:textSize="16sp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_runtime_update_sub"
-                            android:textColor="#FF8A94A3"
-                            android:textSize="12sp"
-                            android:layout_marginTop="2dp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/valRuntime"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textColor="#FF8A94A3"
-                        android:textSize="11sp"
-                        android:maxWidth="132dp"
-                        android:maxLines="2"
-                        android:ellipsize="end"
-                        android:gravity="end"
-                        android:layout_marginEnd="6dp" />
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="0.5dp"
-                    android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
                 <!-- 语音服务：识别 + 合成合并入口 -->
 <View
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
 <LinearLayout
                     android:id="@+id/rowUserPrompt"
@@ -938,7 +701,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_waveform"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FFA5B4FC" />
 
                     <LinearLayout
@@ -952,61 +715,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_user_prompt"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_user_prompt_sub"
-                            android:textColor="#FF8A94A3"
-                            android:textSize="12sp"
-                            android:layout_marginTop="2dp" />
-                    </LinearLayout>
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:id="@+id/rowVoiceService"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:background="?android:attr/selectableItemBackground">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_waveform"
-                        android:background="@drawable/bg_icon_chip_soft"
-                        android:tint="#FF7DD3FC" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="14dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_voice_service"
-                            android:textColor="#FFFFFFFF"
-                            android:textSize="16sp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/setting_voice_service_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -1021,61 +737,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
-
-                <!-- 本地识别应用：一键跳转下载（直接可见，不用钻三层菜单） -->
-                <LinearLayout
-                    android:id="@+id/rowAsrApps"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:background="?android:attr/selectableItemBackground">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:padding="8dp"
-                        android:src="@drawable/ic_download"
-                        android:background="@drawable/bg_icon_chip_soft"
-                        android:tint="#FF81C995" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical"
-                        android:layout_marginStart="14dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/asrapp_entry"
-                            android:textColor="#FFFFFFFF"
-                            android:textSize="16sp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/asrapp_entry_sub"
-                            android:textColor="#FF8A94A3"
-                            android:textSize="12sp"
-                            android:layout_marginTop="2dp" />
-                    </LinearLayout>
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron" />
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="0.5dp"
-                    android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
 
                 <!-- 局域网访问 WebUI（v1.2.160）：app 内反向代理（独立端口 3090），
                      让同网段设备用原生 WebUI 连上本机引擎。默认关闭。 -->
@@ -1094,7 +756,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_link"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF7DD3FC" />
 
                     <LinearLayout
@@ -1108,7 +770,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_lan_web"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
@@ -1116,7 +778,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_lan_web_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -1146,7 +808,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:background="@drawable/bg_card">
+                android:background="@drawable/bg_card_light">
 
 
                 <!-- 语言 Language -->
@@ -1165,7 +827,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_language"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FFA78BFA" />
 
                     <LinearLayout
@@ -1179,7 +841,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/app_language"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
@@ -1187,7 +849,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/app_language_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -1210,7 +872,7 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_restart"
-                        android:background="@drawable/bg_icon_chip_soft"
+                        android:background="@drawable/bg_icon_chip_soft_light"
                         android:tint="#FF4DD0E1" />
 
                     <LinearLayout
@@ -1224,14 +886,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_restart_engine"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_restart_engine_sub"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
@@ -1246,7 +908,62 @@
                     android:layout_width="match_parent"
                     android:layout_height="0.5dp"
                     android:layout_marginStart="66dp"
-                    android:background="#22FFFFFF" />
+                    android:background="#14000000" />
+
+                <!-- 一键还原 UI（v2.5.42）：mobile-ui 皮肤出问题时，从原生设置里直接关掉 -->
+                <LinearLayout
+                    android:id="@+id/rowStockUi"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="14dp"
+                    android:background="?android:attr/selectableItemBackground">
+
+                    <ImageView
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:padding="8dp"
+                        android:src="@drawable/ic_restart"
+                        android:background="@drawable/bg_icon_chip_soft_light"
+                        android:tint="#FFF0B429" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="14dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setting_stock_ui"
+                            android:textColor="#FF10141A"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:id="@+id/stockUiSub"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setting_stock_ui_sub"
+                            android:textColor="#FF6B7280"
+                            android:textSize="12sp"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_chevron" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="0.5dp"
+                    android:layout_marginStart="66dp"
+                    android:background="#14000000" />
 
                 <!-- 关于 -->
                 <LinearLayout
@@ -1264,8 +981,8 @@
                         android:layout_height="36dp"
                         android:padding="8dp"
                         android:src="@drawable/ic_info"
-                        android:background="@drawable/bg_icon_chip_soft"
-                        android:tint="#FF8A94A3" />
+                        android:background="@drawable/bg_icon_chip_soft_light"
+                        android:tint="#FF6B7280" />
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -1278,14 +995,14 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/setting_about"
-                            android:textColor="#FFFFFFFF"
+                            android:textColor="#FF10141A"
                             android:textSize="16sp" />
 
                         <TextView
                             android:id="@+id/subAbout"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:textColor="#FF8A94A3"
+                            android:textColor="#FF6B7280"
                             android:textSize="12sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>

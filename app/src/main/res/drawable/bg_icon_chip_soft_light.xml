@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置页浅色图标底座（v2.5.42）：浅灰面板 + 淡描边，字形仍按分类着色。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFF1F3F7" />
+    <stroke
+        android:width="1dp"
+        android:color="#1A0F172A" />
+    <corners android:radius="12dp" />
+</shape>
