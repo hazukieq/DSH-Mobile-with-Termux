@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-green)
-![Version](https://img.shields.io/badge/version-2.5.45-blue)
+![Version](https://img.shields.io/badge/version-2.5.46-blue)
 
 ---
 

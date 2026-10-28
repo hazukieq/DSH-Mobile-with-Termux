@@ -23,7 +23,7 @@ in `/data/user/0/com.termux` (usually `/data/data/com.termux`).
 Engine WebUI listens on `127.0.0.1:3080` (token-gated). Android native side adds:
 
 - **Native terminal** (own activity, zsh by default) with extra keys, TUI mouse-wheel scrolling.
-- **Agent bridge** HTTP API on `127.0.0.1:3083` (token in `$PREFIX/.bridge-token`, header `X-DSH-Token`).
+- **Agent bridge** HTTP API on `127.0.0.1:3083` (token in app-private `$PREFIX/.bridge-token`, header `X-DSH-Token`; the app never logs it and never writes it to shared storage).
 - **Accessibility service** (system label `DSH Mobile Helper (optional)`; zh `DSH Mobile 辅助（可选）`;
   settings section 屏幕点击（无障碍）) for reading other apps' UI and injecting input. The user must
   enable it in system settings. Launching/hand-off/sharing/media/files/engine do **not** need it
