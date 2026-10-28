@@ -160,6 +160,13 @@ rm -rf "$ROOT/lib/node_modules/sherpa-onnx-linux-x64" \
        "$ROOT/lib/node_modules/@img/sharp-libvips-linux-x64" \
        "$ROOT/lib/node_modules/node-addon-require-builtin-linux-x64-gnu" 2>/dev/null || true
 
+# ---- 4.5 依赖审计门（每次编译必跑；FAIL 直接中断，避免发出「read_image 坏」这类包）----
+if [ -x "$SCRIPT_DIR/check-engine-deps.sh" ]; then
+  echo "[deps] 依赖审计：$ROOT/lib/node_modules"
+  "$SCRIPT_DIR/check-engine-deps.sh" --root "$ROOT/lib/node_modules" || {
+    echo "错误：依赖审计未通过，停止打包（豁免见 scripts/check-engine-deps.allow）" >&2; exit 1; }
+fi
+
 # ---- 5. 打 zip ----
 ( cd "$ROOT" && zip -qr "$OUT_ZIP" . )
 

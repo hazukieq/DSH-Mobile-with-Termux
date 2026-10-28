@@ -12,6 +12,42 @@ App 里的「引擎层」是两块拼起来的：
 **先看能不能只换闭包（§1），不行再重收运行时（§3）**；两者都要打同一套 Android 补丁（§1.3）。
 
 
+## 0.6 编译必过依赖审计（full-check-deps）
+
+每次重打引擎层 / runtime，都必须跑一次依赖审计——它会检查「声明了但没装」的依赖、
+Android 上装不起来的原生模块（含 sharp addon 的 RUNPATH/架构/NEEDED）、以及
+`read_image` 的 sharp 后端是否可用。历史上 `read_image` 坏掉、`node-pty` 装不上、
+架构不符的 `.node` 混进包，都是这一步能提前抓到的。
+
+三个构建脚本已经内置这道门（FAIL 直接中断打包，不会再产出坏包）：
+
+- `scripts/collect-termux-runtime.sh`（步骤 4.5）
+- `scripts/build-engine-layer.sh`（步骤 4.5；同时用 `VIPS_LIBS_DIR` 自动捆绑 libvips）
+- `scripts/build-engine-closure.sh`（步骤 4.4）
+
+PC 上手跑（静态检查，不需要设备）：
+
+```bash
+# 检查「发布形态闭包」或已解包的引擎树
+scripts/check-engine-deps.sh --root /tmp/consumer/node_modules
+scripts/check-engine-deps.sh --root /tmp/engine/engine-tree/lib/node_modules --strict
+```
+
+设备上跑运行时探针（权威结论：真实 dlopen + sharp 编解码）：
+
+```bash
+# 把审计脚本推到设备，用引擎的 node 跑（--prefix 指向 Termux 前缀）
+adb push scripts/full-check-deps.mjs /data/local/tmp/
+adb shell "input text 'node /data/local/tmp/full-check-deps.mjs --root \$PREFIX/lib/node_modules --prefix \$PREFIX'"
+```
+
+设备侧只做**验收**，不做门禁：门禁放在上面三个构建脚本里，PC 上跑，坏了就不出包。
+
+豁免：只允许「已确认是宿主专属、Android 永不加载」的**声明缺失**，逐条写在
+`scripts/check-engine-deps.allow` 并附原因（格式 `包名<TAB>依赖名<TAB>原因`）；
+架构不符 / 加载失败一律不给豁免，必须从闭包里删掉或换掉。审计脚本本身用
+`LC_ALL=C` 调用 `readelf`，否则中文 locale 下会把 ELF 架构读成 `?`。
+
 ## 1. 只换闭包（PC 上编译 dsh 引擎层）
 
 升级 dsh 引擎**不需要重编 Termux 运行时**。引擎层分两块：

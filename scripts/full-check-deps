@@ -1,0 +1,7 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# [full-check-deps] pre-release dependency audit (missing deps + Android loadability).
+# Canonical checker: $DSH_HOME/local/share/full-check-deps/check.mjs
+# Override install dir with DSH_HOME if the engine passes a different home.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+DSH="${DSH_HOME:-$(cd "$HERE/../.." && pwd)}"
+exec node "$DSH/local/share/full-check-deps/check.mjs" "$@"

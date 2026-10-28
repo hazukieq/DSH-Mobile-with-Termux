@@ -83,6 +83,13 @@ printf '%s\n' "$VERSION" > "$ROOT/.dsh-engine-version"
 
 echo "[6/6] 打包（仅 lib/node_modules + .dsh-engine-version）"
 rm -f "$OUT"
+# ---- 4.4 依赖审计门（每次编译必跑；FAIL 直接中断，避免发出「read_image 坏」这类包）----
+if [ -x "$SCRIPT_DIR/check-engine-deps.sh" ]; then
+  echo "[deps] 依赖审计：$ROOT/lib/node_modules"
+  "$SCRIPT_DIR/check-engine-deps.sh" --root "$ROOT/lib/node_modules" || {
+    echo "错误：依赖审计未通过，停止打包（豁免见 scripts/check-engine-deps.allow）" >&2; exit 1; }
+fi
+
 tar -czf "$OUT" -C "$ROOT" .dsh-engine-version lib/node_modules
 SIZE=$(stat -c%s "$OUT" 2>/dev/null || stat -f%z "$OUT")
 SHA=$(sha256sum "$OUT" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$OUT" | cut -d' ' -f1)

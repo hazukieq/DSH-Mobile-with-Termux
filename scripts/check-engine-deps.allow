@@ -1,0 +1,11 @@
+# 引擎依赖审计豁免清单（scripts/check-engine-deps.sh 读取）
+# 格式（TAB 分隔）：<包名>\t<缺失的依赖>\t<理由>
+# 只用于「发布形态闭包本来就不带这个依赖、且运行期不会 import」的情况；
+# 每加一条都要能说清为什么可以接受。
+#
+# claude-code 子智能体：@modelcontextprotocol/sdk 只在用户真的接了自己的 MCP 服务时才
+# 走到；未安装时插件加载不报错，只是该能力不可用（上游按 optional 处理，闭包不带）。
+@deepseek-ai/dsh-subagent-claude-code	@modelcontextprotocol/sdk	MCP 桥接按需安装，缺失时仅该子智能体不可用
+# codex 子智能体：@openai/codex 是平台相关的 CLI（darwin/linux x64），Android 上没有可用构建，
+# 上游对移动端也是「不装 = 不可用」，不影响引擎启动。
+@deepseek-ai/dsh-subagent-codex	@openai/codex	codex CLI 无 Android 构建，缺失时仅该子智能体不可用

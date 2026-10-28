@@ -582,6 +582,21 @@ if find "$ROOT" -type f -path '*@vscode/ripgrep-linux-*/*/rg' -print -quit | gre
   exit 1
 fi
 
+# ---- 3.9b 剔除其它平台的预编译 .node（v2.5.61）----
+# 发布形态闭包会带上 darwin/win32/linux-x64 的预编译（pi-tui、node-pty 等），
+# 在 Android 上永远不会被加载，白占体积，还会让依赖审计脚本把它们当成
+# 「架构不符的原生模块」报警（full-check-deps 的 native-addons 检查）。
+# 只保留 android-* / wasm，其余 prebuilds 子目录直接删。
+stripped=0
+while IFS= read -r d; do
+  case "$d" in
+    *prebuilds/android-*|*prebuilds/wasm*|*prebuilds/wasm32*|*prebuilds/*android*) ;;
+    *prebuilds/*) rm -rf "$d"; stripped=$((stripped+1)) ;;
+  esac
+done < <(find "$NM" -type d -name 'prebuilds' -mindepth 3 -maxdepth 6 2>/dev/null | while read -r pb; do
+           find "$pb" -mindepth 1 -maxdepth 1 -type d 2>/dev/null; done)
+[ "$stripped" -gt 0 ] && echo "stripped foreign prebuilds: $stripped"
+
 # ---- 3.10 sharp 的 wasm 回退（Android 无预编译二进制，read_image 依赖它）----
 # sharp 的预编译平台列表没有 android；@img/sharp-linux-arm64 是 glibc 产物加载不了。
 # 打包 @img/sharp-wasm32 + @emnapi/runtime（双落位：顶层 + sharp/node_modules 各一份），
