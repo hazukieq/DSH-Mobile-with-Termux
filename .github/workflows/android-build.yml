@@ -193,78 +193,12 @@ jobs:
           path: dist/*.apk
           retention-days: 1   # 仅 job 间传递用，避免 90 天默认堆积百 MB×N（曾堆 32GB）
 
-  # ⚠️ v1.2.106：**取消 CI 自动发 release**。
-  #
-  # 原因：CI 构建出来的 APK 是 **debug 签名**，而对外发布的包必须是 **release 签名**
-  # （keystore/dsh-release.keystore，证书 SHA-256 d28ca4f5…）—— 否则老用户无法覆盖
-  # 升级；而且历史上确实出现过「用户下到了 debug 版」的混淆（主人反馈）。
-  #
-  # 发布流程改为人工两步（CI 只负责构建与产物校验，不发 release）：
-  #   1) 本地：gradle assembleDebug -Pabi=arm64-v8a
-  #   2) apksigner sign --ks keystore/dsh-release.keystore ... 然后 gh release create 上传
-  #
-  # —— 但本 Fork（jahdaganj02ki-sketch）的策略不同：这里 fork 自身就是分发渠道，
-  #    debug 签名的自动构建产物直接进 Releases（见下方 release job）。上游仓库
-  #    仍按上述人工两步走。
+  # 自动发布已移除（2026-10-28）：CI 只负责构建与产物校验。
+  # 对外发布一律人工完成——release 签名包由维护者在本地构建、签名后
+  # 用 `gh release create` 上传，避免 debug 签名包混进 Releases。
+  # 若要恢复自动发布，请在本文件末尾重新添加 release job 并显式声明
+  # `permissions: contents: write`。
 
-  # ---- 自动发布（v1.2.120）：main 构建成功后，双架构 APK 落到 Releases ----
-  # 触发条件：push / dispatch / 定时，且 build-apk 成功；PR 不发（Fork 的
-  # GITHUB_TOKEN 在 PR 上下文无写权限）。
-  # ⚠️ 仅限 Fork 仓库：上游仓库的人工发布流程（release 签名 + 人工两步）不可被
-  #    自动流程替代 —— CI 产物是 debug 签名，发到上游会让用户下到无法覆盖升级的包。
-  #    故这里用 github.repository 硬门禁，合入上游后此 job 直接跳过。
-  # 版本：app/build.gradle.kts 的 versionName + 本次 run_number，保证每个成功
-  # 的构建版本号唯一（tag = v<versionName>-<run_number>），互不覆盖。
-  release:
-    if: >-
-      github.repository == 'jahdaganj02ki-sketch/Deepseek-Harness-Local-Android'
-      && github.event_name != 'pull_request'
-      && needs.build-apk.result == 'success'
-    needs: [build-apk]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: 读取版本号
-        id: ver
-        run: |
-          V=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
-          C=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts)
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "versionCode=$C" >> "$GITHUB_OUTPUT"
-          echo "tag=v$V-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-
-      - name: 下载双架构 APK 工件
-        uses: actions/download-artifact@v4
-        with:
-          pattern: dsh-android-debug-apk-*
-          merge-multiple: true
-          path: apk/
-
-      - name: 发布 Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.ver.outputs.tag }}
-          name: v${{ steps.ver.outputs.version }} · build ${{ github.run_number }}
-          files: apk/*.apk
-          generate_release_notes: true
-          body: |
-            自动构建：v${{ steps.ver.outputs.version }} (versionCode ${{ steps.ver.outputs.versionCode }}) · build ${{ github.run_number }}
-
-            架构：arm64-v8a（真机）+ x86_64（模拟器）
-            签名：debug（此 Fork 的自动分发渠道）
-
-            - 已通过：运行时闭包校验、so 16KB 页对齐、APK ABI 校验、i18n 一致性
-            - 安装注意：与 release 签名包签名不同，不能互相覆盖安装
-
-  # ---------------------------------------------------------------------------
-  # v1.2.120：构建监视 —— 汇总两只 legs 的结果到 Step Summary，任一腿失败即整红。
-  # 这样「构建挂了」不必逐 job 点开找：run 页面顶部就是一张表。
-  # ---------------------------------------------------------------------------
   build-monitor:
     name: Build monitor (Zusammenfassung)
     needs: [collect-runtime, build-apk]
