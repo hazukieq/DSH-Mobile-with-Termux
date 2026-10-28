@@ -183,7 +183,8 @@ dsh-update rollback         # go back any time
   layout; without it the layer is an empty shell) + `.dsh-engine-version`; `bin/node` and
   `bin/rg` are optional (the previous engine/runtime copies are reused). **Never stage a
   runtime.zip directly.**
-- **Building on the phone is possible** (~10–15 min, mostly `pnpm install` + build):
+- **Building on the phone is possible** (~10–15 min, mostly `pnpm install` + build; full steps plus
+  the memory/storage/registry constraints are in [ENGINE-BUILD.md](ENGINE-BUILD.md) §1.7):
   `pkg install nodejs-lts pnpm zip` -> clone `dsh-v0.2.2-alpha.2` -> `pnpm install
   --frozen-lockfile` -> `pnpm build:official` -> tar `lib/node_modules` + `.dsh-engine-version`
   -> `stage`/`apply`. Use `--max-old-space-size=4096` when memory is tight.

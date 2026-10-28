@@ -165,7 +165,8 @@ dsh-update rollback         # 不满意随时回上一份
 - **引擎 tar 的最小布局**（自己手搓包时必须满足）：`lib/node_modules/**`（dshEntry 按 npm
   布局解析，缺了就是空壳）+ `.dsh-engine-version`（status/回滚识别）；`bin/node`、`bin/rg`
   可选，缺了沿用旧引擎/运行时那份。**不要把 runtime.zip 直接 stage**。
-- **手机端自建也可行**（≈10–15 分钟，主要在 `pnpm install` 与构建）：
+- **手机端自建也可行**（≈10–15 分钟，主要在 `pnpm install` 与构建；完整步骤、内存/存储/换源
+  三个硬约束见 [ENGINE-BUILD.md](ENGINE-BUILD.md) §1.7）：
   `pkg install nodejs-lts pnpm zip` → `git clone --depth 1 -b dsh-v0.2.2-alpha.2
   https://github.com/deepseek-ai/deepseek-harness.git` → `pnpm install --frozen-lockfile` →
   `pnpm build:official` → 把 `lib/node_modules` 闭包 + `.dsh-engine-version` 打 tar 后

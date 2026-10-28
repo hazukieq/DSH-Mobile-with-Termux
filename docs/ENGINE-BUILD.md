@@ -121,6 +121,44 @@ dsh-update rollback   # 出问题回上一个引擎
 
 ---
 
+### 1.7 没有主机？在手机上自建（Termux 内，10–15 分钟）
+
+App 自带的就是完整 Termux，手机端能直接 build，不需要 root 也不需要电脑：
+
+```sh
+pkg update && pkg install -y nodejs-lts pnpm git zip tar   # 国内源（NJU/USTC）约 1–2 分钟
+cd ~ && git clone --depth 1 --branch dsh-v0.2.2-alpha.2 \
+    https://github.com/deepseek-ai/deepseek-harness.git dhs
+cd dhs
+pnpm config set registry https://registry.npmmirror.com      # 不改会卡在 npmjs
+NODE_OPTIONS=--max-old-space-size=4096 \
+  pnpm install --frozen-lockfile && pnpm build:official
+```
+
+构建完只是源码树，还要把「发布形态闭包」挑出来并打 Android 补丁（否则引擎起不来）：
+
+```sh
+# 1) 组装闭包：只保留 @deepseek-ai/* 与其运行期依赖（别整包 node_modules 打进去）
+mkdir -p ~/eng/lib && cp -a node_modules ~/eng/lib/node_modules
+# 2) 打补丁（脚本随 App 一起装在 $PREFIX/bin 之外，仓库里有）
+bash "$DSH_HOME/../scripts/patch-engine-closure.sh"   # 无仓库时按 §2 的手工补丁清单逐条打
+# 3) 只打最小布局：lib/node_modules/** + 版本标记
+tar -C ~/eng -czf ~/engine-mine.tar.gz lib .dsh-engine-version
+dsh-update stage ~/engine-mine.tar.gz "$(sha256sum ~/engine-mine.tar.gz | cut -d' ' -f1)"
+dsh-update apply
+```
+
+手机端的三个硬约束：
+
+| 约束 | 说明 |
+| --- | --- |
+| 内存 | 默认 node 堆会 OOM，必须 `NODE_OPTIONS=--max-old-space-size=4096`；构建时别开别的 App |
+| 存储 | 源码 + `node_modules` + 构建产物约需 3 GB，先 `df -h $_PREFIX` 看一眼 |
+| 网络 | `pnpm` 与 `git` 都要换国内源（`registry.npmmirror.com` / `ghproxy` 或用 App 内已有的代理） |
+
+> 手机端自建的意义是「完全离线可控」，不是更快：同样一步在 PC 上 20 秒，手机上 10–15 分钟。
+> 只是换闭包而不改代码时，优先用 §1.4 的一条命令（复用现有骨架）。
+
 ## 2. Android 独有库的交叉编译（bionic 与 glibc 的坑）
 
 先说结论：**能不打原生就不打。** Android 用 bionic libc，任何按 glibc 编出来的 `.so` /
