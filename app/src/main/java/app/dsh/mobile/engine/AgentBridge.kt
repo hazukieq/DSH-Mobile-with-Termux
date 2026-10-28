@@ -210,13 +210,7 @@ object AgentBridge {
             // 释放栈里绝不能出现明文 token：既不打日志、也不写共享存储。
             // 第三方 App 只要拿到它就能读屏/注入点击，所以 token 只留在
             // App 私有目录 `<engineRoot>/.bridge-token`（0600，仅同 uid 可读），
-            // 供门脚本读取；同时清理旧版本可能留在 Download/ 的泄露副本。
-            runCatching {
-                val leaked = java.io.File("/sdcard/Download/dsh-bridge-token.txt")
-                if (leaked.exists() && leaked.delete()) {
-                    app.dsh.mobile.DshLog.d("bridge", "removed legacy shared-storage token file")
-                }
-            }
+            // 供门脚本读取。这里只保证「不再写出去」，不去删除用户存储里已有的文件。
             val ss = ServerSocket(PORT, 16, java.net.InetAddress.getByName("127.0.0.1"))
             server = ss
             thread = Thread({

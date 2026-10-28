@@ -1247,26 +1247,19 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
     fun ensureAgentArtifacts(ctx: android.content.Context) {
         runCatching { applyAgentGates(ctx, engineRoot(ctx)) }
             .onFailure { Log.w(TAG, "ensureAgentArtifacts failed: ${it.message}") }
-        // v1.3.63：给已安装的第三方插件打内容锚定补丁（genui 的思考行缺图标）。
-        DshPluginPatches.ensure(ctx)
-        // v2.5.43：内置 dshmarket / dsh-mnemon / dsh-genui（离线可用；agent 可删可改）。
+        // 只补 pnpm 工具链；不会再改动用户已装的插件或 profile 配置。
         runCatching { ensureBundledPlugins(ctx) }
             .onFailure { Log.w(TAG, "ensureBundledPlugins failed: ${it.message}") }
     }
 
-    /** 历史上内置过、现已不再随包发行的社区插件（仅用于清理残留与修 package.json）。 */
-    private val LEGACY_BUNDLED_PLUGINS = listOf("dshmarket", "dsh-mnemon", "dsh-genui")
-
-    /** 关掉内置插件自动落地的标记文件（agent 可 touch 它，或直接删 node_modules 目录）。 */
+    /** 关掉内置插件自动落地的标记文件（agent 可 touch 它）。 */
     private fun bundledPluginsMarker(home: File) = File(home, ".dsh-bundled-off")
 
     /**
-     * 只保留 pnpm（dsh-market 安装时需要它，离线可用）。
+     * 只补 pnpm（dsh-market 安装时需要它，离线可用）。
      *
-     * 社区插件**不再随包内置**：之前内置 dshmarket/dsh-mnemon/dsh-genui 会让 dsh
-     * 把它们当成“已装但来源不明”的包，插件识别与升级都出问题。现在这里只做两件事：
-     *  1. 清掉历史版本解出来的这三个目录（升级后用干净的 node_modules）；
-     *  2. 缺 pnpm 时从 assets/bundled-plugins.zip（现在只含 pnpm）解出来。
+     * 只做「缺了才补」这一件事：不删除、不改写用户 node_modules 里的任何东西
+     * （社区插件是用户自己装的，App 无权替他清理），也不再动 profiles/web/package.json。
      */
     fun ensureBundledPlugins(ctx: android.content.Context) {
         val home = File(ctx.filesDir, "dsh-home")
@@ -1277,11 +1270,6 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             return
         }
         if (!modules.isDirectory) modules.mkdirs()
-        LEGACY_BUNDLED_PLUGINS.forEach { name ->
-            val dir = File(modules, name)
-            if (dir.exists() && dir.deleteRecursively()) Log.i(TAG, "removed legacy bundled plugin: $name")
-        }
-        repairPackageJson(profile)
         if (File(modules, "pnpm").isDirectory) return
         runCatching {
             ctx.assets.open("bundled-plugins.zip").use { input ->
@@ -1300,26 +1288,6 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             }
         }.onSuccess { Log.i(TAG, "pnpm toolchain installed into node_modules") }
             .onFailure { Log.w(TAG, "pnpm extract failed: ${it.message}") }
-    }
-
-    /** 清理历史版本写坏的 profile package.json（只清理自己插入的三条，并校验 JSON 通过才落盘）。 */
-    private fun repairPackageJson(profile: File) {
-        val pkg = File(profile, "package.json")
-        if (!pkg.exists()) return
-        runCatching {
-            var text = pkg.readText()
-            val before = text
-            LEGACY_BUNDLED_PLUGINS.forEach { name ->
-                text = text.replace(Regex("\n    \"$name\": \"[^\"]*\",?"), "")
-            }
-            text = text.replace(Regex(",\\s*\\}"), "}").replace(Regex("\\{\\s*,"), "{")
-            if (text != before) {
-                runCatching { org.json.JSONObject(text) }.onSuccess {
-                    pkg.writeText(text)
-                    Log.i(TAG, "package.json repaired (removed stray bundled-plugin entries)")
-                }.onFailure { Log.w(TAG, "package.json still invalid after repair: ${it.message}") }
-            }
-        }.onFailure { Log.w(TAG, "package.json repair failed: ${it.message}") }
     }
 
     /**

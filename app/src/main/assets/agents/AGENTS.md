@@ -669,18 +669,14 @@ The only legitimate writer is the app itself (a new release bumps the seed versi
 - **`ownOverlay:true`**：只表示落点在我们自己的无障碍悬浮窗上。自家控件（胶囊、工具条按钮）坐标手势有效；悬浮窗透明区（下方是第三方 App）会被吞，改节点动作或 `/overlay {"show":false}`。
 - 坐标点击回执含 `sent/dispatchedAt/window/node/staleFullScreenNode/ownOverlay`；`/act` 的 `tapXY` 与 `/tap` 同一套分发（默认手势，`{"smart":true}` 走节点语义）。`window.target` 指落点所在窗口（优先前台 App），看到 `ownOverlay:true` 说明点在我们自己的悬浮窗上，改用 `/overlay` 或节点点击。
 
-## Bundled plugins (dshmarket / dsh-mnemon / dsh-genui)
+## Bundled tooling (pnpm only)
 
-Release builds ship these three plugins inside the APK and the app extracts them into
-`$DSH_HOME/profiles/web/node_modules/` on first start (offline, ~6 MB zip). They are normal
-packages — you own them:
+Release builds ship **no community plugins**. The only bundled payload is the `pnpm`
+toolchain (inside `assets/bundled-plugins.zip`), which dsh-market needs to install
+packages offline: on first start the app extracts it into
+`$DSH_HOME/profiles/web/node_modules/pnpm` and never touches anything else there.
 
-- **disable / remove**: `dsh plugin remove <name>` (or delete the directory
-  `$DSH_HOME/profiles/web/node_modules/<name>`). To stop the app from restoring them at boot,
-  create the marker file `$DSH_HOME/.dsh-bundled-off` (one line per name is optional; its mere
-  existence disables auto-restore).
-- **modify**: edit files in place; the extractor never overwrites an existing file, so your
-  edits survive restarts. Upgrading the APK does not reset them.
-- **re-enable**: delete `.dsh-bundled-off` and the target dir, then restart the engine.
-
-Versions bundled: dshmarket 1.73.1, dsh-mnemon 0.5.36, dsh-genui 0.3.1.
+- The app does **not** delete, patch, or rewrite plugins you installed
+  (`node_modules/*`, `profiles/web/package.json` are yours alone).
+- Create `$DSH_HOME/.dsh-bundled-off` to skip even the pnpm extraction.
+- Install plugins with `dsh plugin add <npm-name>`; remove them with `dsh plugin remove <name>`.

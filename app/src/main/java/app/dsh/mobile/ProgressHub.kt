@@ -38,6 +38,9 @@ object ProgressHub {
     private const val CHANNEL_ID = "dsh_progress"
     private const val NOTIF_ID = 4301
 
+    /** 悬浮窗无权限时只提示一次，避免反复占用通知栏。 */
+    private var overlayDeniedHintShown = false
+
     private val main = Handler(Looper.getMainLooper())
 
     private data class Snapshot(
@@ -277,11 +280,22 @@ object ProgressHub {
             // 没有悬浮窗权限且没有无障碍 → 回退通知
         }
         if (m == MODE_OVERLAY && !android.provider.Settings.canDrawOverlays(ctx)) {
-            // 选的是悬浮窗但没权限：明确告知并引导授权，而不是静默退回普通通知
-            publishNotification(
-                ctx,
-                snap.copy(title = ctx.getString(R.string.progress_overlay_denied_title)),
-            )
+            // 选的是悬浮窗但没权限：只提示一次，且不占长驻（不给 setOngoing）
+            if (!overlayDeniedHintShown) {
+                overlayDeniedHintShown = true
+                publishNotification(
+                    ctx,
+                    snap.copy(title = ctx.getString(R.string.progress_overlay_denied_title)),
+                    ongoing = false,
+                )
+            }
+            return
+        }
+        if (m == MODE_OVERLAY) {
+            /* 悬浮窗模式但窗口没显示出来（被收起 / 没权限 / 初始化失败）：
+             * 不接管、也不更新任何通知 —— 通知位属于引擎的常驻通知，
+             * 进度信息只能在悬浮窗里展示。 */
+            cancelNotification(ctx)
             return
         }
         publishNotification(ctx, snap)
@@ -306,7 +320,7 @@ object ProgressHub {
         }
     }
 
-    private fun publishNotification(ctx: Context, snap: Snapshot) {
+    private fun publishNotification(ctx: Context, snap: Snapshot, ongoing: Boolean = true) {
         // 悬浮窗模式且悬浮窗在场时，不再发"进度"通知（用户反馈：开了悬浮窗仍有通知残留一闪而过）
         if (mode(ctx) == MODE_OVERLAY && StatusOverlay.isAttached()) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -330,7 +344,7 @@ object ProgressHub {
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .addAction(Notification.Action.Builder(null, ctx.getString(R.string.progress_open), open).build())
         val finished = snap.kind == "done" || snap.kind == "error"
-        builder.setOngoing(!finished)
+        builder.setOngoing(ongoing && !finished)
         nm.notify(NOTIF_ID, builder.build())
         doneClearRunnable?.let { main.removeCallbacks(it); doneClearRunnable = null }
         if (finished) {
