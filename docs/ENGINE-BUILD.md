@@ -96,6 +96,37 @@ scripts/build-engine-closure.sh \
 已覆盖的差异：`dsh-host-apiproxy` 0.2.2 已删、`corepack` 0.2.2 不带、
 `libhistory` 缺失、`lib/` 与 `lib/dsh-engine/lib/` 两种布局。
 
+### 1.4.1 sharp 的 wasm 回退（不打这层，`read_image` 在 Android 上不可用）
+
+dsh 的图片归一化（`read_image` / 附件预处理）用 sharp。sharp 的**预编译平台列表没有
+android**（只有 darwin / linux / linuxmusl / win32 / freebsd / wasm32），而 `@img/sharp-linux-arm64`
+是 glibc 产物（`NEEDED libc.so.6` / `ld-linux-aarch64.so.1`），bionic 加载不了。结果：
+
+```
+Error: Could not load the "sharp" module using the android-arm64 runtime
+```
+
+`patch-engine-closure.sh` 的第 3.10 步会自动调 `scripts/patch-sharp-wasm.sh` 补上回退，
+**无需手工介入**；也可单独跑：
+
+```sh
+NM=/tmp/eng/lib/node_modules bash scripts/patch-sharp-wasm.sh
+NM=/tmp/eng/lib/node_modules DRY=1 bash scripts/patch-sharp-wasm.sh   # 只报告
+```
+
+要点（踩过的坑）：
+
+- 装 `@img/sharp-wasm32@<sharp 版本>` + `@emnapi/runtime@^1.11.3`，体积约 **9.4 MB**，零编译、跨设备可用；
+- **必须双落位**：`<NM>/@img/sharp-wasm32` 与 `<NM>/sharp/node_modules/@img/sharp-wasm32`
+  （两边都要 `@emnapi/runtime`）——只放顶层时活跃引擎进程仍报同样的错；
+- 包的入口是 `exports["./sharp.node"] → ./index.cjs`，真正的 wasm 在 `lib/*.node.wasm`（≈9.0 MB），
+  自检别去找 `sharp.node` 实体文件；
+- 宿主侧可验证 payload 完整性：把 `sharp` + 这两个包放进临时 `node_modules` 后
+  `node -e "require('sharp').versions"` → `sharp 0.35.5 / vips 8.18.7`（宿主机没有平台二进制时
+  正好走 wasm 分支）；
+- 原生 addon（`src/build/Release/sharp-android-arm64-0.35.5.node`）更快（103–127 ms vs wasm
+  202–254 ms），但依赖 Termux 的 libvips；要做也得**和 wasm 一起打**，否则设备缺 libvips 时没回退。
+
 ### 1.5 装机与回滚
 
 ```sh
@@ -118,6 +149,8 @@ dsh-update rollback   # 出问题回上一个引擎
 3. `node -e "require('./node_modules/@deepseek-ai/cordis/lib/index.js')"` 不报错
 4. `node node_modules/@deepseek-ai/dsh/lib/bin.js --version` 等于目标版本
 5. tar 里存在 `lib/node_modules/@deepseek-ai/dsh/lib/bin.js`
+6. `ls node_modules/@img/sharp-wasm32 node_modules/sharp/node_modules/@img/sharp-wasm32`
+   两处都在（否则 Android 上 `read_image` 报 "Could not load the sharp module"）
 
 ---
 

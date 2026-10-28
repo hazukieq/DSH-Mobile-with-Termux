@@ -582,6 +582,19 @@ if find "$ROOT" -type f -path '*@vscode/ripgrep-linux-*/*/rg' -print -quit | gre
   exit 1
 fi
 
+# ---- 3.10 sharp 的 wasm 回退（Android 无预编译二进制，read_image 依赖它）----
+# sharp 的预编译平台列表没有 android；@img/sharp-linux-arm64 是 glibc 产物加载不了。
+# 打包 @img/sharp-wasm32 + @emnapi/runtime（双落位：顶层 + sharp/node_modules 各一份），
+# 否则 read_image 会报 "Could not load the sharp module using the android-arm64 runtime"。
+if [ -d "$NM/sharp" ]; then
+  if ! NM="$NM" NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}" \
+       bash "$SCRIPT_DIR/patch-sharp-wasm.sh"; then
+    echo "note: sharp 的 wasm 回退安装失败 —— 该包 read_image 会不可用" >&2
+  fi
+else
+  echo "note: 闭包里没有 sharp，跳过 wasm 回退" >&2
+fi
+
 echo "Android 补丁完成：koffi/inert, node-pty/shim, sandbox-local/source-patch, session-persistence/rename, dsh-fs-local/rename, ripgrep/平台包注入, soname-aliases, pnpm+curl wrapper"
 echo "dsh 引擎已集成：$(du -sh "$ROOT/lib/node_modules" | cut -f1)，样例 $(ls "$ROOT/lib/node_modules/@deepseek-ai" 2>/dev/null | head -n4 | tr '\n' ' ')"
 
