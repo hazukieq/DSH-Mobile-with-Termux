@@ -124,7 +124,13 @@ NM=/tmp/eng/lib/node_modules DRY=1 bash scripts/patch-sharp-wasm.sh   # 只报�
 - 宿主侧可验证 payload 完整性：把 `sharp` + 这两个包放进临时 `node_modules` 后
   `node -e "require('sharp').versions"` → `sharp 0.35.5 / vips 8.18.7`（宿主机没有平台二进制时
   正好走 wasm 分支）；
-- 原生 addon（`src/build/Release/sharp-android-arm64-0.35.5.node`）更快（103–127 ms vs wasm
+- **原生 addon（可选，更快）**：`scripts/build-sharp-native.sh` 在设备上用 clang 直编（不跑
+  node-gyp：0.2.2 引擎没 corepack，`npm` 包装器会炸；Android 的 `/tmp` 只读，要用 `$PREFIX/tmp`）。
+  产物约 **340 KB**，放到 `<NM>/sharp/src/build/Release/sharp-android-arm64-<ver>.node` 即 sharp
+  加载器的首选路径。实测 103–127 ms（wasm 202–254 ms）。
+  ⚠️ 它动态依赖 Termux 的 `libvips`（`RUNPATH=$PREFIX/lib`）；没有 libvips 的设备 dlopen 失败后
+  sharp 会自动回落 wasm —— 所以**原生 + wasm 要一起打**，任何设备都能用。
+- 原生 addon 还需要注意（`src/build/Release/sharp-android-arm64-0.35.5.node`）更快（103–127 ms vs wasm
   202–254 ms），但依赖 Termux 的 libvips；要做也得**和 wasm 一起打**，否则设备缺 libvips 时没回退。
 
 ### 1.5 装机与回滚
