@@ -30,7 +30,7 @@ function createMobileUi() {
   'use strict'
 
   /** Bump together with package.json version (shown in diagnostics). */
-  var VERSION = '0.1.19'
+  var VERSION = '0.1.36'
   /** Fixed bar height in CSS px (safe-area inset added on top). */
   var BAR_HEIGHT = 52
   /** Phone breakpoint: above this the shipped desktop layout is left alone. */
@@ -756,6 +756,11 @@ function createMobileUi() {
         /* our own attribute still presents the pane */
       }
     }
+    /* 面板里已经有标签时，什么都不放：dock 自己记得上次停留的标签，
+     * 我们硬塞一个 kind 只会把用户的标签顶成「开始」。 */
+    var col = q('.pI_x6G_rightbarCol')
+    var existing = col === null ? 0 : col.querySelectorAll('[role="tab"]').length
+    if (existing > 0) return
     var right = rightPaneService()
     if (right && typeof right.openTab === 'function') {
       try {
@@ -908,8 +913,21 @@ function createMobileUi() {
   /** Hide the pane button when this build has no right pane at all. */
   function updatePanelAvailability() {
     if (state.panelButton === null) return
-    var hasPane = layoutService() !== void 0 || rightPaneService() !== void 0
+    var live = isSessionView()
+    var hasPane = live && (layoutService() !== void 0 || rightPaneService() !== void 0)
     if (hasPane !== !state.panelButton.hidden) state.panelButton.hidden = !hasPane
+    /* 离开会话页时把已打开的侧栏一并收掉，避免在插件页/记忆页上留一个空面板 */
+    if (!live && document.documentElement.getAttribute('data-dshm-pane') === 'open') {
+      setPaneOpen(false)
+      var layout = layoutService()
+      if (layout && typeof layout.closeRightbar === 'function') {
+        try {
+          layout.closeRightbar()
+        } catch (error) {
+          /* presentation already closed */
+        }
+      }
+    }
   }
 
   /* ────────────────────────────── drawer / info ────────────────────────────── */
@@ -997,13 +1015,24 @@ function createMobileUi() {
   }
 
   /** Show the info button only where there is a conversation header to reveal. */
+  /** 当前页是不是「某个会话」：非会话页（插件、记忆、自动化…）没有这些锚点。 */
+  function isSessionView() {
+    if (conversationHeader() !== null) return true
+    return q('.uV2eYG_root') !== null || q('.EvIC1a_scroll') !== null
+  }
+
   function updateInfoAvailability() {
     if (state.infoButton === null) return
-    var hasHeader = conversationHeader() !== null
-    if (hasHeader !== !state.infoButton.hidden) {
-      state.infoButton.hidden = !hasHeader
+    var live = isSessionView()
+    /* 非会话页、或会话头是空的（没有标题/没有任何内容）时不显示 (i) */
+    var header = conversationHeader()
+    /* 会话头存在但内容为空（没有标题/标签/动作）时同样算“空” */
+    var headerText = header === null ? '' : String(header.innerText || '').trim()
+    var hasContent = live && (header === null || headerText.length > 8)
+    if (hasContent !== !state.infoButton.hidden) {
+      state.infoButton.hidden = !hasContent
     }
-    if (!hasHeader && state.info) setInfo(false)
+    if (!hasContent && state.info) setInfo(false)
   }
 
   /**

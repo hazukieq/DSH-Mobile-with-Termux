@@ -1,6 +1,6 @@
 {
   "name": "dsh-mobile-ui",
-  "version": "0.1.19",
+  "version": "0.1.36",
   "private": true,
   "description": "Android-app-style mobile UI layer for the DeepSeek Harness Web interface: popup drawer sidebar, collapsed top-info panel, phone-adapted composer.",
   "type": "module",

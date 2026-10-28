@@ -479,8 +479,6 @@ object EngineConfig {
         //     default only carries workspace-write + danger-full-access, and losing
         //     `read-only` would remove a preset the WebUI offers.
         //   · sandbox-policy needs workspaceRoot (schema marks it required).
-        // 内置社区插件解压后的绝对路径（overlay 的相对路径是相对 $PREFIX 解析的，这里必须给绝对路径）
-        val bundledAbs = File(File(ctx.filesDir, "dsh-home"), "profiles/web/node_modules").absolutePath
         val body = """
             |# [dsh-android] Android compatibility overlay (auto-generated, do not edit)
             |# Sandbox backends (landlock/seatbelt) do not exist on Android, and any
@@ -574,15 +572,15 @@ object EngineConfig {
             |    compressionLevel: 1
             |    compressionThresholdBytes: 1024
             |
-            |# Web fetch provider (v1.3.27): keep the shipped Messages search provider, move
-            |# fetch to the composite provider registered below (official Fetch API first,
-            |# local fallback with fake-IP ranges allowed). A patch replaces the whole config
-            |# row, so both fields are restated rather than inherited.
+            |# Web providers: leave this row unpatched on purpose. Patching `web`'s
+            |# searchProvider/fetchProvider makes the shipped 「网页搜索」settings page
+            |# reject every save ("本部署没有接受这些值") on this engine build, because
+            |# the form round-trips the row config against the values it served. The
+            |# composite fetch provider below is still registered, so a user (or a
+            |# future patch that changes the form's defaults) can opt in by setting
+            |# fetchProvider: android-fetch-auto from the settings UI.
             |- id: web
             |  name: '@deepseek-ai/dsh-web'
-            |  config:
-            |    searchProvider: deepseek-official
-            |    fetchProvider: android-fetch-auto
             |
             |# This probe is intentionally last: Cordis keeps failed imports as
             |# entries without a fiber, while the HTTP port can still be healthy.
@@ -649,19 +647,6 @@ object EngineConfig {
             |- insert:
             |    - id: mobile-progress
             |      name: ./android-plugins/mobile-progress/index.js
-            |
-            |# v2.5.44 bundled community plugins (shipped in assets/bundled-plugins.zip,
-            |# extracted into profiles/web/node_modules on first start). They are ordinary
-            |# node packages: `dsh plugin remove <id>` or deleting the folder disables one;
-            |# creating ${'$'}DSH_HOME/.dsh-bundled-off stops the extractor from restoring them.
-            |# Remove/comment these three lines to keep the packages on disk but unloaded.
-            |- insert:
-            |    - id: dshmarket
-            |      name: ${bundledAbs}/dshmarket/lib/index.js
-            |    - id: dsh-mnemon
-            |      name: ${bundledAbs}/dsh-mnemon/lib/index.js
-            |    - id: dsh-genui
-            |      name: ${bundledAbs}/dsh-genui/lib/index.js
             |
             |""".trimMargin()
         runCatching {
@@ -1269,21 +1254,21 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             .onFailure { Log.w(TAG, "ensureBundledPlugins failed: ${it.message}") }
     }
 
-    /** 发行版内置的三个社区插件（离线可用，可由 agent/用户移除或改动）。 */
-    private val BUNDLED_PLUGINS = listOf("dshmarket" to "1.73.1", "dsh-mnemon" to "0.5.36", "dsh-genui" to "0.3.1")
+    /** 历史上内置过、现已不再随包发行的社区插件（仅用于清理残留与修 package.json）。 */
+    private val LEGACY_BUNDLED_PLUGINS = listOf("dshmarket", "dsh-mnemon", "dsh-genui")
 
     /** 关掉内置插件自动落地的标记文件（agent 可 touch 它，或直接删 node_modules 目录）。 */
     private fun bundledPluginsMarker(home: File) = File(home, ".dsh-bundled-off")
 
     /**
-     * 把 assets/bundled-plugins.zip（含依赖树）解到 `$DSH_HOME/profiles/web/node_modules/`，
-     * 并补写 package.json dependencies。三条语义：
-     *  1. 幂等：三个包都在就跳过；
-     *  2. 尊重删除：任一包目录被删掉、或存在 `.dsh-bundled-off` 标记 → 不重装（避免“删了又回来”）；
-     *  3. 不覆盖已有：解压只在目标文件不存在时写入，用户改过的插件不会被重置。
+     * 只保留 pnpm（dsh-market 安装时需要它，离线可用）。
+     *
+     * 社区插件**不再随包内置**：之前内置 dshmarket/dsh-mnemon/dsh-genui 会让 dsh
+     * 把它们当成“已装但来源不明”的包，插件识别与升级都出问题。现在这里只做两件事：
+     *  1. 清掉历史版本解出来的这三个目录（升级后用干净的 node_modules）；
+     *  2. 缺 pnpm 时从 assets/bundled-plugins.zip（现在只含 pnpm）解出来。
      */
     fun ensureBundledPlugins(ctx: android.content.Context) {
-        // 注意：DSH_HOME 是 filesDir/dsh-home（不是 engineRoot 下的 dsh-home）
         val home = File(ctx.filesDir, "dsh-home")
         val profile = File(home, "profiles/web")
         val modules = File(profile, "node_modules")
@@ -1292,11 +1277,12 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             return
         }
         if (!modules.isDirectory) modules.mkdirs()
-        val missing = BUNDLED_PLUGINS.filter { !File(modules, it.first).isDirectory }
-        // pnpm 也在同一个包里（dsh-market 需要它），老版本装机后目录里没有，必须补一次
-        val needPnpm = !File(modules, "pnpm").isDirectory
-        if (missing.isEmpty() && !needPnpm) { repairPackageJson(profile); return }
-        // 只要其中一个缺失就整体补齐（其它已存在的同名文件不覆盖）
+        LEGACY_BUNDLED_PLUGINS.forEach { name ->
+            val dir = File(modules, name)
+            if (dir.exists() && dir.deleteRecursively()) Log.i(TAG, "removed legacy bundled plugin: $name")
+        }
+        repairPackageJson(profile)
+        if (File(modules, "pnpm").isDirectory) return
         runCatching {
             ctx.assets.open("bundled-plugins.zip").use { input ->
                 java.util.zip.ZipInputStream(input.buffered()).use { zip ->
@@ -1312,9 +1298,8 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
                     }
                 }
             }
-        }.onSuccess { Log.i(TAG, "bundled plugins installed: ${missing.joinToString { it.first } }${if (needPnpm) "+pnpm" else ""}") }
-            .onFailure { Log.w(TAG, "bundled plugins extract failed: ${it.message}") }
-        repairPackageJson(profile)
+        }.onSuccess { Log.i(TAG, "pnpm toolchain installed into node_modules") }
+            .onFailure { Log.w(TAG, "pnpm extract failed: ${it.message}") }
     }
 
     /** 清理历史版本写坏的 profile package.json（只清理自己插入的三条，并校验 JSON 通过才落盘）。 */
@@ -1324,9 +1309,8 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
         runCatching {
             var text = pkg.readText()
             val before = text
-            BUNDLED_PLUGINS.forEach { (name, ver) ->
-                text = text.replace("\n    \"$name\": \"$ver\",", "")
-                    .replace("\n    \"$name\": \"$ver\"", "")
+            LEGACY_BUNDLED_PLUGINS.forEach { name ->
+                text = text.replace(Regex("\n    \"$name\": \"[^\"]*\",?"), "")
             }
             text = text.replace(Regex(",\\s*\\}"), "}").replace(Regex("\\{\\s*,"), "{")
             if (text != before) {
