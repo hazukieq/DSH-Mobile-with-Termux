@@ -9,7 +9,11 @@
 #                             print only that section (heading until the next "## ")
 #   docs --grep "ownOverlay"  grep across every doc + DSH-MOBILE.md, with file:line
 #   docs --path               print the docs directory
-# Docs live in $DSH_HOME/docs and are refreshed from the APK on app update.
+#   docs --fetch [ref]        pull the newest docs from the GitHub repo into $DSH_HOME/docs
+#   docs --fetch --dry-run    only list what would change
+# Docs live in $DSH_HOME/docs and are refreshed from the APK on app update;
+# --fetch lets you update them without waiting for a new APK (the directory is
+# inside the app sandbox, so writing it is allowed).
 HERE=${0%/*}
 . "$HERE/_dsh_http.sh" 2>/dev/null
 DSH_HOME=${DSH_HOME:-$HOME}
@@ -25,6 +29,81 @@ case "$1" in
     if [ -d "$DIR/testing" ]; then
       echo "testing/:"
       for f in "$DIR"/testing/*.md; do [ -f "$f" ] && printf '  %-26s %5s lines\n' "testing/$(basename "$f")" "$(wc -l < "$f")"; done
+    fi
+    ;;
+  --fetch|--fetch-docs|-F)
+    # 从 GitHub 拉最新文档覆盖 $DSH_HOME/docs（App 私有空间，允许写）。
+    # 走 GitHub API 列目录 + raw 下载单文件：约 22 个 ~40KB 请求，秒级完成，
+    # 不用下整包 tarball（实测整包 100s+ 且吃流量）。
+    # ref 可用参数或 DSH_DOCS_REF 指定（默认 main）；DSH_DOCS_REPO 可换 fork。
+    ref="${DSH_DOCS_REF:-main}"
+    dry=0
+    _n=0
+    for a in "$@"; do
+      _n=$((_n+1))
+      case "$a" in
+        --dry-run|--dry) dry=1 ;;
+        -*) ;;
+        *) [ "$_n" -gt 1 ] && ref="$a" ;;
+      esac
+    done
+    repo="${DSH_DOCS_REPO:-hazukieq/DSH-Mobile-with-Termux}"
+    curl_bin="$(command -v curl 2>/dev/null || echo "$PREFIX/bin/curl")"
+    if [ ! -x "$curl_bin" ]; then echo "docs: curl not found (pkg install curl)"; exit 1; fi
+    [ -d "$DIR" ] || mkdir -p "$DIR" || { echo "docs: cannot create $DIR"; exit 1; }
+    work="$DIR/.fetch-tmp"
+    rm -rf "$work" 2>/dev/null; mkdir -p "$work" || exit 1
+
+    list="$work/list.json"
+    if ! "$curl_bin" -fsSL --max-time 30 \
+        -H 'Accept: application/vnd.github+json' \
+        "https://api.github.com/repos/$repo/contents/docs?ref=$ref" -o "$list"; then
+      echo "docs: 列目录失败（repo=$repo ref=$ref；网络或 ref 不存在，或 GitHub API 限流）"
+      echo "      可稍后重试，或只同步单篇：docs <NAME> 仍在本地"
+      rm -rf "$work" 2>/dev/null; exit 1
+    fi
+    names=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*\.md"' "$list" | sed 's/.*"\([^"]*\)"$/\1/' | sort -u)
+    [ -n "$names" ] || { echo "docs: 该 ref 下 docs/ 没有 .md"; rm -rf "$work" 2>/dev/null; exit 1; }
+
+    # 并发下载（22 个文件串行在弱网下要 2 分钟，并发后 5–10 秒）
+    for b in $names; do
+      ( "$curl_bin" -fsSL --max-time 40 \
+          "https://raw.githubusercontent.com/$repo/$ref/docs/$b" -o "$work/$b" \
+          || : > "$work/$b.fail" ) &
+    done
+    wait
+    # 弱网下偶发 TLS/eof 失败：失败的重试一次（串行，代价小）
+    for b in $names; do
+      [ -f "$work/$b.fail" ] || continue
+      : > "$work/$b.retry"
+      "$curl_bin" -fsSL --max-time 40 \
+        "https://raw.githubusercontent.com/$repo/$ref/docs/$b" -o "$work/$b" \
+        && rm -f "$work/$b.fail" 2>/dev/null
+    done
+
+    new=0; upd=0; same=0; fail=0; files=""
+    for b in $names; do
+      files="$files $b"
+      if [ -f "$work/$b.fail" ] || [ ! -s "$work/$b" ]; then
+        echo "  ! $b 下载失败"; fail=$((fail+1)); continue
+      fi
+      if [ ! -f "$DIR/$b" ]; then new=$((new+1)); echo "  + $b"; [ "$dry" = 1 ] || cp -f "$work/$b" "$DIR/$b"
+      elif cmp -s "$work/$b" "$DIR/$b"; then same=$((same+1))
+      else upd=$((upd+1)); echo "  ~ $b"; [ "$dry" = 1 ] || cp -f "$work/$b" "$DIR/$b"; fi
+    done
+    rm -rf "$work" 2>/dev/null
+    if [ "$dry" = 1 ]; then
+      echo "docs: dry-run — 新增 $new / 更新 $upd / 未变 $same${fail:+ / 失败 $fail}（未写入）"
+    else
+      echo "docs: 已从 $repo@$ref 同步 — 新增 $new / 更新 $upd / 未变 $same${fail:+ / 失败 $fail}"
+      stale=""
+      for f in "$DIR"/*.md; do
+        [ -f "$f" ] || continue
+        b="$(basename "$f")"
+        case " $files " in *" $b "*) ;; *) stale="$stale $b" ;; esac
+      done
+      [ -n "$stale" ] && echo "docs: 仓库里已没有（未删除，需要的话手动清）:$stale"
+      echo "docs: 位置 $DIR"
     fi
     ;;
   --path|-p) echo "$DIR" ;;

@@ -12,6 +12,7 @@ docs --section "Android powers" DSH-MOBILE  # just that section
 docs --grep "ownOverlay"                    # grep all docs + the manual, file:line
 docs --grep "handoff.*true"                 # plain grep semantics: ERE regex, case-sensitive
 docs --grep -i "ownoverlay"                 # -i ignore case, -F literal, -l names only, -c counts
+docs --fetch                                 # pull newest docs from GitHub (overwrite; --dry-run to preview)
 docs ACCESSIBILITY                          # one specific doc
 ```
 

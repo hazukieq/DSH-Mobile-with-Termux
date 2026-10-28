@@ -2,7 +2,10 @@
 
 > 这份目录随 App 打包（当前 22 篇）：安装/升级后在设备上用 `docs` 门读（`docs` 列目录、
 > `docs ACCESSIBILITY` 打印单篇），落盘位置 `$DSH_HOME/docs`，每次 App 更新按内容比对自动刷新。
-> **不随包**的只有两类：`CREDITS.md`（许可与分发义务，仓库内查阅）与 `testing/`（仓库内的回归实测记录）。
+> 想立刻拿到仓库最新文档而不用等发版：`docs --fetch`（可加 `--dry-run` 先看差异，
+> 或 `docs --fetch v2.5.52` 指定 tag/branch）；它是覆盖式更新，**不删**仓库里已没有的本地文件。
+> **不随包**的只有两类：`CREDITS.md`（许可与分发义务，仓库内查阅；`docs --fetch` 会一并拉下来，
+> 便于离线看许可证）与 `testing/`（仓库内的回归实测记录）。
 
 App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）；这里放细节展开与实测记录。
 按问题找文件：
