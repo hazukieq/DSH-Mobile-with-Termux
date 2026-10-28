@@ -24,7 +24,7 @@ object AgentContextSeed {
     private const val FILE_NAME = "AGENTS.md"
     private const val MARKER_PREFIX = "<!-- dsh-android AGENTS seed v"
     /** 当前模板版本：改文案必须同步递增，旧版才会被升级覆盖 */
-    private const val SEED_VERSION = 114
+    private const val SEED_VERSION = 118
 
     /**
      * 用户段起始标记（v1.3.2，issue #19）。
@@ -40,12 +40,15 @@ object AgentContextSeed {
 
     /** 用户段为空时的占位提示（告诉用户/设置页写在哪里）。 */
     private const val USER_SECTION_PLACEHOLDER =
-        "<!-- Add your own instructions below this line. DSH Mobile never overwrites\n" +
-            "     this section, and upgrades keep it as-is. Ask the AI to write here for you. -->"
+        "<!-- USER-ONLY SECTION: edit this area yourself (Settings → Agent instructions,\n" +
+            "     or a file editor). Agents and tools must never write this file; the app\n" +
+            "     reverts external writes and logs them to log/instructions-audit.log. -->"
 
     fun ensure(ctx: Context) {
         val file = File(EngineConfig.dshHome(ctx), FILE_NAME)
         val existing = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
+
+        deploySkills(ctx)
 
         // ① 文件不存在 → 写入完整模板（含空的用户段）
         if (existing == null) {
@@ -93,6 +96,22 @@ object AgentContextSeed {
     }
 
     /** 取 App 段（用户段之前的部分）；没有用户段就是全文。 */
+    /** 把 assets/skills 下的内置技能复制到 `$DSH_HOME/skills`（缺什么补什么，不覆盖）。 */
+    private fun deploySkills(ctx: Context) {
+        runCatching {
+            val root = File(EngineConfig.dshHome(ctx), "skills")
+            for (name in ALWAYS_ON_SKILLS) {
+                val dst = File(File(root, name), "SKILL.md")
+                if (dst.isFile) continue
+                dst.parentFile?.mkdirs()
+                ctx.assets.open("skills/$name/SKILL.md").use { input ->
+                    dst.outputStream().use { input.copyTo(it) }
+                }
+                Log.i(TAG, "skill deployed: $name")
+            }
+        }.onFailure { Log.w(TAG, "deploySkills failed: ${it.message}") }
+    }
+
     private fun appSectionOf(text: String): String {
         val i = text.indexOf(USER_SECTION_BEGIN)
         return if (i < 0) text.trimEnd() + "\n" else text.substring(0, i)
@@ -123,14 +142,83 @@ object AgentContextSeed {
 
     /** 写文件（父目录按需创建；异常只记日志）。 */
     private fun write(file: File, text: String) {
+        appWriting.set(true)
         runCatching {
             file.parentFile?.mkdirs()
             file.writeText(text)
+            lastGood = text
         }.onFailure { Log.w(TAG, "write AGENTS.md failed: ${it.message}") }
+        appWriting.set(false)
     }
 
     private fun containsVersion(text: String, v: Int): Boolean =
         text.contains("$MARKER_PREFIX$v ")
+
+    /** 随包内置、且会话一开就必须生效的技能（正文直接注入 AGENTS.md）。 */
+    private val ALWAYS_ON_SKILLS = listOf("evidence-discipline")
+
+    private fun alwaysOnSkillBlock(ctx: Context): String = buildString {
+        for (name in ALWAYS_ON_SKILLS) {
+            val body = runCatching {
+                ctx.assets.open("skills/$name/SKILL.md").use { it.readBytes().toString(Charsets.UTF_8) }
+            }.getOrNull() ?: continue
+            // 去掉 frontmatter：注入的是规则正文，不是技能元数据
+            val text = if (body.startsWith("---")) {
+                body.substringAfter("\n---", body).substringAfter('\n', body)
+            } else body
+            append("\n\n## Always-on skill: ").append(name).append("\n\n")
+            append("This skill is preloaded because the user requires it for every diagnosis/delivery.\n")
+            append("Follow it literally; do not wait for a skill-tool call.\n\n")
+            append(text.trim()).append('\n')
+        }
+    }
+
+    @Volatile private var guardStarted = false
+    private val appWriting = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var lastGood: String? = null
+
+    /**
+     * 防止 agent 自改系统提示：agent 与 App 同 uid，文件系统层面挡不住，
+     * 所以在进程内看守——外部写入（agent 的 write/edit 工具）会被还原并审计。
+     * 用户改文件请走设置页（App 写入时会置位 appWriting，不会被还原）。
+     */
+    fun startGuard(ctx: Context) {
+        if (guardStarted) return
+        guardStarted = true
+        val file = File(EngineConfig.dshHome(ctx), FILE_NAME)
+        lastGood = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
+        Log.i(TAG, "AGENTS.md guard armed (bytes=${lastGood?.length ?: 0}, skills=${ALWAYS_ON_SKILLS.joinToString()})")
+        Thread({
+            while (true) {
+                try {
+                    Thread.sleep(1500)
+                    if (appWriting.get()) continue
+                    val expected = lastGood ?: continue
+                    val current = runCatching { if (file.isFile) file.readText() else null }.getOrNull() ?: continue
+                    if (current == expected) continue
+                    val stamp = System.currentTimeMillis()
+                    val backup = File(file.parentFile, "AGENTS.md.tampered-$stamp")
+                    runCatching { backup.writeText(current) }
+                    appWriting.set(true)
+                    runCatching { file.writeText(expected) }
+                    appWriting.set(false)
+                    lastGood = expected
+                    audit(ctx, "reverted external write to AGENTS.md (bytes ${current.length} -> ${expected.length}); backup=${backup.name}")
+                    Log.w(TAG, "AGENTS.md guard: reverted external modification (backup ${backup.name})")
+                } catch (t: Throwable) {
+                    runCatching { Log.w(TAG, "AGENTS.md guard: ${t.message}") }
+                    runCatching { Thread.sleep(5000) }
+                }
+            }
+        }, "agents-md-guard").apply { isDaemon = true }.start()
+    }
+
+    private fun audit(ctx: Context, line: String) = runCatching {
+        val dir = File(EngineConfig.dshHome(ctx), "log")
+        dir.mkdirs()
+        val f = File(dir, "instructions-audit.log")
+        f.appendText("${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", java.util.Locale.US).format(java.util.Date())} $line\n")
+    }
 
     private fun render(ctx: Context): String {
         val mode = Privilege.getMode(ctx).name.lowercase()
@@ -148,6 +236,7 @@ object AgentContextSeed {
             ""
         }
         val rendered = body.replace("{{SHIZUKU_LINE}}", shz).replace("\n\n\n", "\n\n")
-        return "$MARKER_PREFIX$SEED_VERSION — managed by DSH Mobile. Edits below this line are preserved until the app upgrades this seed.\n" + rendered
+        return "$MARKER_PREFIX$SEED_VERSION — managed by DSH Mobile. Edits below this line are preserved until the app upgrades this seed.\n" +
+            rendered + alwaysOnSkillBlock(ctx)
     }
 }

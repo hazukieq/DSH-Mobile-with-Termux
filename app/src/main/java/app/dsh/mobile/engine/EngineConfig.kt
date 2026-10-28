@@ -573,8 +573,8 @@ object EngineConfig {
             |    compressionThresholdBytes: 1024
             |
             |# Web providers: leave this row unpatched on purpose. Patching `web`'s
-            |# searchProvider/fetchProvider makes the shipped 「网页搜索」settings page
-            |# reject every save ("本部署没有接受这些值") on this engine build, because
+            |# searchProvider/fetchProvider makes the shipped web-search settings page
+            |# reject every save ("this deployment did not accept these values") on this engine build, because
             |# the form round-trips the row config against the values it served. The
             |# composite fetch provider below is still registered, so a user (or a
             |# future patch that changes the form's defaults) can opt in by setting

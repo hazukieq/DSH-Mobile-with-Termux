@@ -330,6 +330,7 @@ class EngineSupervisor(private val ctx: Context) {
                 // Agent 上下文种子（m1.35）：幂等预写 $HOME/AGENTS.md（dsh 原生 user-global
                 // 指令），让 Agent 首轮就带 Android 世界观，省掉环境探索 token
                 withContext(Dispatchers.IO) { AgentContextSeed.ensure(ctx) }
+                AgentContextSeed.startGuard(ctx)
                 step("agent-seed")
 
                 // 孤儿进程回收（v1.2.104）：**必须早于桥 bind 与引擎 fork** ——

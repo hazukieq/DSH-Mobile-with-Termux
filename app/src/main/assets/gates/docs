@@ -1,9 +1,14 @@
 #!/system/bin/sh
 # docs — read the in-app detail documentation (v2.5.37)
 # Usage:
-#   docs                 list available docs
-#   docs ACCESSIBILITY   print one doc (name, with or without .md)
-#   docs --path          print the docs directory
+#   docs                      list available docs
+#   docs ACCESSIBILITY        print one doc (name, with or without .md)
+#   docs DSH-MOBILE           (falls back to $DSH_HOME/DSH-MOBILE.md)
+#   docs --toc DSH-MOBILE     list that doc's "## " headings
+#   docs --section "Android powers" DSH-MOBILE
+#                             print only that section (heading until the next "## ")
+#   docs --grep "ownOverlay"  grep across every doc + DSH-MOBILE.md, with file:line
+#   docs --path               print the docs directory
 # Docs live in $DSH_HOME/docs and are refreshed from the APK on app update.
 HERE=${0%/*}
 . "$HERE/_dsh_http.sh" 2>/dev/null
@@ -23,11 +28,64 @@ case "$1" in
     fi
     ;;
   --path|-p) echo "$DIR" ;;
+  --toc|-t)
+    n=${2:-}
+    if [ -z "$n" ]; then
+      for f in "$DIR"/*.md "$DSH_HOME/DSH-MOBILE.md"; do
+        [ -f "$f" ] || continue
+        echo "== $(basename "$f")"
+        grep -n '^## ' "$f" | sed 's/^/  /'
+      done
+      exit 0
+    fi
+    case "$n" in *.md) ;; *) n="$n.md" ;; esac
+    f="$DIR/$n"; [ -f "$f" ] || f="$DSH_HOME/$n"
+    [ -f "$f" ] || { echo "docs: no such doc: $2"; exit 1; }
+    echo "== $f"; grep -n '^## ' "$f"
+    ;;
+  --section|-s)
+    want=$2; n=${3:-DSH-MOBILE}
+    [ -n "$want" ] || { echo "docs: --section needs a heading substring"; exit 1; }
+    case "$n" in *.md) ;; *) n="$n.md" ;; esac
+    f="$DIR/$n"; [ -f "$f" ] || f="$DSH_HOME/$n"
+    [ -f "$f" ] || { echo "docs: no such doc: $n"; exit 1; }
+    awk -v want="$want" '
+      BEGIN { IGNORECASE = 1; on = 0 }
+      /^## / { if (on) exit; if (tolower($0) ~ tolower(want)) { on = 1 } }
+      on { print }
+    ' "$f"
+    ;;
+  --grep|-g)
+    # grep 语义：默认 ERE 正则、区分大小写、输出 file:line:text（可用 -i/-F/-l/-c 修饰）
+    _i=0; _F=0; _l=0; _c=0; pat=""
+    shift
+    for a in "$@"; do
+      case "$a" in
+        -i) _i=1 ;;
+        -F) _F=1 ;;
+        -l) _l=1 ;;
+        -c) _c=1 ;;
+        *)  [ -z "$pat" ] && pat="$a" ;;
+      esac
+    done
+    [ -n "$pat" ] || { echo "docs: --grep needs a pattern (grep semantics: ERE, case-sensitive; flags -i -F -l -c)"; exit 1; }
+    _opts="-n"
+    [ "$_i" = 1 ] && _opts="$_opts -i"
+    [ "$_F" = 1 ] && _opts="$_opts -F" || _opts="$_opts -E"
+    [ "$_l" = 1 ] && _opts="$_opts -l"
+    [ "$_c" = 1 ] && _opts="$_opts -c"
+    # shellcheck disable=SC2086
+    _out=$(grep $_opts -- "$pat" "$DIR"/*.md "$DSH_HOME/DSH-MOBILE.md" 2>&1)
+    _rc=$?
+    if [ "$_rc" -ge 2 ]; then echo "docs: grep error: $_out"; exit 2; fi
+    printf '%s\n' "$_out" | head -60
+    ;;
   *)
     n=$1
     case "$n" in *.md) ;; *) n="$n.md" ;; esac
     f="$DIR/$n"
     [ -f "$f" ] || f="$DIR/testing/$n"
+    [ -f "$f" ] || f="$DSH_HOME/$n"
     if [ ! -f "$f" ]; then echo "docs: no such doc: $1"; exit 1; fi
     cat "$f"
     ;;
