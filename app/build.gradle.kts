@@ -37,8 +37,8 @@ android {
         // 关键决策：targetSdk 28 —— sideload 分发，豁免 Android 10+ 的 W^X 限制，
         // 允许从 filesDir 直接 execve bionic 二进制（Termux 同款策略）。
         targetSdk = 28
-        versionCode = 484
-        versionName = "2.5.51"
+        versionCode = 485
+        versionName = "2.5.52"
 
         ndk {
             abiFilters += listOf(targetAbi)

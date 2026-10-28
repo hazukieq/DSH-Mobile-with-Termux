@@ -123,12 +123,22 @@ dsh-update rollback   # 出问题回上一个引擎
 
 ### 1.7 没有主机？在手机上自建（Termux 内，10–15 分钟）
 
-App 自带的就是完整 Termux，手机端能直接 build，不需要 root 也不需要电脑：
+App 自带的就是完整 Termux，手机端能直接 build，不需要 root 也不需要电脑——但需要联网 `git clone`（约 300 MB）与约 3 GB 空闲存储：
 
 ```sh
-pkg update && pkg install -y nodejs-lts pnpm git zip tar   # 国内源（NJU/USTC）约 1–2 分钟
+# 只装这三样。⚠️ 不要 pkg install nodejs / pnpm / python3：
+#    App 已经拥有 $PREFIX/bin/{node,pnpm,npm,npx,corepack}（都是 wrapper），
+#    Termux 包会把它们覆盖掉，之后终端里的 node 版本与 App 私有 lib 约定不一致。
+#    万一被覆盖：重启 App 会重写 wrapper；仍不对就 `dsh-update rollback` 或重装 App。
+pkg update && pkg install -y git zip tar
+
 cd ~ && git clone --depth 1 --branch dsh-v0.2.2-alpha.2 \
     https://github.com/deepseek-ai/deepseek-harness.git dhs
+# 打补丁的脚本在「本仓库」里，不在 App 里，所以还要拉一份本仓库（仅取 scripts/）：
+git clone --depth 1 --filter=blob:none --sparse \
+    https://github.com/hazukieq/DSH-Mobile-with-Termux.git dshm
+cd dshm && git sparse-checkout set scripts && cd ~
+
 cd dhs
 pnpm config set registry https://registry.npmmirror.com      # 不改会卡在 npmjs
 NODE_OPTIONS=--max-old-space-size=4096 \
@@ -140,8 +150,8 @@ NODE_OPTIONS=--max-old-space-size=4096 \
 ```sh
 # 1) 组装闭包：只保留 @deepseek-ai/* 与其运行期依赖（别整包 node_modules 打进去）
 mkdir -p ~/eng/lib && cp -a node_modules ~/eng/lib/node_modules
-# 2) 打补丁（脚本随 App 一起装在 $PREFIX/bin 之外，仓库里有）
-bash "$DSH_HOME/../scripts/patch-engine-closure.sh"   # 无仓库时按 §2 的手工补丁清单逐条打
+# 2) 打补丁（脚本来自上面 clone 的 dshm/scripts，不在 App 里）
+ROOT=~/eng ARCH=aarch64 bash ~/dshm/scripts/patch-engine-closure.sh
 # 3) 只打最小布局：lib/node_modules/** + 版本标记
 tar -C ~/eng -czf ~/engine-mine.tar.gz lib .dsh-engine-version
 dsh-update stage ~/engine-mine.tar.gz "$(sha256sum ~/engine-mine.tar.gz | cut -d' ' -f1)"

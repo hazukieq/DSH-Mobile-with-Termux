@@ -69,7 +69,8 @@
 #      apply 现在会先确认「旧引擎 pid 已消失/已换新 pid」再判健康，避免旧引擎的
 #      401 冒充健康导致回滚不触发。
 #   6) 手机端自建（可选，适合没有主机时；需 Termux 内 php? 不需要）：
-#        pkg install nodejs-lts pnpm zip        # NJU 源下约 1–2 分钟
+#        pkg install -y git zip tar              # 别装 nodejs/pnpm：会覆盖 App 的 wrapper
+#        （被打补丁脚本在仓库 scripts/ 里，需要 git clone 本仓库）
 #        cd ~ && git clone --depth 1 --branch dsh-v0.2.2-alpha.2 \
 #            https://github.com/deepseek-ai/deepseek-harness.git dhs
 #        cd dhs && pnpm install --frozen-lockfile && pnpm build:official

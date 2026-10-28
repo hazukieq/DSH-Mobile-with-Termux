@@ -206,7 +206,7 @@ unzip -p app-release.apk assets/engine-dsh-aarch64.zip | sha256sum
 
 ```bash
 git clone https://github.com/hazukieq/DSH-Mobile-with-Termux && cd DSH-Mobile-with-Termux
-git checkout v2.5.49
+git checkout v2.5.51
 export ANDROID_HOME=$HOME/Android/Sdk
 gradle -p . assembleRelease -Pabi=arm64-v8a      # JDK 17，需预置 runtime.zip / engine zip
 apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
@@ -254,14 +254,17 @@ apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
 
 ## 9. 附：实测值
 
-### 9.1 2.5.49 实测值（可复现）
+### 9.1 基线实测值（可复现）
 
-在 `2.5.49`（versionCode 482）的 release APK 上跑 `scripts/audit-apk.sh` 得到：
+> 基线版本 **2.5.51**（versionCode 484）。换版本后这些数字会变（体积/哈希），
+> 但「权限 11 条、导出组件 5 个」是结构性事实，除非 manifest 改动否则不变。
+
+在 `2.5.51`（484）的 release APK 上跑 `scripts/audit-apk.sh` 得到：
 
 | 项 | 值 |
 | --- | --- |
-| 体积 | 299,744,221 字节 |
-| SHA-256 | `17b9ca6aeb95a593cc15df602d0143ba193cdce3c1131e84fcba2757564810c9` |
+| 体积 | 299,760,680 字节 |
+| SHA-256 | `a45312fef3a0eab0570f08dff11c2818ef87a435b10817b325b3d9c4dede885d` |
 | 签名 | `CN=DSH Mobile, O=DSH, C=CN`；`178dc39b…d06401` |
 | targetSdk / minSdk | 28 / 26 |
 | ABI | arm64-v8a |
