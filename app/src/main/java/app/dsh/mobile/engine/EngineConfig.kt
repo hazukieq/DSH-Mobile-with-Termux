@@ -1180,7 +1180,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             "corepack" to "exec \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/corepack.js\" \"\$@\"",
             "npm" to "exec \"\$(dirname \"\$0\")/node\" \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/npm.js\" \"\$@\"",
             "npx" to "exec \"\$(dirname \"\$0\")/node\" \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/npx.js\" \"\$@\"",
-            "pnpm" to "PNPM_JS=\"\$(dirname \"\$0\")/../dsh-home/profiles/web/node_modules/pnpm/bin/pnpm.cjs\"; [ -f \"\$PNPM_JS\" ] && exec \"\$(dirname \"\$0\")/node\" \"\$PNPM_JS\" \"\$@\"; exec \"\$(dirname \"\$0\")/node\" \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/pnpm.js\" \"\$@\"",
+            "pnpm" to "PNPM_JS=\"\${DSH_HOME:-\$(dirname \"\$0\")/../../dsh-home}/profiles/web/node_modules/pnpm/bin/pnpm.cjs\"; [ -f \"\$PNPM_JS\" ] && exec \"\$(dirname \"\$0\")/node\" \"\$PNPM_JS\" \"\$@\"; exec \"\$(dirname \"\$0\")/node\" \"\$(dirname \"\$0\")/../lib/node_modules/corepack/dist/pnpm.js\" \"\$@\"",
         )
         shims.forEach { (name, body) ->
             val f = File(bin, name)
@@ -1270,7 +1270,15 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             return
         }
         if (!modules.isDirectory) modules.mkdirs()
-        if (File(modules, "pnpm").isDirectory) return
+        val pnpmDir = File(modules, "pnpm")
+        // 载荷完整性：pnpm 10 起 add/install 走 worker 线程，缺 dist/worker.js 就会
+        // 「Worker pnpm#1 exited with code 1」；旧版打的是裁过的包（12 文件），必须重建。
+        val payloadOk = File(pnpmDir, "dist/worker.js").isFile
+        if (pnpmDir.isDirectory && payloadOk) return
+        if (pnpmDir.isDirectory) {
+            Log.w(TAG, "pnpm payload incomplete (missing dist/worker.js), re-extracting")
+            pnpmDir.deleteRecursively()
+        }
         runCatching {
             ctx.assets.open("bundled-plugins.zip").use { input ->
                 java.util.zip.ZipInputStream(input.buffered()).use { zip ->
@@ -1283,10 +1291,14 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
                         if (out.exists()) continue
                         out.parentFile?.mkdirs()
                         out.outputStream().use { zip.copyTo(it) }
+                        zip.closeEntry()
                     }
                 }
             }
-        }.onSuccess { Log.i(TAG, "pnpm toolchain installed into node_modules") }
+        }.onSuccess {
+            val ok = File(pnpmDir, "dist/worker.js").isFile
+            Log.i(TAG, "pnpm toolchain installed into node_modules (worker.js=$ok)")
+        }
             .onFailure { Log.w(TAG, "pnpm extract failed: ${it.message}") }
     }
 
