@@ -242,3 +242,34 @@ node-pty shim  ──HTTP──▶ AgentBridge /pty/{open,write,resize,kill,clos
 | WebUI 侧边栏报 `terminal inspection is unsupported on platform android` | 引擎补丁未生效：重启引擎，确认运行时版本 |
 | WebUI 侧边栏报 `node-pty unavailable in this Android build` | overlay 未覆盖：重启引擎让 `applyRuntimeOverlays()` 重跑 |
 | `dsh-update check` 显示 `feed: unavailable` | 本仓库还没有该 dsh 版本的适配引擎包；可等 CI 或用含新引擎的 APK 升级 |
+
+### dsh-update 现在同时换「JS 闭包」与「原生库」（v2.5.62 起）
+
+引擎层其实有两块可换：
+
+| 层 | 路径 | 什么时候变 |
+|---|---|---|
+| JS 闭包 | `$PREFIX/lib/node_modules` | 每次升级 dsh 都要换 |
+| 原生库 | `$PREFIX/lib/dsh-engine/lib` | 换 node、加系统库（如 libvips、ICU）时要换 |
+
+`dsh-update apply` 会同时替换这两块：旧的 `lib/dsh-engine/lib` 整个 `mv` 到 `.engine-prev/engine-lib`，
+新的从 staged 目录 `mv` 进来，回执里会打出 `apply: native libs: N files`。
+`dsh-update rollback` 两块一起退回。
+
+这样做的好处：`sharp` 这类原生模块依赖的 `libvips` 闭包（69 个 `.so`，约 39 MB）可以随引擎层下发，
+设备上不必 `pkg install libvips`，也不必重装 APK —— 升级完就是原生。
+
+注意两点：
+
+1. **空间**：staged 目录要额外放一份完整闭包（约 1.2 GB）+ 原生库；设备剩余空间 < 3 GB 时
+   `stage` 可能失败（`ENOSPC`）。脚本会先打 `apply: native libs` 再重启，失败会自动回滚。
+2. **版本号相同不产生回滚点**：`apply` 只在新旧 `engine` 版本不同时才留 `rollback`，
+   同版本重复 apply 视为原地重刷。
+
+最小 tar 布局（`dsh-update stage` 认这个）：
+
+```
+.dsh-engine-version            # 0.2.2-alpha.2+xxx
+lib/node_modules/**            # JS 闭包
+lib/dsh-engine/lib/*.so*       # 原生库（可选，有就一起换）
+```

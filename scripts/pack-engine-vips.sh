@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# 把 libvips 的**运行时依赖闭包**拷进引擎层目录（<engine-tree>/lib），
+# 把 libvips 的**运行时依赖闭包**拷进引擎层私有库目录（<engine-tree>/lib/dsh-engine/lib），
 # 这样设备上没装 libvips 也能走 sharp 原生 addon（否则 dlopen 失败 → 回落 wasm）。
 #
 # 背景：sharp 原生 addon 的 NEEDED 含 libvips-cpp/libvips/glib/gio…（Termux 里 60+ 个 .so）。
 # 引擎层的 node 启动时把 <PREFIX>/lib/dsh-engine/lib 放进库搜索路径，工具链的 RUNPATH 也含它，
-# 所以把这批 .so 放进 <engine-tree>/lib 就等于「开箱可用」。
+# 所以把这批 .so 放进 <engine-tree>/lib/dsh-engine/lib 就等于「开箱可用」。
+# ⚠️ 必须放私有库目录，不能放 Termux 的 $PREFIX/lib：那属于 bootstrap，dsh-update 不碰，
+#    写进去等于污染用户系统库，而且换引擎时不会被替换。
 #
 # 用法：
 #   scripts/pack-engine-vips.sh --libs /tmp/vipsroot/lib --tree /tmp/engine/engine-tree
@@ -26,7 +28,9 @@ done
 [ -n "$LIBS" ] && [ -n "$TREE" ] || { echo "usage: $0 --libs <dir> --tree <engine-tree> [--dry-run]" >&2; exit 2; }
 [ -d "$LIBS" ] || { echo "no such dir: $LIBS" >&2; exit 2; }
 
-python3 - "$LIBS" "$TREE" "$DRY" <<'PY'
+DEST="$TREE/lib/dsh-engine/lib"
+mkdir -p "$DEST"
+python3 - "$LIBS" "$DEST" "$DRY" <<'PY'
 import os, re, shutil, subprocess, sys
 libs, tree, dry = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 # 这些由引擎层/系统自己提供，不要重复打（libc++_shared 在引擎 lib 已有）
@@ -38,6 +42,13 @@ readelf = shutil.which("llvm-readelf") or shutil.which("readelf") or "readelf"
 def needed(p):
     out = subprocess.run([readelf, "-d", p], capture_output=True, text=True, env=env).stdout
     return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
+
+def soname(p):
+    """读 ELF 的 SONAME：落地文件名必须用它，否则 dlopen 按 SONAME 找不到。
+    Termux 里常见只有 libpng16.so（无 .16 实体）——它自带的 SONAME 才是 libpng16.so.16。"""
+    out = subprocess.run([readelf, "-d", p], capture_output=True, text=True, env=env).stdout
+    m = re.search(r"\(SONAME\)\s+Library soname: \[([^\]]+)\]", out)
+    return m.group(1) if m else os.path.basename(p)
 
 files = os.listdir(libs)
 def find(n):
@@ -69,11 +80,16 @@ if dry:
         print(f"  {os.path.getsize(p)/1048576:6.2f} MB {os.path.basename(p)}")
     sys.exit(0)
 
-dst = os.path.join(tree, "lib")
+dst = tree  # 调用方已传进来私有库目录（<tree>/lib/dsh-engine/lib）
 os.makedirs(dst, exist_ok=True)
 n = 0
 for p in sorted(seen):
-    shutil.copyfile(p, os.path.join(dst, os.path.basename(p)))
+    name = soname(p)
+    shutil.copyfile(p, os.path.join(dst, name))
+    # 同时保留源文件名，兼容「NEEDED 写的是无版本名」的情况
+    base = os.path.basename(p)
+    if base != name and not os.path.exists(os.path.join(dst, base)):
+        shutil.copyfile(p, os.path.join(dst, base))
     n += 1
-print(f"[vips] 已拷 {n} 个 .so 到 {dst}")
+print(f"[vips] 已拷 {n} 个 .so 到 {dst}（按 SONAME 落地）")
 PY

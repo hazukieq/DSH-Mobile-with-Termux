@@ -81,7 +81,7 @@ echo "      cosmokit=$COSMOKIT workspace:$WS cordis=require-ok"
 echo "[5/6] 写版本标记: $VERSION"
 printf '%s\n' "$VERSION" > "$ROOT/.dsh-engine-version"
 
-echo "[6/6] 打包（仅 lib/node_modules + .dsh-engine-version）"
+echo "[6/6] 打包（lib/node_modules + lib/dsh-engine/lib + .dsh-engine-version）"
 rm -f "$OUT"
 # ---- 4.4 依赖审计门（每次编译必跑；FAIL 直接中断，避免发出「read_image 坏」这类包）----
 if [ -x "$SCRIPT_DIR/check-engine-deps.sh" ]; then
@@ -90,7 +90,12 @@ if [ -x "$SCRIPT_DIR/check-engine-deps.sh" ]; then
     echo "错误：依赖审计未通过，停止打包（豁免见 scripts/check-engine-deps.allow）" >&2; exit 1; }
 fi
 
-tar -czf "$OUT" -C "$ROOT" .dsh-engine-version lib/node_modules
+NATIVE_DIR=""
+[ -d "$ROOT/lib/dsh-engine/lib" ] && NATIVE_DIR="lib/dsh-engine/lib"
+if [ -n "$NATIVE_DIR" ]; then
+  echo "      原生库: $(ls "$ROOT/$NATIVE_DIR" | wc -l) files（dsh-update 会连 lib/dsh-engine/lib 一起换）"
+fi
+tar -czf "$OUT" -C "$ROOT" .dsh-engine-version lib/node_modules $NATIVE_DIR
 SIZE=$(stat -c%s "$OUT" 2>/dev/null || stat -f%z "$OUT")
 SHA=$(sha256sum "$OUT" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$OUT" | cut -d' ' -f1)
 PKGS=$(ls "$NM_DIR/@deepseek-ai" | wc -l | tr -d ' ')

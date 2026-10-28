@@ -491,3 +491,28 @@ llvm-readelf -d /tmp/engine-mine/engine-tree/lib/dsh-engine/lib/libreadline.so.8
 - Android NDK 交叉编译：<https://developer.android.com/ndk/guides/other_build_systems>
 - PyO3 交叉编译：<https://pyo3.rs/latest/building-and-distribution#cross-compiling>
 - bionic libc 差异：<https://android.googlesource.com/platform/bionic/+/master/docs/status.md>
+
+## 8. 把 libvips 闭包一起打进引擎层（原生 sharp）
+
+`sharp` 的原生 addon 需要 `libvips`。不打包时设备上必须 `pkg install libvips`，否则回落 wasm。
+`build-engine-layer.sh` 支持 `VIPS_LIBS_DIR`：设了就自动跑 `scripts/pack-engine-vips.sh`，
+把 69 个 `.so`（约 39 MB）落到 **`<engine-tree>/lib/dsh-engine/lib`** —— 引擎私有库目录，不是 Termux 的 `$PREFIX/lib`。
+
+```bash
+# 1) 设备上收集一份完整依赖闭包（一次性）
+#    tar -czf /tmp/termlibs.tar.gz -C $PREFIX/lib .
+#    adb pull /tmp/termlibs.tar.gz /tmp/ && mkdir -p /tmp/termlibs && tar -xzf /tmp/termlibs.tar.gz -C /tmp/termlibs
+
+# 2) 构建引擎层时一起打
+VIPS_LIBS_DIR=/tmp/termlibs \
+  scripts/build-engine-layer.sh --runtime /tmp/rt.zip --arch aarch64 \
+    --out /tmp/engine-vips --engine-version "0.2.2-alpha.2+sharp1"
+```
+
+要点：
+
+- 落地文件名用 **ELF 的 SONAME**（`readelf -d` 读），不要用源文件名。Termux 的 `libpng16.so`
+  常是指向 `libpng16.so.16` 的符号链接；按源名落地会让 `dlopen("libpng16.so.16")` 失败。
+- `pack-engine-vips.sh` 用 `LC_ALL=C` 跑 `readelf`（中文 locale 下输出本地化，正则匹配不到）。
+- 库必须放引擎私有目录：写进 `$PREFIX/lib` 等于污染 bootstrap，换引擎也不会被替换。
+- 设备侧 `dsh-update apply` 自 v2.5.62 起会连 `lib/dsh-engine/lib` 一起换，升级也能带上它们。

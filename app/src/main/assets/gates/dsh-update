@@ -294,6 +294,12 @@ _cmd_stage() {
   rm -rf "$STAGED.new"; mkdir -p "$STAGED.new"
   tar -xzf "$tmp" -C "$STAGED.new" || _die "extract failed"
   [ -f "$STAGED.new/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || [ -f "$STAGED/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || _die "artifact is not a dsh engine bundle"
+  # v2.5.62：引擎层现在有两块可换 —— JS 闭包(lib/node_modules) 与原生库(lib/dsh-engine/lib)。
+  # 原生库缺了会让 sharp 回落 wasm，不致命；但如果包里有，就必须一起换，否则「换了引擎但
+  # libvips 还是旧的」这种半更新状态最难查。
+  if [ -d "$STAGED.new/lib/dsh-engine/lib" ]; then
+    echo "stage: native libs: $(ls "$STAGED.new/lib/dsh-engine/lib" | wc -l) files"
+  fi
   rm -rf "$STAGED"; mv "$STAGED.new" "$STAGED"
   echo "stage: ok ($([ -f "$STAGED/.dsh-engine-version" ] && cat "$STAGED/.dsh-engine-version" || echo unknown))"
   exit 0
@@ -306,6 +312,15 @@ _swap_in() {  # $1 = staged 目录（引擎层）
   [ -d "$P/lib/node_modules" ] && { mv "$P/lib/node_modules" "$PREV/node_modules" || _die "backup of node_modules failed (out of space?)" 1; }
   for b in node rg; do [ -f "$P/bin/$b" ] && cp -f "$P/bin/$b" "$PREV/bin-$b"; done
   [ -f "$P/.dsh-engine-version" ] && cp -f "$P/.dsh-engine-version" "$PREV/engine-version"
+  # 原生库目录（lib/dsh-engine/lib）：整目录替换，旧的一份 mv 进 PREV 供回滚。
+  # 目录可能很大（vips 闭包 ~69 个 .so / 40MB），用 mv 而非 cp，避免双倍占用。
+  local native=0
+  if [ -d "$s/lib/dsh-engine/lib" ]; then
+    [ -d "$P/lib/dsh-engine/lib" ] && { mv "$P/lib/dsh-engine/lib" "$PREV/engine-lib" || _die "backup of engine lib failed (out of space?)" 1; }
+    mkdir -p "$P/lib/dsh-engine"
+    mv "$s/lib/dsh-engine/lib" "$P/lib/dsh-engine/lib" || _die "swap failed: cannot move staged engine lib" 1
+    native=$(ls "$P/lib/dsh-engine/lib" | wc -l)
+  fi
   # 换入新层（旧层已 mv 到 PREV，这里目标必然不存在）
   rm -rf "$P/lib/node_modules"
   mv "$s/lib/node_modules" "$P/lib/node_modules" || _die "swap failed: cannot move staged node_modules" 1
@@ -314,6 +329,7 @@ _swap_in() {  # $1 = staged 目录（引擎层）
   done
   [ -f "$s/.dsh-engine-version" ] && cp -f "$s/.dsh-engine-version" "$P/.dsh-engine-version"
   [ -f "$P/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || _die "swap produced a broken tree (no dsh bin.js)" 1
+  [ "$native" -gt 0 ] && echo "apply: native libs: $native files"
   echo "apply: swapped in $(_engine_version)"
 }
 
@@ -325,6 +341,11 @@ _swap_back() {
   for b in node rg; do
     if [ -f "$PREV/bin-$b" ]; then cp -f "$PREV/bin-$b" "$P/bin/$b" && chmod 755 "$P/bin/$b"; fi
   done
+  if [ -d "$PREV/engine-lib" ]; then
+    rm -rf "$P/lib/dsh-engine/lib"
+    mv "$PREV/engine-lib" "$P/lib/dsh-engine/lib" || _die "rollback failed: cannot restore engine lib" 1
+    echo "rollback: native libs: $(ls "$P/lib/dsh-engine/lib" | wc -l) files"
+  fi
   [ -f "$PREV/engine-version" ] && cp -f "$PREV/engine-version" "$P/.dsh-engine-version"
   rm -rf "$PREV"
   echo "rollback: restored previous engine ($(_engine_version))"
