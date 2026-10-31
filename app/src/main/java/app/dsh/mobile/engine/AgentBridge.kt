@@ -84,7 +84,7 @@ object AgentBridge {
         current == expect || current.startsWith(expect) || expect.startsWith(current)
 
     /** 应用上下文（start 时记住，供截图落盘等需要路径的操作使用） */
-    @Volatile private var shotCtx: Context? = null
+    @Volatile internal var shotCtx: Context? = null
 
     /**
      * 每个动作入口都调一次：让悬浮窗立刻显示「执行中 · <动作类型>」+ 具体指令。
@@ -343,6 +343,8 @@ object AgentBridge {
         Log.i(TAG, "agent bridge stopped")
     }
 
+    private val system by lazy { app.dsh.mobile.bridge.SystemHandler(this) }
+
     private fun handle(ctx: Context, client: Socket) {
         Thread({
             try {
@@ -555,7 +557,7 @@ object AgentBridge {
             method == "POST" && path == "/act" -> act(ctx, body)
             method == "POST" && path == "/export" -> mediaExport(ctx, body)
             method == "POST" && path == "/pick" -> pick(body)
-            method == "GET" && path == "/local/status" -> localStatus(ctx)
+            method == "GET" && path == "/local/status" -> system.localStatus(ctx)
             method == "GET" && path == "/frame-diff" -> frameDiff()
             method == "POST" && path == "/frame-wait" -> frameWait(body)
             method == "POST" && path == "/loop/run" -> loopRun(ctx, body)
@@ -563,29 +565,29 @@ object AgentBridge {
             method == "POST" && path == "/vision/track" -> visionTrack(ctx, body)
             method == "POST" && path == "/vision/tap" -> visionTap(ctx, body)
             method == "POST" && path == "/vision/drag" -> visionDrag(ctx, body)
-            method == "GET" && path == "/vision/list" -> visionList(ctx)
+            method == "GET" && path == "/vision/list" -> system.visionList(ctx)
             method == "GET" && path == "/memory/list" -> 200 to SceneMemory.listJson(ctx)
             method == "GET" && path == "/memory/stats" -> 200 to JSONObject().put("ok", true).put("summary", SceneMemory.stats(ctx)).toString()
-            method == "POST" && path == "/memory/lookup" -> memoryLookup(ctx, body)
-            method == "POST" && path == "/memory/store" -> memoryStore(ctx, body)
-            method == "POST" && path == "/memory/confirm" -> memoryConfirm(ctx, body)
+            method == "POST" && path == "/memory/lookup" -> system.memoryLookup(ctx, body)
+            method == "POST" && path == "/memory/store" -> system.memoryStore(ctx, body)
+            method == "POST" && path == "/memory/confirm" -> system.memoryConfirm(ctx, body)
             method == "POST" && path == "/memory/clear" -> {
                 SceneMemory.clear(ctx)
                 200 to """{"ok":true,"cleared":true}"""
             }
-            method == "POST" && path == "/local/ensure" -> localEnsure(ctx, query)
-            method == "GET" && path == "/daemon/status" -> daemonStatus()
-            method == "POST" && path == "/daemon/stop" -> daemonStop()
+            method == "POST" && path == "/local/ensure" -> system.localEnsure(ctx, query)
+            method == "GET" && path == "/daemon/status" -> system.daemonStatus()
+            method == "POST" && path == "/daemon/stop" -> system.daemonStop()
             method == "POST" && path == "/tap" -> tap(body)
             method == "GET" && path == "/screenshot" -> screenshot(query)
             method == "GET" && path == "/calib" -> calib(ctx, query)
             method == "GET" && path == "/yolo" -> yoloBench(ctx)
-            method == "GET" && path == "/log" -> logHose(ctx, query)
+            method == "GET" && path == "/log" -> system.logHose(ctx, query)
             method == "GET" && path == "/app-screenshot" -> appScreenshot(query)
-            method == "GET" && path == "/process" -> processInfo()
-            method == "GET" && path == "/status" -> status()
-            method == "GET" && path == "/settings" -> settingsGet()
-            method == "POST" && path == "/settings" -> settingsSet(body)
+            method == "GET" && path == "/process" -> system.processInfo()
+            method == "GET" && path == "/status" -> system.status()
+            method == "GET" && path == "/settings" -> system.settingsGet()
+            method == "POST" && path == "/settings" -> system.settingsSet(body)
             method == "POST" && path == "/activity" -> openActivity(body)
             method == "POST" && path == "/media/play" -> mediaPlay(ctx, body)
             method == "POST" && path == "/media/pause" -> mediaPause(ctx)
@@ -619,9 +621,9 @@ object AgentBridge {
             method == "POST" && path == "/wait-text" -> wait(body, "wait-text")
             method == "POST" && path == "/scroll-edge" -> scrollEdge(body)
             method == "GET" && path == "/notif" -> notif()
-            method == "GET" && path == "/plugin/list" -> pluginList()
-            method == "POST" && path == "/plugin/install" -> pluginInstall(body)
-            method == "GET" && path == "/diag" -> diag(ctx)
+            method == "GET" && path == "/plugin/list" -> system.pluginList()
+            method == "POST" && path == "/plugin/install" -> system.pluginInstall(body)
+            method == "GET" && path == "/diag" -> system.diag(ctx)
             method == "POST" && path == "/say" -> say(ctx, body)
             method == "GET" && path == "/say" -> sayGet(ctx, query)
             // 运行时热更新（2026-10-18）：门脚本 dsh-update 驱动的五个端点
@@ -784,89 +786,7 @@ object AgentBridge {
      * WebView UA 与 JS API 缺失检测、引擎状态、3080 HTTP/WS 探测、
      * runtime 版本、polyfill 落地、engine.log 尾部。用户在设备浏览器打开截图即可。
      */
-    private fun diag(ctx: Context): Pair<Int, String> {
-        val app = ctx.applicationContext as app.dsh.mobile.DshApp
-        val engineState = try {
-            app.supervisor.state.value.toString()
-        } catch (e: Exception) { "unknown: " + e.message }
-        val runtimeVer = runCatching {
-            java.io.File(EngineConfig.engineRoot(ctx), ".runtime-version").readText().trim()
-        }.getOrDefault("(unreadable)")
-        val feHtml = runCatching {
-            java.io.File(
-                EngineConfig.engineRoot(ctx),
-                "lib/node_modules/@deepseek-ai/dsh-web-frontend/dist/index.html"
-            ).readText()
-        }.getOrDefault("")
-        val poly = if (feHtml.isEmpty()) "frontend index.html missing!"
-            else if (feHtml.contains("legacy-webview polyfill")) "present" else "MISSING"
-        val logTail = runCatching {
-            val f = java.io.File(ctx.filesDir, "engine.log")
-            if (f.isFile) f.readText().takeLast(2500) else "(no engine.log)"
-        }.getOrDefault("(log read failed)")
-
-        // 3080 HTTP 探测
-        val httpProbe = runCatching {
-            val c = (java.net.URL("http://127.0.0.1:3080/").openConnection()
-                    as java.net.HttpURLConnection).apply { connectTimeout = 4000; readTimeout = 4000 }
-            val code = c.responseCode
-            // readNBytes(int) 是 API 33+；Android 11 上会 NoSuchMethod——用 Kotlin readBytes 截断
-            val head = c.getInputStream().use { it.readBytes().take(120).toByteArray().toString(Charsets.UTF_8) }
-            c.disconnect()
-            "HTTP $code | head: ${head.replace(java.lang.System.lineSeparator(), " ")}"
-        }.getOrElse { "FAIL: ${it.message}" }
-
-        // WS 握手探测（多候选路径）。CRLF 由常量拼接，避免源码内嵌换行歧义。
-        val crlf = "\r\n"
-        val wsProbe = listOf("/ws", "/", "/api/ws", "/socket").joinToString("<br>") { p ->
-            runCatching {
-                java.net.Socket("127.0.0.1", 3080).use { sock ->
-                    sock.soTimeout = 4000
-                    val req = "GET $p HTTP/1.1" + crlf +
-                        "Host: 127.0.0.1:3080" + crlf +
-                        "Upgrade: websocket" + crlf +
-                        "Connection: Upgrade" + crlf +
-                        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" + crlf +
-                        "Sec-WebSocket-Version: 13" + crlf + crlf
-                    sock.getOutputStream().write(req.toByteArray())
-                    sock.getOutputStream().flush()
-                    val first = ByteArray(64)
-                    val n = sock.getInputStream().read(first)
-                    if (n <= 0) "no response" else String(first, 0, n).split(crlf)[0]
-                }
-            }.getOrElse { "FAIL: ${it.message}" }
-        }.let { "WS handshake:<br>" + it }
-
-        val html = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DSH diag</title><style>body{font-family:monospace;background:#111;color:#eee;padding:12px;font-size:13px;word-break:break-all}pre{white-space:pre-wrap;background:#1c1c1c;padding:8px;border-radius:6px}h3{color:#7DD3FC;margin:14px 0 4px}</style></head><body>
-<h3>1. WebView UA</h3><pre id="ua"></pre>
-<h3>2. JS API probe (false = missing)</h3><pre id="api"></pre>
-<h3>3. Engine state</h3><pre>$engineState</pre>
-<h3>4. HTTP probe on 3080</h3><pre>$httpProbe</pre>
-<h3>5. WebSocket probe</h3><pre>$wsProbe</pre>
-<h3>6. Runtime version</h3><pre>$runtimeVer</pre>
-<h3>7. Frontend polyfill</h3><pre>$poly</pre>
-<h3>8. engine.log tail</h3><pre>$logTail</pre>
-<script>
-document.getElementById('ua').textContent = navigator.userAgent;
-var checks = [
-  ['Object.hasOwn (93+)', function(){ return typeof Object.hasOwn === 'function'; }],
-  ['Array.prototype.at (92+)', function(){ return typeof Array.prototype.at === 'function'; }],
-  ['String.prototype.at (92+)', function(){ return typeof String.prototype.at === 'function'; }],
-  ['Element.replaceChildren (86+)', function(){ return typeof Element.prototype.replaceChildren === 'function'; }],
-  ['String.replaceAll (85+)', function(){ return typeof String.prototype.replaceAll === 'function'; }],
-  ['crypto.randomUUID (92+)', function(){ return typeof crypto.randomUUID === 'function'; }],
-  ['structuredClone (98+)', function(){ return typeof structuredClone === 'function'; }],
-  ['Array.findLast (97+)', function(){ return typeof Array.prototype.findLast === 'function'; }]
-];
-document.getElementById('api').textContent = checks.map(function(c){
-  var ok = false; try { ok = c[1](); } catch (e) { ok = 'ERR ' + e.message; }
-  return c[0] + ' = ' + ok;
-}).join('
-');
-</script></body></html>"""
-        return 200 to html
-    }
+ 
 
     // ---------- v1.2.182：长串无障碍操作的系统通知；v2.5.3：与无障碍门禁彻底解耦 ----------
 
@@ -1155,7 +1075,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     /** POST /notify → 系统通知（任务完成推送） */
-    private fun notify(ctx: Context, body: String): Pair<Int, String> {
+    internal fun notify(ctx: Context, body: String): Pair<Int, String> {
         return try {
             val obj = JSONObject(body)
             val title = obj.optString("title").ifEmpty { ctx.getString(R.string.notif_agent_task) }
@@ -1228,7 +1148,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 有界执行无障碍节点树读取。
      * @return 成功返回值；超时或异常返回 null 并记录原因（调用方据此回 504）
      */
-    private fun <T> withScreenTimeout(
+    internal fun <T> withScreenTimeout(
         what: String, timeoutMs: Long = SCREEN_IPC_TIMEOUT_MS, block: () -> T,
     ): Result<T>?  {
         val first = screenReadOnce(what, timeoutMs, block)
@@ -1596,25 +1516,7 @@ document.getElementById('api').textContent = checks.map(function(c){
         }
     }
 
-    private fun logHose(ctx: Context, rawQuery: String): Pair<Int, String> {
-        val query = LinkedHashMap<String, String>()
-        rawQuery.trimStart('?').split('&').forEach { kv ->
-            if (kv.isNotBlank()) { val i = kv.indexOf('='); if (i > 0) query[kv.substring(0, i)] = kv.substring(i + 1) }
-        }
-        query["mark"]?.let { app.dsh.mobile.DshLog.d("mark", it) }
-        val arr = org.json.JSONArray()
-        if (query["crash"] == "1") {
-            val f = app.dsh.mobile.DshLog.crashFile(ctx)
-            if (!f.exists()) return 404 to """{"ok":false,"error":"no_crash_file"}"""
-            f.readLines().takeLast(120).forEach { arr.put(it) }
-            return 200 to org.json.JSONObject().put("ok", true).put("file", "crash.log").put("lines", arr).toString()
-        }
-        val n = (query["n"]?.toIntOrNull() ?: 200).coerceIn(20, 800)
-        app.dsh.mobile.DshLog.fileTail(n).forEach { arr.put(it) }
-        return 200 to org.json.JSONObject().put("ok", true).put("n", arr.length())
-            .put("lastError", app.dsh.mobile.DshLog.lastError ?: "")
-            .put("lines", arr).toString()
-    }
+ 
 
     /** GET /yolo —— 实验室：当前屏幕 → omni icon_detect(1280) → 报耗时/框数/前几个框。 */
     private var iconSession: ai.onnxruntime.OrtSession? = null
@@ -1815,7 +1717,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     /** query 串（"a=1&b=2"）解析；值做 UTF-8 URL 解码 */
-    private fun parseQuery(query: String): Map<String, String> = BridgeSupport.parseQuery(query)
+    internal fun parseQuery(query: String): Map<String, String> = BridgeSupport.parseQuery(query)
 
     /**
      * v2.5.25：用提权 shell（Shizuku/Root）发一次 `input tap`。
@@ -2114,39 +2016,10 @@ document.getElementById('api').textContent = checks.map(function(c){
     /** GET /screenshot → 截屏 PNG base64（takeScreenshot，API 30+）。
      *  能力缺失时给出准确指引：服务配置 canTakeScreenshot 需用户重新开启服务生效。 */
     /** GET /plugin/list：社区插件清单（远程拉取 + 内置兜底，v1.2.113） */
-    private fun pluginList(): Pair<Int, String> {
-        val list = runCatching { PluginCenter.list() }.getOrDefault(emptyList())
-        val arr = org.json.JSONArray()
-        list.forEach { p ->
-            arr.put(
-                JSONObject().apply {
-                    put("id", p.id); put("package", p.pkg)
-                    put("desc", p.desc); put("repo", p.repo)
-                },
-            )
-        }
-        return 200 to arr.toString()
-    }
+ 
 
     /** POST /plugin/install：一键安装 dsh 插件（后台执行，202=已开始，v1.2.113） */
-    private fun pluginInstall(body: String): Pair<Int, String> {
-        val pkg = runCatching { JSONObject(body).optString("package") }
-            .getOrDefault("").trim()
-        if (pkg.isBlank()) return 400 to """{"ok":false,"error":"field 'package' required"}"""
-        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
-        PluginCenter.install(ctx, pkg) { ok, msg ->
-            runCatching {
-                notify(
-                    ctx,
-                    JSONObject().apply {
-                        put("title", if (ok) "Plugin installed" else "Plugin install failed")
-                        put("body", "$pkg — ${msg.take(120)}")
-                    }.toString(),
-                )
-            }
-        }
-        return 202 to """{"ok":true,"started":true,"package":"$pkg"}"""
-    }
+ 
 
     /**
      * GET /ocr —— 离线 OCR 识别当前屏幕（v1.2.123）。
@@ -2302,53 +2175,13 @@ document.getElementById('api').textContent = checks.map(function(c){
         }.toString()
     }
 
-    /** GET /local/status —— 本地快速决策层的就绪状态（v1.2.121） */
-    private fun localStatus(ctx: Context): Pair<Int, String> =
-        200 to JSONObject().apply {
-            put("ok", true)
-            put("modelReady", LocalModel.isModelReady(ctx))
-            put("modelSize", LocalModel.modelFile(ctx).takeIf { it.isFile }?.length() ?: 0L)
-            put("serverBinary", LocalModel.serverBinaryPresent(ctx))
-            put("lastError", LocalModel.lastError ?: "")
-            put("installHint", LocalModel.installHint())
-            put("modelUrl", LocalModel.modelUrl())
-            put("serverRunning", LocalModel.isServerRunning())
-            put("modelPath", LocalModel.modelFile(ctx).absolutePath)
-            put("port", LocalEmbedder.PORT)
-            // v1.2.124：本地判决 AI 的实际用量（exact/semantic/none + verify 语义救场）
-            put("stats", FastPicker.stats.snapshot())
-        }.toString()
 
     /**
      * POST /local/ensure —— 确保本地模型与服务就绪（后台执行，v1.2.121）。
      * 首次调用会下载 15MB 模型并启动 llama-server；返回 202 立即开始，
      * 结果通过 /local/status 轮询（或等通知）。
      */
-    private fun localEnsure(ctx: Context, query: String): Pair<Int, String> {
-        val install = parseQuery(query)["install"] in listOf("1", "true", "yes")
-        Thread({
-            if (install && !LocalModel.serverBinaryPresent(ctx)) {
-                Log.i("LocalModel", "install requested: pkg install -y llama-cpp")
-                runCatching {
-                    val bash = java.io.File(EngineConfig.engineRoot(ctx), "bin/bash")
-                    val pb = ProcessBuilder(bash.absolutePath, "-lc", "pkg install -y llama-cpp")
-                    pb.redirectErrorStream(true)
-                    pb.environment()["PREFIX"] = EngineConfig.engineRoot(ctx).absolutePath
-                    pb.environment()["PATH"] = "${EngineConfig.engineRoot(ctx).absolutePath}/bin:/system/bin"
-                    val p = pb.start()
-                    val out = p.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-                    p.waitFor(15, java.util.concurrent.TimeUnit.MINUTES)
-                    Log.i("LocalModel", "pkg llama-cpp done: ${out.takeLast(300)}")
-                }.onFailure { Log.w("LocalModel", "pkg llama-cpp failed: ${it.message}") }
-            }
-            val ok = LocalModel.ensureReady(ctx) { _, msg ->
-                Log.i("LocalModel", "ensure: $msg")
-            }
-            Log.i("LocalModel", "ensureReady -> $ok")
-        }, "local-model-ensure").apply { isDaemon = true }.start()
-        return 202 to JSONObject().put("ok", true).put("started", true).put("install", install)
-            .put("hint", "poll GET /local/status").toString()
-    }
+ 
 
     /**
      * POST /pick —— 本地快速决策（v1.2.120）。
@@ -2487,57 +2320,15 @@ document.getElementById('api').textContent = checks.map(function(c){
      * v1.2.157 用户反馈：daemon 卡住时用户无法主动取消，且一切回应用它又切回浏览器干活。
      * 悬浮窗第三档据此显示/隐藏「退出 daemon」按钮，并可在 needsHelp 时提示用户。
      */
-    private fun daemonStatus(): Pair<Int, String> {
-        val tasks = java.io.File(dshHome(), "tasks")
-        val out = org.json.JSONObject()
-        val arr = org.json.JSONArray()
-        tasks.listFiles()?.filter { it.name.endsWith(".json") }?.forEach { f ->
-            runCatching {
-                val o = org.json.JSONObject(f.readText())
-                val st = o.optString("status")
-                if (st == "running" || st == "queued" || o.optBoolean("needsHelp", false)) {
-                    arr.put(org.json.JSONObject().apply {
-                        put("id", o.optString("id", f.nameWithoutExtension))
-                        put("status", st)
-                        put("needsHelp", o.optBoolean("needsHelp", false))
-                        put("goal", o.optString("goal", "").take(60))
-                        put("rounds", o.optJSONArray("history")?.length() ?: 0)
-                    })
-                }
-            }
-        }
-        out.put("active", arr.length() > 0)
-        out.put("tasks", arr)
-        return 200 to out.toString()
-    }
+ 
 
     /** POST /daemon/stop —— 立即停止当前 daemon 任务（悬浮窗「退出 daemon」按钮） */
-    private fun daemonStop(): Pair<Int, String> {
-        val tasks = java.io.File(dshHome(), "tasks")
-        var stopped = 0
-        tasks.listFiles()?.filter { it.name.endsWith(".json") }?.forEach { f ->
-            runCatching {
-                val o = org.json.JSONObject(f.readText())
-                if (o.optString("status") == "running") {
-                    o.put("stopRequested", true)
-                    f.writeText(o.toString())
-                    java.io.File(tasks, o.optString("id", f.nameWithoutExtension) + ".stop")
-                        .writeText("stop")
-                    stopped++
-                }
-            }
-        }
-        return 200 to """{"ok":true,"stopped":$stopped}"""
-    }
+ 
 
     /** $DSH_HOME（引擎子进程的 dsh-home 目录；悬浮窗/daemon 端点共用） */
-    private fun dshHome(): java.io.File {
-        val c = shotCtx ?: return java.io.File("")
-        return java.io.File(EngineConfig.engineRoot(c).parentFile, "dsh-home")
-    }
+ 
 
-    private fun visionDir(ctx: Context): java.io.File =
-        java.io.File(ctx.filesDir, "vision").apply { mkdirs() }
+ 
 
     /**
      * POST /vision/crop —— 从当前屏幕裁剪一块存为模板（云端圈目标用）。
@@ -2590,17 +2381,13 @@ document.getElementById('api').textContent = checks.map(function(c){
         }
         val png = app.dsh.mobile.VisionTracker.encodePng(arr, cw, ch)
             ?: return 500 to """{"ok":false,"error":"png encode failed"}"""
-        val f = java.io.File(visionDir(ctx), "$id.png")
+        val f = java.io.File(system.visionDir(ctx), "$id.png")
         f.writeBytes(png)
         return 200 to """{"ok":true,"id":$id,"w":$cw,"h":$ch,"pngBytes":${png.size},"path":"${f.absolutePath}"}"""
     }
 
     /** 读模板文件并解码（/vision/track 与 tap/drag 共用） */
-    private fun loadTemplate(ctx: Context, id: String): Triple<IntArray, Int, Int>? {
-        val f = java.io.File(visionDir(ctx), "$id.png")
-        if (!f.exists()) return null
-        return app.dsh.mobile.VisionTracker.decodePng(f.readBytes())
-    }
+ 
 
     private fun trackOnce(
         svc: DshAccessibilityService,
@@ -2608,7 +2395,7 @@ document.getElementById('api').textContent = checks.map(function(c){
         id: String,
         region: FloatArray? = null,
     ): app.dsh.mobile.VisionTracker.Match? {
-        val tmpl = loadTemplate(ctx, id) ?: return null
+        val tmpl = system.loadTemplate(ctx, id) ?: return null
         // ⚠️ 截图**直接调用**，不走 withScreenTimeout/screenExec —— 实测该线程池
         // 会被节点树 IPC 挂起拖死，导致截图排队全部超时（/screenshot 端点不受影响
         // 正是因为它直接调用）。screenshotArgb 自带 latch 超时，不会无限阻塞。
@@ -2643,7 +2430,7 @@ document.getElementById('api').textContent = checks.map(function(c){
             ?: return a11yGone()
         val id = runCatching { JSONObject(body).optString("id") }.getOrDefault("")
         if (id.isBlank()) return 400 to """{"ok":false,"error":"field 'id' required"}"""
-        if (loadTemplate(ctx, id) == null) return 404 to """{"ok":false,"error":"template '$id' not found (use /vision/crop first)"}"""
+        if (system.loadTemplate(ctx, id) == null) return 404 to """{"ok":false,"error":"template '$id' not found (use /vision/crop first)"}"""
         val region = parseRegion(runCatching { JSONObject(body) }.getOrDefault(JSONObject()))
         val m = trackOnce(svc, ctx, id, region)
             ?: return 500 to """{"ok":false,"error":"match failed (screenshot unavailable?)"}"""
@@ -2707,86 +2494,20 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     /** GET /vision/list —— 已存模板列表 */
-    private fun visionList(ctx: Context): Pair<Int, String> {
-        val files = visionDir(ctx).listFiles { f -> f.name.endsWith(".png") } ?: emptyArray()
-        val arr = org.json.JSONArray()
-        files.forEach { arr.put(JSONObject().put("id", it.nameWithoutExtension).put("bytes", it.length())) }
-        return 200 to JSONObject().put("ok", true).put("templates", arr).toString()
-    }
+ 
 
     /**
      * POST /memory/lookup —— 查场景记忆（v1.2.125）。
      * body: {"goal":"...", "dump":"..."(可选，不给则自动读屏)}
      * resp: {"ok":true,"hit":true,"similarity":0.88,"reused":3,"plan":{...}}
      */
-    private fun memoryLookup(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val goal = obj.optString("goal").trim()
-        if (goal.isBlank()) return 400 to """{"ok":false,"error":"field 'goal' required"}"""
-        var dump = obj.optString("dump")
-        if (dump.isBlank()) {
-            val svc = DshAccessibilityService.instance
-                // 条件依赖：给了 body.dump 就完全不碰无障碍；没给才需要读屏。
-                ?: return 503 to JSONObject()
-                    .put("ok", false)
-                    .put("error", "a11y_off")
-                    .put("code", "a11y_off")
-                    .put("reason", "computing the scene fingerprint needs a screen read; pass the node-tree dump in body.dump to skip it, or enable 'DSH Mobile Helper (optional)' in Settings > Accessibility")
-                    .put("how_to_fix", "add body.dump (text from /screen), or POST /a11y/enable and enable the service")
-                    .put("retryable", true)
-                    .toString()
-            dump = withScreenTimeout("memory.dump") { svc.dumpScreenCompact("all") }
-                ?.getOrNull() ?: return 504 to """{"ok":false,"error":"screen read timed out"}"""
-        }
-        val fp = SceneMemory.fingerprint(dump, DshAccessibilityService.instance?.foregroundPackage() ?: "")
-        val (entry, sim) = SceneMemory.lookup(ctx, goal, fp)
-        return if (entry != null) {
-            200 to JSONObject().apply {
-                put("ok", true).put("hit", true)
-                put("similarity", "%.2f".format(sim).toDouble())
-                put("reused", entry.hits)
-                put("plan", entry.plan)
-            }.toString()
-        } else {
-            200 to JSONObject().apply {
-                put("ok", true).put("hit", false)
-                put("bestSimilarity", "%.2f".format(sim).toDouble())
-                put("fpSize", fp.size)
-            }.toString()
-        }
-    }
+ 
 
     /**
      * POST /memory/store —— 存一条成功决策（v1.2.125）。
      * body: {"goal":"...", "plan":{...}, "dump":"..."(可选)}
      */
-    private fun memoryStore(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val goal = obj.optString("goal").trim()
-        val plan = obj.optJSONObject("plan")
-        if (goal.isBlank() || plan == null) return 400 to """{"ok":false,"error":"fields 'goal' and 'plan' required"}"""
-        var dump = obj.optString("dump")
-        if (dump.isBlank()) {
-            val svc = DshAccessibilityService.instance
-                // 条件依赖：给了 body.dump 就完全不碰无障碍；没给才需要读屏。
-                ?: return 503 to JSONObject()
-                    .put("ok", false)
-                    .put("error", "a11y_off")
-                    .put("code", "a11y_off")
-                    .put("reason", "computing the scene fingerprint needs a screen read; pass the node-tree dump in body.dump to skip it, or enable 'DSH Mobile Helper (optional)' in Settings > Accessibility")
-                    .put("how_to_fix", "add body.dump (text from /screen), or POST /a11y/enable and enable the service")
-                    .put("retryable", true)
-                    .toString()
-            dump = withScreenTimeout("memory.dump") { svc.dumpScreenCompact("all") }
-                ?.getOrNull() ?: return 504 to """{"ok":false,"error":"screen read timed out"}"""
-        }
-        val fp = SceneMemory.fingerprint(dump, DshAccessibilityService.instance?.foregroundPackage() ?: "")
-        SceneMemory.store(ctx, goal, fp, plan)
-        return 200 to JSONObject().put("ok", true).put("stored", true)
-            .put("fpSize", fp.size).put("summary", SceneMemory.stats(ctx)).toString()
-    }
+ 
 
     /**
      * POST /memory/confirm —— 任务级确认（v1.2.126）：云端判定目标达成后调用，
@@ -2794,15 +2515,7 @@ document.getElementById('api').textContent = checks.map(function(c){
      * body: {"goal":"...", "dump":"..."(可选)}
      * resp: {"ok":true,"promoted":N,"pendingLeft":M}
      */
-    private fun memoryConfirm(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val goal = obj.optString("goal").trim()
-        if (goal.isBlank()) return 400 to """{"ok":false,"error":"field 'goal' required"}"""
-        val n = SceneMemory.confirm(ctx, goal)
-        return 200 to JSONObject().put("ok", true).put("promoted", n)
-            .put("pendingLeft", SceneMemory.pendingCount(ctx)).toString()
-    }
+ 
 
     /** /screen-changed：事件驱动变化摘要（v1.2.113）——毫秒级，不 dump 整树 */
     private fun screenChanged(): Pair<Int, String> {
@@ -2841,214 +2554,17 @@ document.getElementById('api').textContent = checks.map(function(c){
      * 联网状态（传输类型/已验证/计费）、电量、内存、存储、屏幕与权限状态。
      * 全部是只读探测，不做任何危险操作。
      */
-    private fun status(): Pair<Int, String> {
-        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
-        return runCatching {
-            val pm = ctx.packageManager
-            val pi = pm.getPackageInfo(ctx.packageName, 0)
-            val verCode = if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()
-            val app = JSONObject()
-                .put("package", ctx.packageName)
-                .put("version_name", pi.versionName)
-                .put("version_code", verCode)
-                .put("pid", android.os.Process.myPid())
-                .put("uid", android.os.Process.myUid())
-                .put("foreground", AppState.isForeground(ctx))
-                .put("resumed_activity", AppState.resumedActivityName() ?: JSONObject.NULL)
-                .put("sdk", android.os.Build.VERSION.SDK_INT)
-                .put("model", android.os.Build.MODEL)
-
-            val engine = JSONObject()
-                .put("port", 3080)
-                .put("priv_mode", Privilege.getMode(ctx).name.lowercase())
-                .put("webview_debug", webViewDebugEnabled(ctx))
-
-            val net = JSONObject()
-            runCatching {
-                val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
-                val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
-                val type = when {
-                    caps == null -> "none"
-                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
-                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
-                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
-                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) -> "vpn"
-                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "bluetooth"
-                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_USB) -> "usb"
-                    else -> "other"
-                }
-                net.put("connected", caps != null)
-                    .put("type", type)
-                    .put("validated", caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) ?: false)
-                    .put("internet", caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false)
-                    .put("vpn", caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) ?: false)
-                    .put("metered", cm.isActiveNetworkMetered)
-                    .put("down_kbps", caps?.linkDownstreamBandwidthKbps ?: 0)
-                    .put("up_kbps", caps?.linkUpstreamBandwidthKbps ?: 0)
-            }.onFailure { net.put("error", it.message) }
-
-            val battery = JSONObject()
-            runCatching {
-                val i = ctx.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-                val level = i?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
-                val scale = i?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
-                val statusInt = i?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
-                val pct = if (level >= 0 && scale > 0) level * 100 / scale else -1
-                battery.put("percent", pct)
-                    .put("charging", statusInt == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
-                        statusInt == android.os.BatteryManager.BATTERY_STATUS_FULL)
-                    .put("temperature_c", (i?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0)
-            }
-
-            val memory = JSONObject()
-            runCatching {
-                val am = ctx.getSystemService(android.app.ActivityManager::class.java)
-                val mi = android.app.ActivityManager.MemoryInfo()
-                am.getMemoryInfo(mi)
-                memory.put("avail_mb", mi.availMem / 1048576).put("total_mb", mi.totalMem / 1048576).put("low", mi.lowMemory)
-            }
-
-            val storage = JSONObject()
-            runCatching {
-                val fs1 = android.os.StatFs(ctx.filesDir.absolutePath)
-                storage.put("files_free_mb", fs1.availableBytes / 1048576)
-                runCatching { storage.put("sdcard_free_mb", android.os.StatFs("/sdcard").availableBytes / 1048576) }
-            }
-
-            val screen = JSONObject()
-            runCatching {
-                val pm2 = ctx.getSystemService(android.os.PowerManager::class.java)
-                val km = ctx.getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
-                screen.put("on", pm2.isInteractive).put("locked", km.isKeyguardLocked)
-            }
-
-            val perms = JSONObject()
-                .put("accessibility", DshAccessibilityService.isEnabled(ctx))
-                .put("accessibility_connected", DshAccessibilityService.isConnected())
-                .put("all_files", runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false))
-                .put("overlay", runCatching { android.provider.Settings.canDrawOverlays(ctx) }.getOrDefault(false))
-                .put("notifications", if (android.os.Build.VERSION.SDK_INT >= 33)
-                    ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") == android.content.pm.PackageManager.PERMISSION_GRANTED
-                else true)
-                .put("battery_optimization_ignored", runCatching {
-                    (ctx.getSystemService(android.os.PowerManager::class.java))
-                        .isIgnoringBatteryOptimizations(ctx.packageName)
-                }.getOrDefault(false))
-
-            val media = JSONObject()
-                .put("workspaceMediaVisible", MediaHygiene.workspaceMediaVisible(ctx))
-                .put("trashMediaVisible", MediaHygiene.trashMediaVisible())
-            return 200 to JSONObject()
-                .put("ok", true)
-                .put("app", app)
-                .put("media", media)
-                .put("engine", engine)
-                .put("net", net)
-                .put("battery", battery)
-                .put("memory", memory)
-                .put("storage", storage)
-                .put("screen", screen)
-                .put("permissions", perms)
-                .toString()
-        }.getOrElse { 500 to """{"ok":false,"error":"${it.message}"}""" }
-    }
+ 
 
     /**
      * GET /settings —— 原生设置当前值（v1.3.30）。
      *
      * 只暴露白名单键；密码类字段打码。写入口见 [settingsSet]。
      */
-    private fun settingsGet(): Pair<Int, String> {
-        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
-        val ui = ctx.getSharedPreferences(DshApp.PREFS_UI, android.content.Context.MODE_PRIVATE)
-        val out = JSONObject()
-            .put("page_scale", ui.getInt("page_scale", 90))
-            .put("orientation", OrientationPrefs.get(ctx).key)
-            .put("lan_web_access", ui.getBoolean(DshApp.KEY_LAN_WEB, false))
-            .put("lan_web_password_set", (ui.getString("lan_web_password", "") ?: "").isNotBlank())
-            .put("a11y_max_provider", ui.getString(DshApp.KEY_A11Y_MAX_PROVIDER, "") ?: "")
-            .put("priv_mode", Privilege.getMode(ctx).name.lowercase())
-            .put("writable_keys", JSONObject().put("page_scale", "int 50..120")
-                .put("orientation", "portrait|landscape|auto")
-                .put("lan_web_access", "boolean")
-                .put("a11y_max_provider", "credential ref string")
-                .put("priv_mode", "normal|shizuku|root (restarts engine)"))
-        return 200 to JSONObject().put("ok", true).put("settings", out).toString()
-    }
+ 
 
     /** POST /settings {"set":{"page_scale":100,"orientation":"auto",...}} */
-    private fun settingsSet(body: String): Pair<Int, String> {
-        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val set = obj.optJSONObject("set") ?: return 400 to """{"ok":false,"error":"need {\"set\":{...}}"}"""
-        val ui = ctx.getSharedPreferences(DshApp.PREFS_UI, android.content.Context.MODE_PRIVATE).edit()
-        val applied = org.json.JSONArray()
-        val errors = org.json.JSONArray()
-        var restartRequired = false
-        val keys = set.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            when (key) {
-                "page_scale" -> {
-                    val v = set.optInt(key, -1)
-                    if (v in 50..120) { ui.putInt("page_scale", v); applied.put("page_scale=$v") }
-                    else errors.put("page_scale must be 50..120")
-                }
-                "orientation" -> {
-                    val v = set.optString(key)
-                    val mode = when (v) {
-                        "portrait" -> OrientationMode.PORTRAIT
-                        "landscape" -> OrientationMode.LANDSCAPE
-                        "auto" -> OrientationMode.AUTO
-                        else -> null
-                    }
-                    if (mode != null) {
-                        OrientationPrefs.set(ctx, mode)
-                        runCatching {
-                            AppState.currentActivity()?.requestedOrientation =
-                                OrientationPrefs.toActivityInfo(mode)
-                        }
-                        applied.put("orientation=$v")
-                    } else errors.put("orientation must be portrait|landscape|auto")
-                }
-                "lan_web_access" -> {
-                    val v = set.optBoolean(key, false)
-                    DshApp.setLanWebEnabled(ctx, v)
-                    if (v) DshApp.lanWebPassword(ctx)
-                    applied.put("lan_web_access=$v")
-                    restartRequired = true
-                }
-                "a11y_max_provider" -> {
-                    ui.putString(DshApp.KEY_A11Y_MAX_PROVIDER, set.optString(key))
-                    applied.put("a11y_max_provider")
-                }
-                "priv_mode" -> {
-                    val v = set.optString(key).lowercase()
-                    val mode = when (v) {
-                        "normal" -> PrivMode.NORMAL
-                        "shizuku" -> PrivMode.SHIZUKU
-                        "root" -> PrivMode.ROOT
-                        else -> null
-                    }
-                    if (mode != null) {
-                        Privilege.setMode(ctx, mode)
-                        applied.put("priv_mode=$v")
-                        restartRequired = true
-                    } else errors.put("priv_mode must be normal|shizuku|root")
-                }
-                else -> errors.put("unknown key: $key")
-            }
-        }
-        ui.apply()
-        val ok = applied.length() > 0
-        val payload = JSONObject().put("ok", ok)
-            .put("applied", applied)
-            .put("restartRequired", restartRequired)
-            .put("errors", errors)
-        if (!ok) payload.put("hint", "see /settings writable_keys")
-        return (if (ok) 200 else 400) to payload.toString()
-    }
+ 
 
     /**
      * POST /activity {"name":"settings|terminal|main|<Class>"} —— 打开 App 自己的 Activity。
@@ -3252,30 +2768,12 @@ document.getElementById('api').textContent = checks.map(function(c){
 
 
     /** v1.3.61：WebView 远程调试默认开启；放 `webview-debug-off` 可关闭。 */
-    private fun webViewDebugEnabled(ctx: android.content.Context): Boolean =
+    internal fun webViewDebugEnabled(ctx: android.content.Context): Boolean =
         runCatching {
             ctx.getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug-off") }?.isFile != true
         }.getOrDefault(true)
 
-    private fun processInfo(): Pair<Int, String> {
-        val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
-        val pid = android.os.Process.myPid()
-        val flag = webViewDebugEnabled(ctx)
-        val ver = runCatching {
-            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
-        }.getOrNull().orEmpty()
-        val json = JSONObject()
-            .put("ok", true)
-            .put("app_pid", pid)
-            .put("app_uid", android.os.Process.myUid())
-            .put("package", ctx.packageName)
-            .put("version_name", ver)
-            .put("webview_debug", flag)
-            .put("devtools_socket", if (flag) "webview_devtools_remote_$pid" else JSONObject.NULL)
-            .put("sdk", android.os.Build.VERSION.SDK_INT)
-            .put("model", android.os.Build.MODEL)
-        return 200 to json.toString()
-    }
+ 
 
     private fun appScreenshot(query: String): Pair<Int, String> {
         val ctx = shotCtx ?: return 503 to """{"ok":false,"error":"app context not ready"}"""
