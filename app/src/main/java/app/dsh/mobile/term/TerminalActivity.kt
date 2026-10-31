@@ -121,6 +121,8 @@ class TerminalActivity : Activity() {
         updateTabs()
         syncTitle()
         // 让 IME 直接可用：用户点进终端通常就是要打字
+        // 长按终端内容 = 弹菜单（与右上角「⋮」同一个菜单）
+        termView.onLongPress = { _, _ -> showMenu() }
         termView.post { termView.requestTerminalFocus() }
     }
 
@@ -254,6 +256,8 @@ class TerminalActivity : Activity() {
         add(R.string.terminal_menu_new) { openSession() }
         add(R.string.terminal_menu_paste) { pasteFromClipboard() }
         add(R.string.terminal_menu_copy_all) { copyAll() }
+        add(R.string.terminal_menu_clear) { active?.write("\u000c") }   // Ctrl+L：shell 清屏（TUI 里等同重绘）
+        add(R.string.terminal_menu_share) { shareOutput() }
         add(R.string.terminal_menu_font_up) { bumpFont(+1f) }
         add(R.string.terminal_menu_font_down) { bumpFont(-1f) }
         add(R.string.terminal_menu_scroll_bottom) { termView.scrollToBottom() }
@@ -292,8 +296,25 @@ class TerminalActivity : Activity() {
      * 不用 View 的选择态：Android 自绘终端的跨行选择/手柄是另一个量级的工程，
      * 而手机上「整段复制日志」是最常见诉求 —— 直接给全量文本更实用。
      */
+    /** 分享终端全部输出（复用 copyAll 的文本拼装，包成 ACTION_SEND） */
+    private fun shareOutput() {
+        val text = buildAllOutput() ?: return
+        if (text.isBlank()) return
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, text)
+        runCatching { startActivity(Intent.createChooser(send, getString(R.string.terminal_menu_share))) }
+    }
+
     private fun copyAll() {
-        val s = active ?: return
+        val text = buildAllOutput() ?: return
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("terminal", text))
+        toast(getString(R.string.terminal_copied, text.length))
+    }
+
+    /** 把当前会话的 scrollback + 屏幕拼成纯文本（末尾空行折叠） */
+    private fun buildAllOutput(): String? {
+        val s = active ?: return null
         val e = s.emulator
         val sb = StringBuilder()
         for (r in 0 until e.scrollbackRows) {
@@ -308,9 +329,7 @@ class TerminalActivity : Activity() {
             if (trimmed.isEmpty() && sb.isNotEmpty() && sb.last() == '\n') continue
             sb.append(trimmed).append('\n')
         }
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("terminal", sb.toString()))
-        toast(getString(R.string.terminal_copied, sb.length))
+        return sb.toString()
     }
 
     private fun closeAllAndFinish() {

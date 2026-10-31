@@ -329,6 +329,8 @@ Sie können auch ohne Update fortfahren, die Oberfläche wird dann aber nicht an
     <string name="terminal_menu_new">Neue Sitzung…</string>
     <string name="terminal_menu_paste">Einfügen</string>
     <string name="terminal_menu_copy_all">Gesamte Ausgabe kopieren</string>
+    <string name="terminal_menu_clear">Bildschirm leeren</string>
+    <string name="terminal_menu_share">Ausgabe teilen</string>
     <string name="terminal_menu_font_up">Schriftgröße +</string>
     <string name="terminal_menu_font_down">Schriftgröße −</string>
     <string name="terminal_menu_scroll_bottom">Nach unten scrollen</string>

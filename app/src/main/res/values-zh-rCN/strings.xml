@@ -320,6 +320,8 @@
     <string name="terminal_menu_new">新建会话…</string>
     <string name="terminal_menu_paste">粘贴</string>
     <string name="terminal_menu_copy_all">复制全部输出</string>
+    <string name="terminal_menu_clear">清屏</string>
+    <string name="terminal_menu_share">分享输出</string>
     <string name="terminal_menu_font_up">字号 +</string>
     <string name="terminal_menu_font_down">字号 −</string>
     <string name="terminal_menu_scroll_bottom">滚到底部</string>

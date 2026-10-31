@@ -320,6 +320,8 @@ You can still continue without updating, but the interface will not display.</st
     <string name="terminal_menu_new">New session…</string>
     <string name="terminal_menu_paste">Paste</string>
     <string name="terminal_menu_copy_all">Copy all output</string>
+    <string name="terminal_menu_clear">Clear screen</string>
+    <string name="terminal_menu_share">Share output</string>
     <string name="terminal_menu_font_up">Font size +</string>
     <string name="terminal_menu_font_down">Font size −</string>
     <string name="terminal_menu_scroll_bottom">Scroll to bottom</string>

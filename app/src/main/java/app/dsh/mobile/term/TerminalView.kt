@@ -511,15 +511,32 @@ class TerminalView @JvmOverloads constructor(
     private var dragAccum = 0f
     private var dragging = false
 
+    /** 长按终端内容回调（供 TerminalActivity 弹菜单）。参数是触点坐标。 */
+    var onLongPress: ((x: Float, y: Float) -> Unit)? = null
+
+    private var downXPoint = 0f
+    private var longPressFired = false
+
+    private val longPressRunnable = Runnable {
+        if (!dragging) {
+            longPressFired = true
+            onLongPress?.invoke(downXPoint, downY)
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                downXPoint = event.x
+                longPressFired = false
                 downY = event.y
                 lastY = event.y
                 lastX = event.x
                 dragAccum = 0f
                 wheelAccum = 0f
                 dragging = false
+                removeCallbacks(longPressRunnable)
+                postDelayed(longPressRunnable, LONG_PRESS_MS)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -532,7 +549,10 @@ class TerminalView @JvmOverloads constructor(
                 val dy = lastY - event.y
                 lastY = event.y
                 lastX = event.x
-                if (!dragging && abs(event.y - downY) > touchSlop) dragging = true
+                if (!dragging && abs(event.y - downY) > touchSlop) {
+                    dragging = true
+                    removeCallbacks(longPressRunnable)
+                }
                 if (dragging) {
                     val emulator = session?.emulator
                     if (emulator != null && emulator.alternateScreen && emulator.mouseReporting) {
@@ -569,7 +589,8 @@ class TerminalView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                if (!dragging) {
+                removeCallbacks(longPressRunnable)
+                if (!dragging && !longPressFired) {
                     requestTerminalFocus()
                     performClick()
                 }
@@ -577,6 +598,7 @@ class TerminalView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(longPressRunnable)
                 dragging = false
                 return true
             }
@@ -1013,5 +1035,7 @@ class TerminalView @JvmOverloads constructor(
         const val DIM_FACTOR = 0.45f
         const val DELETE_DEDUPE_MS = 20L
         const val CSI = "\u001b["
+        /** 长按多久弹出菜单（与系统 ViewConfiguration 默认一致） */
+        const val LONG_PRESS_MS = 500L
     }
 }
