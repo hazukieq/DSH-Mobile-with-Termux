@@ -316,8 +316,6 @@ class EngineService : Service() {
             }.getOrDefault(false)
         } ?: false
 
-        private const val PREFS_EXIT = "dsh_exit"
-        private const val KEY_USER_EXITED = "user_exited"
 
         /**
          * v1.3.73（用户硬性要求）：**正常退出后绝不自动启动**。
@@ -326,14 +324,10 @@ class EngineService : Service() {
          * 清除时机：用户主动打开 MainActivity（onCreate 且非重建）。
          * 读取时机：start() 与无障碍保活看门狗 —— 置位期间一律跳过。
          */
-        fun userExited(ctx: Context): Boolean =
-            ctx.getSharedPreferences(PREFS_EXIT, Context.MODE_PRIVATE)
-                .getBoolean(KEY_USER_EXITED, false)
+        fun userExited(ctx: Context): Boolean = app.dsh.mobile.DshPrefs.userExited(ctx)
 
-        fun setUserExited(ctx: Context, exited: Boolean) {
-            ctx.getSharedPreferences(PREFS_EXIT, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_USER_EXITED, exited).apply()
-        }
+        fun setUserExited(ctx: Context, exited: Boolean) =
+            app.dsh.mobile.DshPrefs.setUserExited(ctx, exited)
 
         /** 通知「退出」按钮触发动作 */
         const val ACTION_EXIT = "app.dsh.mobile.service.action.EXIT"

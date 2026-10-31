@@ -66,7 +66,7 @@ class MainActivity : Activity() {
     private var orientationMode: OrientationMode = OrientationMode.PORTRAIT
 
     /** 页面缩放百分比（竖屏时应用；等价浏览器 Ctrl+/Ctrl-）。横屏桌面模式交给 1280px meta，不叠加 */
-    private var pageScale = DEFAULT_PAGE_SCALE
+    private var pageScale = DshPrefs.PAGE_SCALE_DEFAULT
 
     /** 分享正文投递（Phase 1.7 起独立成类）：写入/读回/补写三步走。 */
     private val shareDelivery: ShareDelivery by lazy {
@@ -308,8 +308,7 @@ class MainActivity : Activity() {
     }
 
     private fun readUiPrefs() {
-        val p = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
-        pageScale = p.getInt(KEY_PAGE_SCALE, DEFAULT_PAGE_SCALE)
+        pageScale = DshPrefs.pageScale(this)
         orientationMode = OrientationPrefs.get(this)
     }
 
@@ -549,11 +548,8 @@ class MainActivity : Activity() {
         /** 页面缩放持久化：SharedPreferences 名 + key（设置页与引导共用）。
          *  屏幕朝向偏好（v1.2.120 起三态 portrait/landscape/auto）集中在
          *  OrientationPrefs，此处不再持有布尔键。 */
-        private const val PREFS_UI = "dsh_ui"
-        private const val KEY_PAGE_SCALE = "page_scale"
 
         /** 竖屏页面缩放范围/步长/默认值（等价浏览器 Ctrl- 缩小一点，用户可再调） */
-        private const val DEFAULT_PAGE_SCALE = 90
         private const val MIN_PAGE_SCALE = 50
         private const val MAX_PAGE_SCALE = 150
         private const val SCALE_STEP = 5
