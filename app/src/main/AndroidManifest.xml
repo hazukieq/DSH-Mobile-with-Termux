@@ -119,9 +119,11 @@
             </intent-filter>
         </activity>
 
+        <!-- 安全评估 M1（v2.5.64）：引导页只由本 App 拉起，导出没有任何必要。
+             导出会让任意第三方 App 直接把它顶到前台（可被用于伪装/钓鱼式引导）。 -->
         <activity
             android:name=".OnboardingActivity"
-            android:exported="true"
+            android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
         <!-- 用户自定义指令（v1.3.2，issue #19）：编辑 AGENTS.md 的用户段，App 永不覆盖 -->

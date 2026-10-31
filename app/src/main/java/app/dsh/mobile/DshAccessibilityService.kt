@@ -30,6 +30,32 @@ import java.util.concurrent.TimeUnit
  * Agent 调用入口：AgentBridge (127.0.0.1:3083) 的 GET /screen、POST /tap，
  * 引擎内经 `scr` 包装器使用。
  */
+/**
+ * 安全读取无障碍节点文本（v2.5.64 安全评估 H2）。
+ *
+ * 无障碍 dump 是 Agent「看屏」的主通道，其结果会进日志、OCR 融合与模型上下文。
+ * 旧实现直接读 node.text —— 密码框（isPassword=true）的明文会原样被读走。
+ * 这里统一过滤：密码节点一律返回空串（位置/可点击性仍保留，Agent 仍能定位与输入，
+ * 只是读不到已输入的内容）。
+ */
+internal fun nodeTextOf(node: android.view.accessibility.AccessibilityNodeInfo?): String {
+    if (node == null) return ""
+    if (runCatching { node.isPassword }.getOrDefault(false)) return ""
+    return node.text?.toString()?.trim().orEmpty()
+}
+
+internal fun nodeDescOf(node: android.view.accessibility.AccessibilityNodeInfo?): String {
+    if (node == null) return ""
+    if (runCatching { node.isPassword }.getOrDefault(false)) return ""
+    return node.contentDescription?.toString()?.trim().orEmpty()
+}
+
+internal fun nodeLabelOf(node: android.view.accessibility.AccessibilityNodeInfo?): String {
+    if (node == null) return ""
+    if (runCatching { node.isPassword }.getOrDefault(false)) return ""
+    return (node.contentDescription ?: node.text)?.toString().orEmpty()
+}
+
 class DshAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
@@ -480,8 +506,8 @@ class DshAccessibilityService : AccessibilityService() {
             val visible = rect.width() > 0 && rect.height() > 0 &&
                 rect.top < rootHeight && rect.bottom > 0
             if (visible) {
-                var text = node.text?.toString()?.trim().orEmpty()
-                val desc = node.contentDescription?.toString()?.trim().orEmpty()
+                var text = nodeTextOf(node)
+                val desc = nodeDescOf(node)
                 val editable = node.isEditable
                 val clickable = node.isClickable
                 // v1.2.153 实测修复（靶场发现）：**空输入框的 placeholder 只在
@@ -678,8 +704,8 @@ class DshAccessibilityService : AccessibilityService() {
             val visible = rect.width() > 0 && rect.height() > 0 &&
                 rect.top < rootHeight && rect.bottom > 0
             if (visible) {
-                val text = node.text?.toString()?.trim().orEmpty()
-                val desc = node.contentDescription?.toString()?.trim().orEmpty()
+                val text = nodeTextOf(node)
+                val desc = nodeDescOf(node)
                 // v1.2.153：空输入的 placeholder（见 compact dump 处说明）
                 val hint = if (text.isEmpty() && desc.isEmpty() &&
                     android.os.Build.VERSION.SDK_INT >= 26
@@ -842,10 +868,10 @@ class DshAccessibilityService : AccessibilityService() {
                 add("clickable=${node.isClickable}")
                 add("scrollable=${node.isScrollable}")
                 add("editable=${node.isEditable}")
-                val t = node.text?.toString()
-                if (!t.isNullOrEmpty()) add("text=\"$t\"")
-                val d = node.contentDescription?.toString()
-                if (!d.isNullOrEmpty()) add("desc=\"$d\"")
+                val t = nodeTextOf(node)
+                if (t.isNotEmpty()) add("text=\"$t\"")
+                val d = nodeDescOf(node)
+                if (d.isNotEmpty()) add("desc=\"$d\"")
             }.joinToString(" ")
             sb.append("  ".repeat(depth)).append("<node ").append(attrs).append("/>\n")
             for (i in 0 until node.childCount) walk(node.getChild(i), depth + 1)
@@ -996,8 +1022,8 @@ class DshAccessibilityService : AccessibilityService() {
         var found = false
         fun walk(node: AccessibilityNodeInfo?) {
             if (found || node == null) return
-            val t = node.text?.toString()?.trim().orEmpty()
-            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            val t = nodeTextOf(node)
+            val d = nodeDescOf(node)
             if (t.contains(query, true) || d.contains(query, true)) {
                 found = true
                 return
@@ -1047,7 +1073,7 @@ class DshAccessibilityService : AccessibilityService() {
             if (depth > 20) return null
             val r = Rect(); n.getBoundsInScreen(r)
             if (n.isClickable && r.width() * r.height() >= need) {
-                val label = (n.contentDescription ?: n.text)?.toString().orEmpty()
+                val label = nodeLabelOf(n)
                 if (label.isNotBlank()) return label
             }
             for (i in 0 until n.childCount) {
@@ -1078,7 +1104,7 @@ class DshAccessibilityService : AccessibilityService() {
             if (target != null && runCatching { tapNode(target) }.getOrDefault(false)) {
                 lastTapVia = "node"
                 val r = Rect().also { target.getBoundsInScreen(it) }
-                val label = (target.contentDescription ?: target.text)?.toString().orEmpty()
+                val label = nodeLabelOf(target)
                 lastTapNode = JSONObject().apply {
                     put("label", label); put("clickable", target.isClickable)
                     put("bounds", JSONArray(listOf(r.left, r.top, r.right, r.bottom)))
@@ -1260,8 +1286,8 @@ class DshAccessibilityService : AccessibilityService() {
         val hits = ArrayList<Match>()
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null) return
-            val t = node.text?.toString()?.trim().orEmpty()
-            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            val t = nodeTextOf(node)
+            val d = nodeDescOf(node)
             val ts = if (byDesc) 0 else matchScore(t, q)
             val ds = matchScore(d, q)
             val score = maxOf(ts, ds)
@@ -1347,8 +1373,8 @@ class DshAccessibilityService : AccessibilityService() {
 
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null) return
-            node.text?.toString()?.trim()?.let { consider(it, false) }
-            node.contentDescription?.toString()?.trim()?.let { consider(it, true) }
+            nodeTextOf(node).takeIf { it.isNotEmpty() }?.let { consider(it, false) }
+            nodeDescOf(node).takeIf { it.isNotEmpty() }?.let { consider(it, true) }
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
         walk(root)
@@ -1370,8 +1396,8 @@ class DshAccessibilityService : AccessibilityService() {
         var bestClickable = false
 
         fun consider(node: AccessibilityNodeInfo) {
-            val t = node.text?.toString()?.trim().orEmpty()
-            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            val t = nodeTextOf(node)
+            val d = nodeDescOf(node)
             val score = maxOf(
                 if (byDesc) 0 else matchScore(t, q),
                 matchScore(d, q),
@@ -1849,7 +1875,8 @@ class DshAccessibilityService : AccessibilityService() {
         }
 
         val finalText = if (append) {
-            (node.text?.toString().orEmpty()) + text
+            // 密码框不读已有内容（H2）：append 语义退化为覆盖写入
+            nodeTextOf(node) + text
         } else {
             text
         }
@@ -1876,8 +1903,8 @@ class DshAccessibilityService : AccessibilityService() {
         var hit: AccessibilityNodeInfo? = null
         fun walk(node: AccessibilityNodeInfo?) {
             if (hit != null || node == null) return
-            val t = node.text?.toString()?.trim().orEmpty().lowercase()
-            val d = node.contentDescription?.toString()?.trim().orEmpty().lowercase()
+            val t = nodeTextOf(node).lowercase()
+            val d = nodeDescOf(node).lowercase()
             val h = if (Build.VERSION.SDK_INT >= 26) {
                 node.hintText?.toString()?.trim().orEmpty().lowercase()
             } else ""
@@ -1983,8 +2010,8 @@ class DshAccessibilityService : AccessibilityService() {
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null || n >= MAX_NODES) return
             val r = Rect().also { node.getBoundsInScreen(it) }
-            val t = node.text?.toString()?.trim().orEmpty()
-            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            val t = nodeTextOf(node)
+            val d = nodeDescOf(node)
             if (t.isNotEmpty() || d.isNotEmpty() || node.isClickable) {
                 sb.append(t).append('|').append(d).append('|')
                     .append(r.centerX()).append(',').append(r.centerY()).append(';')
@@ -2471,8 +2498,8 @@ class DshAccessibilityService : AccessibilityService() {
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null || out.size >= MAX_NODES) return
             val r = Rect().also { node.getBoundsInScreen(it) }
-            val t = node.text?.toString()?.trim().orEmpty()
-            val d = node.contentDescription?.toString()?.trim().orEmpty()
+            val t = nodeTextOf(node)
+            val d = nodeDescOf(node)
             if (t.isNotEmpty() || d.isNotEmpty()) {
                 out += (if (t.isNotEmpty()) t else "d:$d").replace('\n', ' ').take(60) +
                     "@${r.centerX()},${r.centerY()}"
