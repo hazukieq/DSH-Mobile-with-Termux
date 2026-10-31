@@ -30,7 +30,7 @@ function createMobileUi() {
   'use strict'
 
   /** Bump together with package.json version (shown in diagnostics). */
-  var VERSION = '0.1.36'
+  var VERSION = '0.1.37'
   /** Fixed bar height in CSS px (safe-area inset added on top). */
   var BAR_HEIGHT = 52
   /** Phone breakpoint: above this the shipped desktop layout is left alone. */
@@ -187,7 +187,7 @@ function createMobileUi() {
   /** Find one element, tolerating the shipped hashed CSS module class names. */
   function q(selector) {
     try {
-      return document.querySelector(selector)
+      return document.querySelector(applyPrefixMap(selector))
     } catch (error) {
       return null
     }
@@ -196,10 +196,75 @@ function createMobileUi() {
   /** Find every element for a selector (never throws on legacy WebViews). */
   function qa(selector) {
     try {
-      return Array.prototype.slice.call(document.querySelectorAll(selector))
+      return Array.prototype.slice.call(document.querySelectorAll(applyPrefixMap(selector)))
     } catch (error) {
       return []
     }
+  }
+
+  /* ── CSS-module prefix adapter (v0.1.37) ────────────────────────────────
+   * DSH 的 Web 包用 CSS Modules 生成「哈希前缀_语义名」的类名（`OhowZq_frame`）。
+   * 前缀随引擎版本变，语义后缀不变。旧版本这里把 0.2.0-rc.2 的前缀写死了，
+   * 引擎升到 0.2.2 之后所有选择器全部落空 —— 插件看起来「装了但没生效」：
+   * data-dsh-mobile 已设、CSS 已注入，可没有一个选择器命中。
+   *
+   * 这里在运行时探测当前前缀：先按语义后缀（_frame/_header/...）在 DOM 里找
+   * 到真实类名，取其前缀；随后把 CSS 文本与所有选择器里的旧前缀替换掉。
+   * 探测失败就退回旧前缀（等价于旧行为，不会更糟）。
+   */
+  var FAMILY_PROBE = [
+    ['pI_x6G_', 'frame'],
+    ['wSkVaW_', 'header'],
+    ['EvIC1a_', 'scroll'],
+    ['uV2eYG_', 'placeholder'],
+    ['VOzbGW_', 'navCell'],
+    ['pXSMma_', 'headline'],
+    ['hHd-Xa_', 'newSession']
+  ]
+  var PREFIX_MAP = null
+
+  /** 扫描一次 DOM，得到「旧前缀 → 当前前缀」。 */
+  function detectPrefixes() {
+    var map = {}
+    var tokens = []
+    var nodes = []
+    try {
+      nodes = document.querySelectorAll('[class]')
+    } catch (error) {
+      nodes = []
+    }
+    for (var i = 0; i < nodes.length && tokens.length < 4000; i += 1) {
+      var cls = nodes[i].className
+      if (typeof cls !== 'string' || cls === '') continue
+      var parts = cls.split(/\s+/)
+      for (var k = 0; k < parts.length; k += 1) if (parts[k] !== '') tokens.push(parts[k])
+    }
+    for (var f = 0; f < FAMILY_PROBE.length; f += 1) {
+      var old = FAMILY_PROBE[f][0]
+      var suffix = '_' + FAMILY_PROBE[f][1]
+      var hit = null
+      for (var t = 0; t < tokens.length; t += 1) {
+        var tok = tokens[t]
+        if (tok.length > suffix.length && tok.slice(-suffix.length) === suffix) {
+          hit = tok.slice(0, tok.length - suffix.length + 1)
+          break
+        }
+      }
+      map[old] = hit || old
+    }
+    return map
+  }
+
+  function applyPrefixMap(text) {
+    if (PREFIX_MAP === null) return text
+    var out = text
+    for (var old in PREFIX_MAP) {
+      if (!Object.prototype.hasOwnProperty.call(PREFIX_MAP, old)) continue
+      var cur = PREFIX_MAP[old]
+      if (cur === old) continue
+      out = out.split('.' + old).join('.' + cur).split(old).join(cur)
+    }
+    return out
   }
 
   /** Current frame element (the shipped three-column grid). */
@@ -1412,6 +1477,26 @@ function createMobileUi() {
   function waitForFrame(callback) {
     var started = Date.now()
     var attempt = function () {
+      /* 前缀探测依赖 DOM 已渲染。第一次进入时可能还没挂载，探测落空就变成
+       * 「选择器全不命中，永远等不到 frame」——限速重探（500ms 一次，最多 20 次）
+       * 即可自愈；不跟着 120ms 轮询每一轮扫全 DOM，否则加载期会把渲染线程压住。 */
+      var now = Date.now()
+      if (frame() === null && state.cssRaw && now - (state.lastDetect || 0) > 500 &&
+          (state.detectTries || 0) < 20) {
+        state.lastDetect = now
+        state.detectTries = (state.detectTries || 0) + 1
+        var next = detectPrefixes()
+        var changed = false
+        for (var key in next) {
+          if (!Object.prototype.hasOwnProperty.call(next, key)) continue
+          if (PREFIX_MAP === null || PREFIX_MAP[key] !== next[key]) changed = true
+        }
+        PREFIX_MAP = next
+        if (changed) {
+          state.css = applyPrefixMap(state.cssRaw)
+          injectCss(state.css)
+        }
+      }
       if (isMobile() && frame() !== null) {
         callback()
         return
@@ -1470,6 +1555,9 @@ function createMobileUi() {
     state.ctx = ctx || null
     state.css = css || ''
     state.diag = diag || null
+    PREFIX_MAP = detectPrefixes()
+    state.cssRaw = state.css
+    state.css = applyPrefixMap(state.cssRaw)
     injectCss(state.css)
     document.documentElement.setAttribute('data-dsh-mobile', '')
     document.documentElement.setAttribute('data-dshm-drawer', 'closed')
