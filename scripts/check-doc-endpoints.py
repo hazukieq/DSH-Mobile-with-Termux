@@ -17,15 +17,26 @@ import re
 import sys
 
 ROOT = "app/src/main"
-BRIDGE = f"{ROOT}/java/app/dsh/mobile/engine/AgentBridge.kt"
+# 路由实现已从 AgentBridge 拆到 bridge/Router.kt（Phase 2），两处都要扫：
+BRIDGE_FILES = [
+    f"{ROOT}/java/app/dsh/mobile/engine/AgentBridge.kt",
+    f"{ROOT}/java/app/dsh/mobile/bridge/Router.kt",
+]
 HELPER = f"{ROOT}/assets/termux/webview-cdp.mjs"
 DOCS = glob.glob(f"{ROOT}/assets/agents/*.md") + [f"{ROOT}/assets/gates/native"]
 
 
 def routes():
-    text = open(BRIDGE, encoding="utf-8").read()
-    pairs = re.findall(r'method == "([A-Z]+)" && path == "([^"]+)"', text)
-    return {(m, p) for m, p in pairs}
+    """收集所有 bridge 实现文件里的 (method, path) 分支。"""
+    found = set()
+    for path in BRIDGE_FILES:
+        try:
+            text = open(path, encoding="utf-8").read()
+        except FileNotFoundError:
+            continue
+        found |= {(m, p) for m, p in
+                  re.findall(r'method == "([A-Z]+)" && path == "([^"]+)"', text)}
+    return found
 
 
 def helper_subcommands():
