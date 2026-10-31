@@ -2,6 +2,7 @@ package app.dsh.mobile
 
 import android.app.Application
 import app.dsh.mobile.engine.EngineSupervisor
+import app.dsh.mobile.webview.JsAssets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,6 +20,7 @@ class DshApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        JsAssets.init(this)
         CoordAutoCalibrator.install(this)
         // ⚠️ v1.2.110：全局崩溃捕获 —— 用户反馈「进程异常退出」（1.2.97 升级后 ×2 人，
         // Android 16 未复现，疑为 Android 17 兼容问题）。没有现场日志无法定位，

@@ -360,7 +360,7 @@ class MainActivity : Activity() {
             Log.i("MainActivity", "webview history cleared after engine restart; canGoBack=${view.canGoBack()}")
         }
         // 环境自检：把 WebView 版本与关键 API 存在性写进日志，用户报障时一眼定位
-        view.evaluateJavascript(WebViewJs.WEBVIEW_SELFCHECK_JS, null)
+        view.evaluateJavascript(WebViewJs.selfCheckJs(), null)
         // v1.3.1 补丁（issue #17「选择横屏进入卡死」）：收遮罩必须放在
         // 模式分支**之前**。此前 desktopMode 分支先 return，遮罩永不淡出，
         // 全屏可点击的遮罩把后续所有触摸都吃掉 = 看起来卡死。
