@@ -1,5 +1,8 @@
 package app.dsh.mobile.engine
 
+import app.dsh.mobile.bridge.RuntimeHandler
+import app.dsh.mobile.bridge.PtyHandler
+import app.dsh.mobile.bridge.BridgeSupport
 import app.dsh.mobile.ProgressHub
 import app.dsh.mobile.Calib
 
@@ -622,19 +625,19 @@ object AgentBridge {
             method == "POST" && path == "/say" -> say(ctx, body)
             method == "GET" && path == "/say" -> sayGet(ctx, query)
             // 运行时热更新（2026-10-18）：门脚本 dsh-update 驱动的五个端点
-            method == "GET" && path == "/runtime/status" -> runtimeStatus(ctx, query)
-            method == "GET" && path == "/runtime/feed" -> runtimeFeed(ctx, query)
-            method == "POST" && path == "/runtime/pull" -> runtimePull(ctx, body)
+            method == "GET" && path == "/runtime/status" -> RuntimeHandler.status(ctx, query)
+            method == "GET" && path == "/runtime/feed" -> RuntimeHandler.feed(ctx, query)
+            method == "POST" && path == "/runtime/pull" -> RuntimeHandler.pull(ctx, body)
             // 引擎侧终端：dsh WebUI 侧边栏的 node-pty shim 通过这组端点用 App 的真 PTY
-            method == "POST" && path == "/pty/open" -> ptyOpen(ctx, body)
-            method == "POST" && path == "/pty/write" -> ptyWrite(body)
-            method == "POST" && path == "/pty/resize" -> ptyResize(body)
-            method == "POST" && path == "/pty/kill" -> ptyKill(body)
-            method == "POST" && path == "/pty/close" -> ptyClose(body)
-            method == "GET" && path == "/pty/read" -> ptyRead(query)
-            method == "POST" && path == "/runtime/stage" -> runtimeStage(ctx, body)
-            method == "POST" && path == "/runtime/apply" -> runtimeApply(ctx)
-            method == "POST" && path == "/runtime/rollback" -> runtimeRollback(ctx)
+            method == "POST" && path == "/pty/open" -> PtyHandler.open(ctx, body)
+            method == "POST" && path == "/pty/write" -> PtyHandler.write(body)
+            method == "POST" && path == "/pty/resize" -> PtyHandler.resize(body)
+            method == "POST" && path == "/pty/kill" -> PtyHandler.kill(body)
+            method == "POST" && path == "/pty/close" -> PtyHandler.close(body)
+            method == "GET" && path == "/pty/read" -> PtyHandler.read(query)
+            method == "POST" && path == "/runtime/stage" -> RuntimeHandler.stage(ctx, body)
+            method == "POST" && path == "/runtime/apply" -> RuntimeHandler.apply(ctx)
+            method == "POST" && path == "/runtime/rollback" -> RuntimeHandler.rollback(ctx)
             method == "POST" && path == "/engine/restart" -> engineRestart(ctx, body)
             method == "POST" && path == "/a11y/enable" -> a11yEnable(ctx)
             else -> 404 to """{"ok":false,"error":"unknown route"}"""
@@ -652,31 +655,10 @@ object AgentBridge {
     //  - 鉴权沿用 handle() 里统一的 X-DSH-Token 校验，这组端点不另开门。
 
     /** GET /runtime/status [?format=line] → 状态 JSON；format=line 时返回 key: value 行（给 bash 门脚本） */
-    private fun runtimeStatus(ctx: Context, query: String): Pair<Int, String> {
-        return try {
-            val st = RuntimeUpdater.status(ctx)
-            if (query.split('&').any { it == "format=line" }) 200 to st.toLine()
-            else 200 to st.toJson()
-        } catch (e: Exception) {
-            500 to JSONObject().put("ok", false).put("error", e.message ?: "status failed").toString()
-        }
-    }
+    
 
     /** POST /runtime/stage body {"path":"/abs/x.zip"} 或 {"url":"https://…","sha256":"…"} */
-    private fun runtimeStage(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
-            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
-        val path = obj.optString("path").takeIf { it.isNotBlank() }
-        val url = obj.optString("url").takeIf { it.isNotBlank() }
-        val src = path ?: url
-        if (src == null) {
-            return 400 to JSONObject().put("ok", false)
-                .put("error", "missing 'path' or 'url'").toString()
-        }
-        val sha = obj.optString("sha256").takeIf { it.isNotBlank() }
-        val err = RuntimeUpdater.stage(ctx, src, sha, isUrl = path == null)
-        return acceptedOrRejected("stage", err)
-    }
+    
 
     // ── 引擎侧终端（node-pty 桥，2026-10-18）────────────────────────────────
     //
@@ -689,108 +671,22 @@ object AgentBridge {
     // 鉴权沿用 handle() 里的统一 X-DSH-Token；数据用 base64（二进制安全）。
 
     /** POST /pty/open {file,args,cwd,env,rows,cols,name} → {ok,id,pid} */
-    private fun ptyOpen(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
-            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
-        val file = obj.optString("file").trim()
-        if (file.isEmpty()) {
-            return 400 to JSONObject().put("ok", false).put("error", "missing 'file'").toString()
-        }
-        val args = ArrayList<String>()
-        obj.optJSONArray("args")?.let { a -> for (i in 0 until a.length()) args.add(a.optString(i)) }
-        val env = LinkedHashMap<String, String>()
-        obj.optJSONObject("env")?.let { e -> for (k in e.keys()) env[k] = e.optString(k) }
-        val cwd = obj.optString("cwd").trim().takeIf { it.isNotEmpty() }
-            ?: EngineConfig.dshHome(ctx).absolutePath
-        val rows = obj.optInt("rows", 24).let { if (it in 1..512) it else 24 }
-        val cols = obj.optInt("cols", 80).let { if (it in 1..512) it else 80 }
-        val term = obj.optString("name").trim().ifEmpty { "xterm-256color" }
-        return try {
-            val s = PtyBridge.open(ctx, file, args, cwd, env, rows, cols, term)
-            200 to JSONObject().put("ok", true).put("id", s.id).put("pid", s.pid).toString()
-        } catch (e: Exception) {
-            409 to JSONObject().put("ok", false)
-                .put("error", e.message ?: e.javaClass.simpleName).toString()
-        }
-    }
+    
 
     /** POST /pty/write {id,data(base64)} */
-    private fun ptyWrite(body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
-            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
-        val id = obj.optInt("id", -1)
-        val b64 = obj.optString("data")
-        return try {
-            val data = if (b64.isEmpty()) ByteArray(0) else android.util.Base64.decode(b64, android.util.Base64.NO_WRAP)
-            val n = PtyBridge.write(id, data)
-            200 to JSONObject().put("ok", true).put("bytes", n).toString()
-        } catch (e: Exception) {
-            409 to JSONObject().put("ok", false)
-                .put("error", e.message ?: e.javaClass.simpleName).toString()
-        }
-    }
+    
 
     /** POST /pty/resize {id,rows,cols} */
-    private fun ptyResize(body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
-            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
-        return try {
-            PtyBridge.resize(obj.optInt("id", -1), obj.optInt("rows", 24), obj.optInt("cols", 80))
-            200 to JSONObject().put("ok", true).toString()
-        } catch (e: Exception) {
-            409 to JSONObject().put("ok", false)
-                .put("error", e.message ?: e.javaClass.simpleName).toString()
-        }
-    }
+    
 
     /** POST /pty/kill {id,sig}（默认 SIGTERM=15；只管信号，不释放会话） */
-    private fun ptyKill(body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
-            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
-        return try {
-            PtyBridge.signal(obj.optInt("id", -1), obj.optInt("sig", 15))
-            200 to JSONObject().put("ok", true).toString()
-        } catch (e: Exception) {
-            409 to JSONObject().put("ok", false)
-                .put("error", e.message ?: e.javaClass.simpleName).toString()
-        }
-    }
+    
 
     /** POST /pty/close {id}（杀进程组 + 回收槽位，幂等） */
-    private fun ptyClose(body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
-            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
-        return try {
-            PtyBridge.close(obj.optInt("id", -1))
-            200 to JSONObject().put("ok", true).toString()
-        } catch (e: Exception) {
-            409 to JSONObject().put("ok", false)
-                .put("error", e.message ?: e.javaClass.simpleName).toString()
-        }
-    }
+    
 
     /** GET /pty/read?id&seq&timeout → {ok,seq,data,exited,exit_code,signal,lost} */
-    private fun ptyRead(query: String): Pair<Int, String> {
-        val p = parseQuery(query)
-        val id = p["id"]?.toIntOrNull() ?: -1
-        val seq = p["seq"]?.toLongOrNull() ?: 0L
-        val timeout = p["timeout"]?.toIntOrNull() ?: 20_000
-        return try {
-            val c = PtyBridge.read(id, seq, timeout)
-            val b64 = if (c.data.isEmpty()) "" else android.util.Base64.encodeToString(c.data, android.util.Base64.NO_WRAP)
-            200 to JSONObject().put("ok", true)
-                .put("seq", c.nextSeq)
-                .put("data", b64)
-                .put("exited", c.exited)
-                .put("exit_code", c.exitCode)
-                .put("signal", c.signal)
-                .put("lost", c.lost)
-                .toString()
-        } catch (e: Exception) {
-            409 to JSONObject().put("ok", false)
-                .put("error", e.message ?: e.javaClass.simpleName).toString()
-        }
-    }
+    
 
     /**
      * GET /runtime/feed [?format=line][&manifest=<url>] → dsh 版本检查。
@@ -798,16 +694,7 @@ object AgentBridge {
      * 回答三个问题：装的是哪个 dsh 版本、上游 npm 最新是哪个、feed 能为当前 ABI 提供哪个。
      * 只读：不发任何文件改动，也不触发下载（下载只在 /runtime/pull 里做）。
      */
-    private fun runtimeFeed(ctx: Context, query: String): Pair<Int, String> {
-        return try {
-            val params = parseQuery(query)
-            val check = RuntimeUpdater.feedCheck(ctx, params["manifest"])
-            if (params["format"] == "line") 200 to check.toLine()
-            else 200 to check.toJson()
-        } catch (e: Exception) {
-            500 to JSONObject().put("ok", false).put("error", e.message ?: "feed check failed").toString()
-        }
-    }
+    
 
     /**
      * POST /runtime/pull body {"version":"0.2.1","manifest":"https://…"} → 202。
@@ -815,28 +702,13 @@ object AgentBridge {
      * 注意语义：比较与拉取都以 **dsh 版本**（@deepseek-ai/dsh）为准，与 APK 版本无关。
      * 下载 + 解压耗时几十秒到几分钟，因此和 stage 一样是「立即受理 + 轮询 status」。
      */
-    private fun runtimePull(ctx: Context, body: String): Pair<Int, String> {
-        val obj = runCatching { JSONObject(body.ifBlank { "{}" }) }.getOrNull()
-            ?: return 400 to JSONObject().put("ok", false).put("error", "invalid json").toString()
-        val err = RuntimeUpdater.pull(
-            ctx,
-            obj.optString("version").takeIf { it.isNotBlank() },
-            obj.optString("manifest").takeIf { it.isNotBlank() },
-        )
-        return acceptedOrRejected("pull", err)
-    }
+    
 
     /** POST /runtime/apply → 202（Async: stop → swap → start → health check → auto rollback） */
-    private fun runtimeApply(ctx: Context): Pair<Int, String> {
-        val err = RuntimeUpdater.apply(ctx)
-        return acceptedOrRejected("apply", err)
-    }
+    
 
     /** POST /runtime/rollback → 202 */
-    private fun runtimeRollback(ctx: Context): Pair<Int, String> {
-        val err = RuntimeUpdater.rollback(ctx)
-        return acceptedOrRejected("rollback", err)
-    }
+    
 
     /** POST /a11y/enable（提案 P1-5）：一次调用打开系统无障碍设置页。 */
     private fun a11yEnable(ctx: Context): Pair<Int, String> {
@@ -877,22 +749,15 @@ object AgentBridge {
         return acceptedOrRejected("restart", null)
     }
 
-    /** 202 = 已受理；409 = 被拒绝（忙 / 无暂存 / 无旧版 …），错误文本原样给调用方 */
     private fun acceptedOrRejected(action: String, err: String?): Pair<Int, String> =
-        if (err == null) {
-            202 to JSONObject().put("ok", true).put("action", action).put("accepted", true).toString()
-        } else {
-            409 to JSONObject().put("ok", false).put("action", action).put("error", err).toString()
-        }
+        BridgeSupport.acceptedOrRejected(action, err)
 
     /**
      * POST /say body {"text":"...", "flush":false} → 系统语音合成朗读。
      * Agent 语音输出的出口（issues #2 语音功能方向的第一块）。
      */
     /** "text=...&flush=1" → Map（query 参数，GET /say 用；UTF-8 URL 解码） */
-    private fun urlDecode(s: String): String = runCatching {
-        java.net.URLDecoder.decode(s, "UTF-8")
-    }.getOrDefault(s)
+    private fun urlDecode(s: String): String = BridgeSupport.urlDecode(s)
 
     /** GET /say?text=...&flush=1 → 构造 JSON body 后走同一 say 流程 */
     private fun sayGet(ctx: Context, rawPath: String): Pair<Int, String> {
@@ -1950,12 +1815,7 @@ document.getElementById('api').textContent = checks.map(function(c){
     }
 
     /** query 串（"a=1&b=2"）解析；值做 UTF-8 URL 解码 */
-    private fun parseQuery(query: String): Map<String, String> =
-        query.split("&").filter { it.contains("=") }.associate {
-            val i = it.indexOf('=')
-            java.net.URLDecoder.decode(it.substring(0, i), "UTF-8") to
-                java.net.URLDecoder.decode(it.substring(i + 1), "UTF-8")
-        }
+    private fun parseQuery(query: String): Map<String, String> = BridgeSupport.parseQuery(query)
 
     /**
      * v2.5.25：用提权 shell（Shizuku/Root）发一次 `input tap`。
