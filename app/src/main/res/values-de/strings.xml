@@ -426,4 +426,5 @@ Engine: %6$s</string>
     <string name="setting_stock_ui_confirm">Eingebaute Mobile-UI neu einsetzen und Engine neu starten? Eigenes Layout-Tuning geht verloren, der Verlauf bleibt.</string>
     <string name="setting_stock_ui_done">Mobile UI wiederhergestellt, Engine startet neu</string>
     <string name="setting_stock_ui_none">UI war bereits die eingebaute Version, Engine startet neu</string>
+    <string name="mobile_ui_not_applied">Mobile-UI wurde nicht angewendet — Engine-CSS hat sich evtl. geändert</string>
 </resources>

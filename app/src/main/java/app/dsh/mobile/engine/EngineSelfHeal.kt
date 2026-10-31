@@ -139,7 +139,9 @@ internal object EngineSelfHeal {
      * 返回是否真的删到了东西（用于给用户一个诚实的回执）。
      */
     fun repairMobileUi(ctx: android.content.Context): Boolean = runCatching {
-        val dir = java.io.File(java.io.File(EngineConfig.engineRoot(ctx), "dsh-home"), "android-plugins/mobile-ui")
+        // 部署位置是 $PREFIX/android-plugins（见 AndroidOverlay 的 deployAssets），
+        // 不是 dsh-home/android-plugins —— 旧实现指错了目录，"还原 UI" 实际删不到东西。
+        val dir = java.io.File(EngineConfig.engineRoot(ctx), "android-plugins/mobile-ui")
         val existed = dir.exists()
         if (existed) dir.deleteRecursively()
         Log.i(EngineConfig.TAG, "repairMobileUi: existed=$existed deleted=${!dir.exists()} path=${dir.path}")

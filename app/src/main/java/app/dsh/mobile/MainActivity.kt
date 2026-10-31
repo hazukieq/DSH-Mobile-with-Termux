@@ -349,7 +349,37 @@ class MainActivity : Activity() {
      * （Phase 1.3 从旧 `onPageFinished` 原样搬出：清历史、环境自检、收遮罩、
      *  按横竖屏改写 viewport —— 这些都要读 Activity 的字段，所以留在 Activity。）
      */
+    /**
+     * 移动端皮肤自检（v2.5.74）：8 秒后查 `#dshm-bar` / `data-dsh-mobile`。
+     *
+     * 前缀适配是运行时探测的，正常情况下总能命中；但如果 DSH 大版本改了 DOM 语义，
+     * 插件会静默失效（用户只看到「装了但没生效」）。这里补一次明确提示：
+     * 每个进程只提示一次，并把结果写进 logcat，方便用户/我们定位。
+     */
+    private fun scheduleMobileUiSelfCheck(view: WebView) {
+        if (mobileUiWarned) return
+        view.postDelayed({
+            runCatching {
+                view.evaluateJavascript(WebViewJs.mobileUiSelfCheckJs()) { raw ->
+                    val r = raw?.trim()?.trim('"') ?: "error"
+                    if (r != "ok" && !mobileUiWarned) {
+                        mobileUiWarned = true
+                        logWebView("mobile-ui selfcheck: $r (prefix adapter or DOM changed)")
+                        android.widget.Toast.makeText(
+                            this,
+                            getString(R.string.mobile_ui_not_applied),
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
+        }, 8_000L)
+    }
+
+    private var mobileUiWarned = false
+
     private fun onEnginePageFinished(view: WebView, url: String?) {
+        scheduleMobileUiSelfCheck(view)
         // 引擎重启（token 变了）→ 旧页面的返回栈必须作废：否则 BACK 会退回
         // 上一个 token 的引擎页/预览页，那些页面连的是已死的引擎，表现为白屏。
         // 放在最早处：任何分支 return 之前都要清。

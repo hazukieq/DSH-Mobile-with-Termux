@@ -212,16 +212,59 @@ function createMobileUi() {
    * 到真实类名，取其前缀；随后把 CSS 文本与所有选择器里的旧前缀替换掉。
    * 探测失败就退回旧前缀（等价于旧行为，不会更糟）。
    */
+  /* 语义族 → 候选后缀（可被同目录 prefixes.json 覆盖/扩充）。
+   * 后缀是稳定的语义名；一旦 DSH 改了某个语义名（frame → shell 之类），
+   * 只改 prefixes.json 就能适配，不需要重打 APK。 */
   var FAMILY_PROBE = [
-    ['pI_x6G_', 'frame'],
-    ['wSkVaW_', 'header'],
-    ['EvIC1a_', 'scroll'],
-    ['uV2eYG_', 'placeholder'],
-    ['VOzbGW_', 'navCell'],
-    ['pXSMma_', 'headline'],
-    ['hHd-Xa_', 'newSession']
+    ['pI_x6G_', ['frame']],
+    ['wSkVaW_', ['header']],
+    ['EvIC1a_', ['scroll']],
+    ['uV2eYG_', ['placeholder']],
+    ['VOzbGW_', ['navCell']],
+    ['pXSMma_', ['headline']],
+    ['hHd-Xa_', ['newSession']]
   ]
   var PREFIX_MAP = null
+
+  /* 同目录 prefixes.json 的地址（相对本脚本）。取不到就只用内置表。 */
+  var PREFIX_TABLE_URL = (function () {
+    try {
+      var src = document.currentScript && document.currentScript.src
+      return src ? new URL('prefixes.json', src).toString() : ''
+    } catch (error) {
+      return ''
+    }
+  })()
+  var PREFIX_TABLE_LOADED = false
+
+  /** 拉取并合并语义族表：roles: { frame: ["frame", "shell"], ... } */
+  function loadPrefixTable() {
+    if (PREFIX_TABLE_LOADED || PREFIX_TABLE_URL === '') return
+    PREFIX_TABLE_LOADED = true
+    try {
+      fetch(PREFIX_TABLE_URL, { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null })
+        .then(function (json) {
+          var roles = json && json.roles
+          if (!roles) return
+          for (var f = 0; f < FAMILY_PROBE.length; f += 1) {
+            var legacy = FAMILY_PROBE[f][0]
+            var key = FAMILY_PROBE[f][1][0]
+            var extra = roles[key]
+            if (!extra || typeof extra.length !== 'number') continue
+            var merged = FAMILY_PROBE[f][1].slice()
+            for (var i = 0; i < extra.length; i += 1) {
+              if (merged.indexOf(extra[i]) === -1) merged.push(extra[i])
+            }
+            FAMILY_PROBE[f][1] = merged
+          }
+        })
+        .catch(function () { /* 拿不到就继续用内置表 */ })
+    } catch (error) {
+      /* fetch 不可用：忽略 */
+    }
+  }
+  loadPrefixTable()
 
   /** 扫描一次 DOM，得到「旧前缀 → 当前前缀」。 */
   function detectPrefixes() {
@@ -241,13 +284,16 @@ function createMobileUi() {
     }
     for (var f = 0; f < FAMILY_PROBE.length; f += 1) {
       var old = FAMILY_PROBE[f][0]
-      var suffix = '_' + FAMILY_PROBE[f][1]
+      var candidates = FAMILY_PROBE[f][1]
       var hit = null
-      for (var t = 0; t < tokens.length; t += 1) {
-        var tok = tokens[t]
-        if (tok.length > suffix.length && tok.slice(-suffix.length) === suffix) {
-          hit = tok.slice(0, tok.length - suffix.length + 1)
-          break
+      for (var ci = 0; ci < candidates.length && hit === null; ci += 1) {
+        var suffix = '_' + candidates[ci]
+        for (var t = 0; t < tokens.length; t += 1) {
+          var tok = tokens[t]
+          if (tok.length > suffix.length && tok.slice(-suffix.length) === suffix) {
+            hit = tok.slice(0, tok.length - suffix.length + 1)
+            break
+          }
         }
       }
       map[old] = hit || old

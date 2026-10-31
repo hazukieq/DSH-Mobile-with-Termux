@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "note": "语义族 → 候选后缀。DSH 升级把某个语义名改掉时，在这里加新后缀即可（client.js 按后缀在 DOM 里探测当前哈希前缀），不必重打 APK。部署位置：$PREFIX/android-plugins/mobile-ui/prefixes.json",
+  "roles": {
+    "frame": ["frame"],
+    "header": ["header"],
+    "scroll": ["scroll"],
+    "placeholder": ["placeholder"],
+    "navCell": ["navCell"],
+    "headline": ["headline"],
+    "newSession": ["newSession"]
+  }
+}

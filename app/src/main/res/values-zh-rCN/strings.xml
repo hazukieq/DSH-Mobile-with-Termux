@@ -416,4 +416,5 @@ dsh：%2$s
     <string name="setting_stock_ui_confirm">将把移动端界面恢复成内置版本并重启引擎。你自己改过的布局设置会丢失，聊天记录不受影响。</string>
     <string name="setting_stock_ui_done">已恢复内置界面，正在重启引擎</string>
     <string name="setting_stock_ui_none">界面本来就是内置版本，正在重启引擎</string>
+    <string name="mobile_ui_not_applied">移动端界面未生效：可能是引擎样式改动，稍后会随版本适配</string>
 </resources>

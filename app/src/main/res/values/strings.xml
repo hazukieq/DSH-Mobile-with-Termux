@@ -416,4 +416,5 @@ engine: %6$s</string>
     <string name="setting_stock_ui_confirm">Re-deploy the built-in mobile UI and restart the engine? Layout tweaks you made are lost; chat history is not affected.</string>
     <string name="setting_stock_ui_done">Mobile UI restored; restarting the engine</string>
     <string name="setting_stock_ui_none">Mobile UI was already the built-in copy; restarting the engine</string>
+    <string name="mobile_ui_not_applied">Mobile UI skin did not attach — engine CSS may have changed</string>
 </resources>

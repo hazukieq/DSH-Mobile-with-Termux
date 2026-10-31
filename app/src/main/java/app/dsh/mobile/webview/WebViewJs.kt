@@ -19,6 +19,9 @@ import androidx.core.content.ContextCompat
  */
 internal object WebViewJs {
 
+    /** 移动端皮肤自检：返回 "ok" / "missing" / "error"（Android 侧据此提示） */
+    fun mobileUiSelfCheckJs(): String = JsAssets.read("mobile-ui-selfcheck.js")
+
         /**
          * 环境自检脚本：报告 WebView 版本与引擎所需关键 API 是否存在。
          * 引擎实际需要 Chrome 126（pdf.js 用 URL.parse），polyfill 可补 API 但补不了语法

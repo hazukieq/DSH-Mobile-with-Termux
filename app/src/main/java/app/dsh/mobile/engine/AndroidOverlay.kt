@@ -214,11 +214,13 @@ internal object AndroidOverlay {
             //               ② 在此列表追加目录名
             //               ③ 在 overlay 的 insert 段追加一条 entry（指向 index.js）
             listOf("mobile-progress", "mobile-ui").forEach { pkg ->
-                listOf("package.json", "index.js", "client.js").forEach { fileName ->
-                    val src = ctx.assets.open("android-plugins/$pkg/$fileName")
-                        .use { it.readBytes() }
+                // prefixes.json 是 mobile-ui 的语义族表（可缺省，缺了插件用内置表）
+                listOf("package.json", "index.js", "client.js", "prefixes.json").forEach { fileName ->
+                    val bytes = runCatching {
+                        ctx.assets.open("android-plugins/$pkg/$fileName").use { it.readBytes() }
+                    }.getOrNull() ?: return@forEach
                     val dst = File(f.parentFile, "android-plugins/$pkg/$fileName")
-                    deployOne(dst, src.toString(Charsets.UTF_8), "$pkg/$fileName")
+                    deployOne(dst, bytes.toString(Charsets.UTF_8), "$pkg/$fileName")
                 }
             }
         }.onFailure { Log.w(EngineConfig.TAG, "android plugin deploy failed: ${it::class.simpleName}: ${it.message}", it) }
