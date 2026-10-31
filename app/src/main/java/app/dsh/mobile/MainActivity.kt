@@ -22,6 +22,10 @@ import android.widget.Toast
 import app.dsh.mobile.engine.EngineSupervisor
 import app.dsh.mobile.engine.Privilege
 import app.dsh.mobile.service.EngineService
+import app.dsh.mobile.webview.ShareHandler
+import app.dsh.mobile.webview.WebViewJs
+import app.dsh.mobile.webview.WebViewManager
+import app.dsh.mobile.webview.SplashController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -62,6 +66,10 @@ class MainActivity : Activity() {
 
     /** v1.3.44：其它 App 分享进来的待写入内容（页面未就绪时暂存）。 */
     private var pendingSharePrompt: String? = null
+    /** 分享接收（Phase 1.2 起独立成类）：后台复制 + 大小上限 + 正文组装。 */
+    private lateinit var shareHandler: ShareHandler
+    /** WebView 装配器（Phase 1.3 起独立成类）。 */
+    private lateinit var webViewManager: WebViewManager
     private var shareDeliverAttempts = 0
     /** 首次投递前先读取现有草稿并合并，避免分享覆盖用户正在写的内容。 */
     private var shareMergeChecked = false
@@ -86,19 +94,8 @@ class MainActivity : Activity() {
     /** 待回传的文件选择结果（onShowFileChooser → onActivityResult 之间持有；null 表示无进行中请求） */
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
 
-    // ---------- 启动动画（v1.3.1） ----------
-    /** 全屏启动遮罩；null = 已淡出/未初始化 */
-    private var splash: android.view.View? = null
-    private var splashLogo: android.view.View? = null
-    private var splashStatus: android.widget.TextView? = null
-    private var splashProgress: android.widget.ProgressBar? = null
-    /** 遮罩出现时间：用于保证最短展示时长（避免一闪而过） */
-    private var splashShownAt = 0L
-    /** 是否已经淡出（幂等） */
-    private var splashDismissed = false
-    private val splashMinMs = 700L
-    /** 兜底看门狗：任何加载路径异常都不能让遮罩永久吞掉触摸（issue #17） */
-    private var splashWatchdog: Runnable? = null
+    // ---------- 启动动画（v1.3.1；Phase 1.1 起由 SplashController 负责） ----------
+    private lateinit var splashController: SplashController
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun attachBaseContext(newBase: android.content.Context) {
@@ -127,6 +124,8 @@ class MainActivity : Activity() {
         // 记录本页生效的语言（onResume 里比对，设置页改过就重建本页）
         appliedLocale = LocaleHelper.get(this)
 
+        splashController = SplashController(this) { runCatching { webView }.getOrNull() }
+        shareHandler = ShareHandler(this, uiScope) { body, files -> deliverShareBody(body, files) }
         setupSplash()
         statusBar = findViewById(R.id.statusBar)
         // 先赋值字段再配置：setupWebView 内部读取的是 this.webView，
@@ -299,55 +298,17 @@ class MainActivity : Activity() {
      * 没有打开的会话/输入框时给出明确状态提示，而不是静默失败。
      */
     private fun handleIncomingShare(intent: Intent) {
-        val action = intent.action ?: return
-        Log.i("DshShare", "intent action=$action type=${intent.type}")
-        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
-        var rawText = intent.getStringExtra(Intent.EXTRA_TEXT)
-        if (rawText.isNullOrBlank()) rawText = intent.getStringExtra(Intent.EXTRA_SUBJECT)
-        val uris = mutableListOf<Uri>()
-        intent.clipData?.let { cd ->
-            for (i in 0 until cd.itemCount) cd.getItemAt(i)?.uri?.let { uris.add(it) }
-        }
-        @Suppress("DEPRECATION")
-        (intent.getParcelableExtra<android.os.Parcelable>(Intent.EXTRA_STREAM) as? Uri)?.let { uris.add(it) }
-        val saved = mutableListOf<String>()
-        if (uris.isNotEmpty()) {
-            val inbox = java.io.File(app.dsh.mobile.engine.EngineConfig.dshHome(this), "inbox").apply { mkdirs() }
-            uris.distinct().forEach { uri ->
-                runCatching {
-                    val name = (displayNameOf(uri) ?: "shared-${System.currentTimeMillis()}").replace('/', '_')
-                    val dst = java.io.File(inbox, "${System.currentTimeMillis()}-$name")
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    if (dst.isFile && dst.length() > 0) saved.add(dst.absolutePath)
-                }.onFailure { Log.w("MainActivity", "share copy failed: ${it.message}") }
-            }
-        }
-        val body = buildString {
-            if (saved.isNotEmpty()) {
-                append(getString(R.string.share_files_header)).append('\n')
-                saved.forEach { append("- ").append(it).append('\n') }
-                append('\n')
-            }
-            if (!rawText.isNullOrBlank()) append(rawText.trim())
-        }.trim()
-        if (body.isBlank()) {
-            Toast.makeText(this, getString(R.string.share_empty), Toast.LENGTH_SHORT).show()
-            return
-        }
+        shareHandler.handle(intent)
+    }
+
+    /** 分享正文投递（由 [ShareHandler] 在主线程回调）：只预填，不自动发送。 */
+    private fun deliverShareBody(body: String, fileCount: Int = 0) {
         pendingSharePrompt = body
         shareDeliverAttempts = 0
         shareMergeChecked = false
-        Log.i("DshShare", "prompt len=${body.length} files=${saved.size} webViewReady=${::webView.isInitialized}")
+        Log.i("DshShare", "prompt len=${body.length} files=$fileCount webViewReady=${::webView.isInitialized}")
         webView.postDelayed({ deliverPendingShare() }, 400)
     }
-
-    private fun displayNameOf(uri: Uri): String? = runCatching {
-        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
-    }.getOrNull()
 
     /**
      * 把待写入的分享内容放进 WebUI 输入框。
@@ -381,7 +342,7 @@ class MainActivity : Activity() {
         }
         shareDeliverAttempts++
         Log.i("DshShare", "deliver attempt=$shareDeliverAttempts len=${prompt.length}")
-        webView.evaluateJavascript(buildVoiceInputJs(prompt)) { raw ->
+        webView.evaluateJavascript(WebViewJs.buildVoiceInputJs(prompt)) { raw ->
             Log.i("DshShare", "write result=${jsString(raw)}")
             when (jsString(raw)) {
                 "entering-session", "no-input-found" ->
@@ -401,7 +362,7 @@ class MainActivity : Activity() {
                 }
                 inBox.isEmpty() || inBox == "none" -> {
                     // paste 没生效 → execCommand 补写，再读一次
-                    webView.evaluateJavascript(buildVoiceRepairJs(prompt)) { _ ->
+                    webView.evaluateJavascript(WebViewJs.buildVoiceRepairJs(prompt)) { _ ->
                         webView.postDelayed({
                             readSendText { after ->
                                 if (after.contains(probe)) {
@@ -416,7 +377,7 @@ class MainActivity : Activity() {
                 }
                 else -> {
                     // 用户已有草稿：追加在末尾，不覆盖
-                    webView.evaluateJavascript(buildVoiceRepairJs("\n\n" + prompt)) { _ ->
+                    webView.evaluateJavascript(WebViewJs.buildVoiceRepairJs("\n\n" + prompt)) { _ ->
                         webView.postDelayed({
                             readSendText { after ->
                                 if (after.contains(probe)) {
@@ -454,252 +415,92 @@ class MainActivity : Activity() {
 
     private fun setupWebView() {
         defaultUa = webView.settings.userAgentString
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            allowFileAccess = false       // 关闭文件域，收窄 WebView 攻击面
-            allowContentAccess = false
-            // 登录/OAuth 常见 `window.open(url)` 或 `target=_blank`：WebView 默认
-            // 不允许多窗口，弹窗请求被静默丢弃 → 页面只剩空白（issue：登录 try to
-            // openPopup 失败）。这里开多窗口，并在 onCreateWindow 里把弹窗首跳接到
-            // 外部浏览器（见下方注释）。
-            javaScriptCanOpenWindowsAutomatically = true
-            setSupportMultipleWindows(true)
-            // 竖屏页面缩小靠 viewport meta 改写（同桌面模式机制），useWideViewPort 必须开。
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            applyZoomControls(desktopMode)
-        }
-        // v1.3.68：WebUI 的 mobile-progress 插件通过这个桥把当前思考/步骤报给原生，
-        // 不需要无障碍就能在后台/通知栏展示进度。
-        runCatching { webView.addJavascriptInterface(ProgressJsBridge(this), "DshNative") }
-        runCatching {
-            app.dsh.mobile.DshLogBridge.appCtx = applicationContext
-            webView.addJavascriptInterface(app.dsh.mobile.DshLogBridge(), "DshLog")
-        }
-        // ── WebView 诊断（v1.2.49）：用户报「用不了」时能拿到确凿信息 ────────────
-        // 背景：华为 Mate40 报 `AbortSignal.any is not a function`、另有 Android 16 用户
-        // 报失败，但 App 此前既不捕获 WebView 错误也不转发 console，排查只能靠猜。
-        // 这里把 JS 控制台消息、资源加载错误、以及 polyfill/WebView 版本自检全部落进
-        // engine.log（用户可在设置里导出），日志里带 [webview] 前缀便于定位。
-        webView.webChromeClient = object : android.webkit.WebChromeClient() {
-            override fun onConsoleMessage(msg: android.webkit.ConsoleMessage?): Boolean {
-                msg ?: return false
-                val text = msg.message() ?: return false
-                // 只记有价值的信息：错误/警告，或我们自己的自检标记
-                val important = msg.messageLevel() >= android.webkit.ConsoleMessage.MessageLevel.WARNING ||
-                    text.contains("[dsh-android]")
-                if (important) {
-                    logWebView("console/${msg.messageLevel()} ${msg.sourceId()}:${msg.lineNumber()} $text")
-                }
-                return false
-            }
-
-            /**
-             * 弹窗（window.open / target=_blank）处理 —— v2.5.57。
-             *
-             * ## 为什么必须实现
-             * WebView 默认不支持多窗口：网页调 `window.open()` 时，若宿主没实现本回调并
-             * 通过 `WebViewTransport` 交出一个子 WebView，**弹窗请求会被静默丢弃**。
-             * 表现就是第三方登录 / OAuth（"try to openPopup"）点了没反应、页面变空白。
-             *
-             * ## 做法
-             * 不去真的开一个应用内子窗口：登录页多半是外部站点，在应用内渲染既拿不稳
-             * Cookie/SSO，也容易被 X-Frame/UA 判断卡死。这里用一个一次性「探测 WebView」
-             * 截获弹窗的**首个 URL**，然后：
-             *  · http/https 且非回环 → `ACTION_VIEW` 交给系统浏览器（登录在那里完成）；
-             *  · 回环（127.0.0.1/localhost）或 about:blank → 直接在主 WebView 打开，
-             *    因为那本来就是 App 自己的页面（例如 WebUI 的内部弹层）。
-             */
-            override fun onCreateWindow(
-                view: WebView?,
-                isDialog: Boolean,
-                isUserGesture: Boolean,
-                resultMsg: android.os.Message?,
-            ): Boolean {
-                val msg = resultMsg ?: return false
-                val transport = msg.obj as? WebView.WebViewTransport ?: return false
-                val probe = WebView(this@MainActivity)
-                probe.settings.javaScriptEnabled = false
-                probe.settings.blockNetworkLoads = false
-                val handedOff = java.util.concurrent.atomic.AtomicBoolean(false)
-
-                fun handoff(rawUrl: String?) {
-                    val url = rawUrl?.trim().orEmpty()
-                    if (url.isEmpty() || url == "about:blank") return
-                    if (!handedOff.compareAndSet(false, true)) return
-                    val uri = runCatching { Uri.parse(url) }.getOrNull()
-                    logWebView("popup handoff: $url")
-                    runCatching { probe.stopLoading() }
-                    probe.destroy()
-                    if (uri == null) return
-                    val loopback = uri.host == "127.0.0.1" || uri.host == "localhost"
-                    if (loopback) {
-                        // 自己人的弹层：主 WebView 直接打开（等价于单窗口浏览器行为）
-                        webView.post { webView.loadUrl(url) }
-                        return
-                    }
-                    val launched = runCatching {
-                        startActivity(Intent(Intent.ACTION_VIEW, uri))
-                    }.isSuccess
-                    if (!launched) {
-                        logWebView("popup handoff: no browser for ${uri.scheme}; loading in-app")
-                        webView.post { webView.loadUrl(url) }
-                    }
-                }
-
-                probe.webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(
-                        v: WebView?, request: WebResourceRequest?,
-                    ): Boolean {
-                        handoff(request?.url?.toString()); return true
-                    }
-
-                    override fun onPageStarted(v: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                        // 有些站点的弹窗是直接 document.write 一个带脚本的页，首帧就是最终 URL
-                        if (!url.isNullOrEmpty() && !url.startsWith("about:")) handoff(url)
-                    }
-                }
-                transport.webView = probe
-                msg.sendToTarget()
-                // 兜底：弹窗既没跳转也没加载（例如被站点自己取消）→ 释放资源
-                webView.postDelayed({
-                    if (!handedOff.get() && probe.url == null) runCatching { probe.destroy() }
-                }, 3000)
-                return true
-            }
-
-            /**
-             * 网页 <input type="file"> / WebUI 附件按钮 → 系统文件选择器。
-             *
-             * ⚠️ 2026-10-05（Issue #5）：此前**未实现**此回调，WebView 收到文件选择请求时
-             * 无人应答，表现为「上传什么都失败、也弹不出选择窗口」（WebUI 附件功能整体不可用）。
-             * Android WebView 不会自行弹选择器，必须由宿主实现本方法并通过
-             * filePathCallback.onReceiveValue() 回传结果 —— 不回传则页面永远等待。
-             *
-             * 权限：用 ACTION_GET_CONTENT（SAF）而非直接读路径，**无需**存储权限，
-             * 也不受 allowFileAccess=false 影响（我们刻意关着它收窄攻击面）。
-             */
+        webViewManager = WebViewManager(webView, object : WebViewManager.Host {
+            override fun log(message: String) = logWebView(message)
+            override fun applyZoomControls(enable: Boolean) = this@MainActivity.applyZoomControls(enable)
+            override fun isDesktopMode(): Boolean = desktopMode
+            override fun onPageFinished(view: WebView, url: String?) = onEnginePageFinished(view, url)
+            override fun onRenderProcessGone(view: WebView?, detail: android.webkit.RenderProcessGoneDetail?): Boolean =
+                onEngineRenderProcessGone(view, detail)
             override fun onShowFileChooser(
-                view: WebView?,
-                filePathCallback: android.webkit.ValueCallback<Array<Uri>>?,
+                callback: android.webkit.ValueCallback<Array<Uri>>?,
                 params: android.webkit.WebChromeClient.FileChooserParams?,
-            ): Boolean {
-                filePathCallback ?: return false
-                // 上一个请求未结束（用户连点/页面切换）→ 先回传空值释放，否则 WebView 卡死
-                pendingFileCallback?.onReceiveValue(null)
-                pendingFileCallback = filePathCallback
-                val intent = runCatching { params?.createIntent() }.getOrNull()
-                    ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "*/*"
-                    }
-                return runCatching {
-                    @Suppress("DEPRECATION")
-                    startActivityForResult(intent, REQ_FILE_CHOOSER)
-                    true
-                }.getOrElse {
-                    logWebView("file chooser failed to launch: ${it.message}")
-                    pendingFileCallback = null
-                    filePathCallback.onReceiveValue(null)
-                    false
-                }
-            }
+            ): Boolean = onEngineFileChooser(callback, params)
+            override fun onVisitedHistory(url: String?) = updatePreviewChrome(url)
+        })
+        webViewManager.configure()
+    }
+
+    /**
+     * WebView 首屏完成后的 Activity 侧动作。
+     *
+     * （Phase 1.3 从旧 `onPageFinished` 原样搬出：清历史、环境自检、收遮罩、
+     *  按横竖屏改写 viewport —— 这些都要读 Activity 的字段，所以留在 Activity。）
+     */
+    private fun onEnginePageFinished(view: WebView, url: String?) {
+        // 引擎重启（token 变了）→ 旧页面的返回栈必须作废：否则 BACK 会退回
+        // 上一个 token 的引擎页/预览页，那些页面连的是已死的引擎，表现为白屏。
+        // 放在最早处：任何分支 return 之前都要清。
+        if (clearHistoryOnLoad) {
+            clearHistoryOnLoad = false
+            runCatching { view.clearHistory() }
+            Log.i("MainActivity", "webview history cleared after engine restart; canGoBack=${view.canGoBack()}")
         }
-        webView.webViewClient = object : WebViewClient() {
-            override fun onReceivedError(
-                view: WebView?, request: WebResourceRequest?, error: android.webkit.WebResourceError?,
-            ) {
-                // 主文档加载失败才是致命的；子资源失败常见（favicon 等），降级记录
-                val url = request?.url?.toString() ?: "?"
-                val desc = error?.description?.toString() ?: "?"
-                val fatal = request?.isForMainFrame == true
-                logWebView("${if (fatal) "LOAD-FAIL" else "subresource"} $url — $desc")
-            }
+        // 环境自检：把 WebView 版本与关键 API 存在性写进日志，用户报障时一眼定位
+        view.evaluateJavascript(WebViewJs.WEBVIEW_SELFCHECK_JS, null)
+        // v1.3.1 补丁（issue #17「选择横屏进入卡死」）：收遮罩必须放在
+        // 模式分支**之前**。此前 desktopMode 分支先 return，遮罩永不淡出，
+        // 全屏可点击的遮罩把后续所有触摸都吃掉 = 看起来卡死。
+        dismissSplash()
+        // 桌面模式：视口改写为固定 1280px（响应式走桌面分支，侧栏完整展开）。
+        if (desktopMode) {
+            view.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
+            return
+        }
+        // 竖屏：全交给 viewport meta 的 initial-scale 控制显示缩放（浏览器 Ctrl- 做法）。
+        view.evaluateJavascript(portraitViewportJs(pageScale / 100f), null)
+        // 竖屏「对话流被挤压」修复已改为**引擎侧客户端插件**
+        // （assets/android-plugins/narrow-sidebar/，v1.2.175）：用户要求「不要直接改源代码，
+        // 要做成插件形式」——外部注入 JS 会和其它 UI 插件抢 DOM，且引擎升级后哈希类名一变
+        // 就失效；插件走 dsh-client-modules 的官方发现机制，卸载时自清理，互不干扰。
+    }
 
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val uri = request?.url ?: return false
-                // 子框架导航一律交给 WebView 自己处理。
-                // ⚠️ 2026-10-19：侧边栏「HTML 预览」空白就是这里造成的 —— 预览把文档
-                // 放进 src=blob:... 的 iframe，WebView 为该子框架导航回调本方法，
-                // 旧实现只认 127.0.0.1（blob:/data: 的 host 为空）→ 当成外部链接
-                // `startActivity(ACTION_VIEW)` 并 return true（取消加载）→ iframe 永远空白。
-                // 主框架之外没有「跳去外部浏览器」的语义，直接放行。
-                if (!request.isForMainFrame) return false
-                // 内联/本地伪协议不可能是外部页面
-                if (uri.scheme == "blob" || uri.scheme == "data" || uri.scheme == "about" || uri.scheme == "javascript") return false
-                // 仅允许回环导航；外部链接交给系统浏览器
-                if (uri.host == "127.0.0.1" || uri.host == "localhost") return false
-                runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-                return true
-            }
+    /** 渲染进程崩溃：记日志并自愈（不重启引擎），返回 true 阻止系统杀 App。 */
+    private fun onEngineRenderProcessGone(
+        view: WebView?,
+        detail: android.webkit.RenderProcessGoneDetail?,
+    ): Boolean {
+        logWebView(
+            "render process gone: crashed=${detail?.didCrash()} " +
+                "priority=${detail?.rendererPriorityAtExit()} — recovering"
+        )
+        recoverWebView()
+        return true
+    }
 
-            /**
-             * 渲染进程崩溃自愈（v1.2.100，酷安 issue #8）。
-             *
-             * ## 为什么必须有
-             * issue 反馈：「会话内容卡住，计时器还在计数，模型仍在运行，要重启应用」——
-             * 典型症状是**前端页面停止更新但后端一切正常**。WebView 的渲染进程
-             * （独立沙箱进程）可能因内存压力被系统回收或自身崩溃，此时：
-             *  · 不实现本回调 → Android 默认**直接杀掉宿主 App**（整个应用消失），或
-             *  · 页面残留但不再刷新（用户看到「卡住」）
-             * 两种都不是我们想要的：引擎由前台服务持有，本该继续跑。
-             *
-             * ## 做法
-             * 返回 true 表示「我自己处理」，阻止系统杀 App；随后**重建 WebView 并重载**，
-             * 用户视角是页面自动恢复（引擎没重启，会话与进行中的任务都在）。
-             */
-            override fun onRenderProcessGone(
-                view: WebView?,
-                detail: android.webkit.RenderProcessGoneDetail?,
-            ): Boolean {
-                logWebView(
-                    "render process gone: crashed=${detail?.didCrash()} " +
-                        "priority=${detail?.rendererPriorityAtExit()} — recovering"
-                )
-                recoverWebView()
-                return true   // 已自行处理，别杀 App
+    /** 文件选择器请求（<input type=file>）：交给系统 SAF 选择器并回传结果。 */
+    private fun onEngineFileChooser(
+        filePathCallback: android.webkit.ValueCallback<Array<Uri>>?,
+        params: android.webkit.WebChromeClient.FileChooserParams?,
+    ): Boolean {
+        filePathCallback ?: return false
+        // 上一个请求未结束（用户连点/页面切换）→ 先回传空值释放，否则 WebView 卡死
+        pendingFileCallback?.onReceiveValue(null)
+        pendingFileCallback = filePathCallback
+        val intent = runCatching { params?.createIntent() }.getOrNull()
+            ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
             }
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                if (view == null) return
-                // 引擎重启（token 变了）→ 旧页面的返回栈必须作废：否则 BACK 会退回
-                // 上一个 token 的引擎页/预览页，那些页面连的是已死的引擎，表现为白屏。
-                // 放在最早处：任何分支 return 之前都要清。
-                if (clearHistoryOnLoad) {
-                    clearHistoryOnLoad = false
-                    runCatching { view.clearHistory() }
-                    Log.i("MainActivity", "webview history cleared after engine restart; canGoBack=${view.canGoBack()}")
-                }
-                // 环境自检：把 WebView 版本与关键 API 存在性写进日志，用户报障时一眼定位
-                view.evaluateJavascript(WEBVIEW_SELFCHECK_JS, null)
-                // v1.3.1 补丁（issue #17「选择横屏进入卡死」）：收遮罩必须放在
-                // 模式分支**之前**。此前 desktopMode 分支先 return，遮罩永不淡出，
-                // 全屏可点击的遮罩把后续所有触摸都吃掉 = 看起来卡死。
-                dismissSplash()
-                // 桌面模式：视口改写为固定 1280px（响应式走桌面分支，侧栏完整展开）。
-                if (desktopMode) {
-                    view.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
-                    return
-                }
-                // 竖屏：全交给 viewport meta 的 initial-scale 控制显示缩放（浏览器 Ctrl- 做法）。
-                // width=device-width → 布局宽=屏宽（无横向滚动）；initial-scale=R 直接缩放显示
-                //（缩小→按钮变小看更多、整页塞进屏；放大→内容变大）；min=max=R+user-scalable=no
-                // 彻底锁死（既不 clamp 到 100%，也不许用户手动改）。setInitialScale 易被 meta
-                // 干扰（maximum-scale=1 会把它 clamp 回 100%），故弃用。
-                view.evaluateJavascript(portraitViewportJs(pageScale / 100f), null)
-                // 竖屏「对话流被挤压」修复已改为**引擎侧客户端插件**
-                // （assets/android-plugins/narrow-sidebar/，v1.2.175）：
-                // 用户要求「不要直接改源代码，要做成插件形式」——外部注入 JS 会和
-                // 其它 UI 插件抢 DOM，且引擎升级后哈希类名一变就失效；插件走
-                // dsh-client-modules 的官方发现机制，卸载时自清理，互不干扰。
-            }
-
-            override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
-                super.doUpdateVisitedHistory(view, url, isReload)
-                updatePreviewChrome(url)
-            }
+        return runCatching {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQ_FILE_CHOOSER)
+            true
+        }.getOrElse {
+            logWebView("file chooser failed to launch: ${it.message}")
+            pendingFileCallback = null
+            filePathCallback.onReceiveValue(null)
+            false
         }
     }
 
@@ -829,14 +630,7 @@ class MainActivity : Activity() {
             bar.progress = (frac * 10000).toInt()
         }
         // 启动遮罩里的进度条同步真实解压百分比（就绪后转为不确定动画）
-        splashProgress?.let { p ->
-            if (frac == null) {
-                p.isIndeterminate = true
-            } else {
-                p.isIndeterminate = false
-                p.progress = (frac * 10000).toInt()
-            }
-        }
+        runCatching { splashController.updateProgress(frac) }
     }
 
     // ==================== 启动遮罩（v1.3.1） ====================
@@ -848,74 +642,14 @@ class MainActivity : Activity() {
      * 遮罩不是纯装饰——它同时承载**真实解压进度**与引擎阶段文案，
      * 让冷启动那段时间「有东西看、也知道在干什么」。
      */
+    /** 初始化启动遮罩（委托 [SplashController]）。 */
     private fun setupSplash() {
-        val v = findViewById<android.view.View>(R.id.splash) ?: return
-        splash = v
-        splashLogo = findViewById(R.id.splashLogo)
-        splashStatus = findViewById(R.id.splashStatus)
-        splashProgress = findViewById(R.id.splashProgress)
-        splashShownAt = System.currentTimeMillis()
-        splashDismissed = false
-        // 兜底：无论引擎/WebView 走哪条路径，45s 后强制收遮罩。宁可露出工具栏，
-        // 也不能让一张不透明的全屏 View 永久拦截触摸（issue #17 的教训）。
-        splashWatchdog?.let { v.removeCallbacks(it) }
-        val watchdog = Runnable { dismissSplash() }
-        splashWatchdog = watchdog
-        v.postDelayed(watchdog, 45_000L)
-        // WebView 底色与主题一致：遮罩淡出时不会闪出白底
-        runCatching { webView.setBackgroundColor(0xFF101418.toInt()) }
-        val logo = splashLogo ?: return
-        logo.alpha = 0f
-        logo.scaleX = 0.82f
-        logo.scaleY = 0.82f
-        logo.animate()
-            .alpha(1f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(420L)
-            .setInterpolator(android.view.animation.DecelerateInterpolator())
-            .withEndAction {
-                // 引擎还没好时，用极缓的呼吸动画表示"在动"
-                logo.animate()
-                    .scaleX(1.05f).scaleY(1.05f)
-                    .setDuration(1_400L)
-                    .setInterpolator(android.view.animation.AccelerateDecelerateInterpolator())
-                    .withEndAction {
-                        logo.animate()
-                            .scaleX(1f).scaleY(1f)
-                            .setDuration(1_400L)
-                            .setInterpolator(android.view.animation.AccelerateDecelerateInterpolator())
-                            .withEndAction { if (splash != null) setupSplashPulseAgain() }
-                            .start()
-                    }
-                    .start()
-            }
-            .start()
-    }
-
-    /** 呼吸动画循环（单独方法，便于在遮罩淡出时停止）。 */
-    private fun setupSplashPulseAgain() {
-        val logo = splashLogo ?: return
-        if (splash == null || splashDismissed) return
-        logo.animate()
-            .scaleX(1.05f).scaleY(1.05f)
-            .setDuration(1_400L)
-            .setInterpolator(android.view.animation.AccelerateDecelerateInterpolator())
-            .withEndAction {
-                if (splash == null || splashDismissed) return@withEndAction
-                logo.animate()
-                    .scaleX(1f).scaleY(1f)
-                    .setDuration(1_400L)
-                    .setInterpolator(android.view.animation.AccelerateDecelerateInterpolator())
-                    .withEndAction { setupSplashPulseAgain() }
-                    .start()
-            }
-            .start()
+        splashController.setup()
     }
 
     /** 更新遮罩上的阶段文案。 */
     private fun setSplashStatus(resId: Int) {
-        splashStatus?.setText(resId)
+        splashController.setStatus(resId)
     }
 
     /**
@@ -925,37 +659,7 @@ class MainActivity : Activity() {
      * （不能让用户卡在遮罩里看不到工具栏与错误）。保证最短展示 700ms，避免一闪而过。
      */
     private fun dismissSplash() {
-        splashWatchdog?.let { wd -> splash?.removeCallbacks(wd) }
-        splashWatchdog = null
-        val v = splash ?: return
-        if (splashDismissed) return
-        splashDismissed = true
-        val wait = (splashMinMs - (System.currentTimeMillis() - splashShownAt)).coerceAtLeast(0L)
-        v.postDelayed({
-            // ⚠️ v1.3.0 补丁（用户反馈「直接硬切有点生硬」）：onPageFinished 时页面往往
-            // 还没画出第一帧，立刻淡出会先露出一块空 WebView = 看起来像硬切。
-            // 这里再等 ~180ms 让首帧落地，然后做「淡出 + 轻微放大」的过渡，
-            // 视觉上是从启动图"化开"进入页面，而不是被替换。
-            v.postDelayed({
-                splashLogo?.animate()?.cancel()
-                v.animate()
-                    .alpha(0f)
-                    .scaleX(1.04f)
-                    .scaleY(1.04f)
-                    .setDuration(460L)
-                    .setInterpolator(android.view.animation.DecelerateInterpolator())
-                    .withEndAction {
-                        v.visibility = android.view.View.GONE
-                        v.scaleX = 1f
-                        v.scaleY = 1f
-                        splash = null
-                        splashLogo = null
-                        splashStatus = null
-                        splashProgress = null
-                    }
-                    .start()
-            }, 180L)
-        }, wait)
+        splashController.dismiss()
     }
 
     /**
@@ -1264,8 +968,7 @@ class MainActivity : Activity() {
             if (sup.onExplicitExit === exitCallback) sup.onExplicitExit = null
         }
         stopHangWatchdog()
-        splashWatchdog?.let { wd -> splash?.removeCallbacks(wd) }
-        splashWatchdog = null
+        runCatching { splashController.cancelWatchdog() }
         // 释放未完成的文件选择请求，否则 WebView 侧回调悬空
         pendingFileCallback?.let { runCatching { it.onReceiveValue(null) } }
         pendingFileCallback = null
@@ -1410,6 +1113,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        // 分享落盘上限（安全评估 H1）：导出 SEND 是外部可触发的入口，必须有硬上限。
         /** WebView 文件选择器的请求码（onShowFileChooser → onActivityResult） */
         private const val REQ_FILE_CHOOSER = 1001
 
@@ -1436,283 +1140,6 @@ class MainActivity : Activity() {
             "com.oplus.webview",
             "com.heytap.webview",
         )
-
-        /**
-         * 环境自检脚本：报告 WebView 版本与引擎所需关键 API 是否存在。
-         * 引擎实际需要 Chrome 126（pdf.js 用 URL.parse），polyfill 可补 API 但补不了语法
-         * （`??=` 需 Chrome 85，语法错误会导致白屏 —— 那种情况日志里会看到 SyntaxError）。
-         */
-        private const val WEBVIEW_SELFCHECK_JS = """
-(function () {
-  try {
-    var ua = navigator.userAgent || '';
-    var m = ua.match(/Chrome\/(\d+)/);
-    var chrome = m ? parseInt(m[1], 10) : 0;
-    var need = {
-      'Object.hasOwn': 93, 'replaceChildren': 86, 'replaceAll': 85,
-      'findLast': 97, 'structuredClone': 98, 'toSorted': 110,
-      'AbortSignal.any': 116, 'Promise.withResolvers': 119, 'URL.parse': 126
-    };
-    var missing = [];
-    var probes = {
-      'Object.hasOwn': function(){ return typeof Object.hasOwn === 'function'; },
-      'replaceChildren': function(){ return typeof Element !== 'undefined' && !!Element.prototype.replaceChildren; },
-      'replaceAll': function(){ return !!String.prototype.replaceAll; },
-      'findLast': function(){ return !!Array.prototype.findLast; },
-      'structuredClone': function(){ return typeof structuredClone === 'function'; },
-      'toSorted': function(){ return !!Array.prototype.toSorted; },
-      'AbortSignal.any': function(){ return typeof AbortSignal !== 'undefined' && !!AbortSignal.any; },
-      'Promise.withResolvers': function(){ return !!Promise.withResolvers; },
-      'URL.parse': function(){ return typeof URL !== 'undefined' && !!URL.parse; }
-    };
-    for (var k in probes) { try { if (!probes[k]()) missing.push(k + '(need ' + need[k] + ')'); } catch (e) { missing.push(k + '(probe err)'); } }
-    return '[dsh-android] webview ok | chrome=' + chrome +
-      ' | polyfill=' + (!missing.length ? 'complete' : 'MISSING: ' + missing.join(',')) +
-      ' | ua=' + ua.slice(0, 120);
-  } catch (e) { return '[dsh-android] selfcheck failed: ' + e.message; }
-})();
-"""
-
-        /** Android 13+ 通知运行时权限请求（Service 启动路径回调到 Activity） */
-        fun maybeRequestNotificationPermission(activity: Context) {
-            if (Build.VERSION.SDK_INT < 33) return
-            val granted = activity.checkSelfPermission(
-                Manifest.permission.POST_NOTIFICATIONS,
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted && activity is Activity) {
-                activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
-            }
-        }
-
-        /**
-         * 把识别出的文本写入 WebUI 的输入框并提交（v1.2.58）。
-         *
-         * 为什么用 JS 注入而不是直接调引擎 API：WebUI 的输入框是前端状态的一部分，
-         * 只有走它的 DOM 才能触发正确的发送流程（含附件、@引用等既有逻辑）。
-         *
-         * 选择器策略（按可靠性排序，逐个尝试）：
-         *  ① textarea（当前前端用的是 textarea）
-         *  ② [contenteditable]（富文本输入框）
-         *  ③ input[type=text]
-         * 写入用原生 setter + 派发 input 事件，让 React 的受控组件感知变化
-         * （直接改 value 而不派发事件，React 会忽略）。
-         */
-        fun buildVoiceInputJs(text: String): String {
-            val escaped = org.json.JSONObject.quote(text)
-            return """
-(function(){
-  try {
-    var t = $escaped;
-    // v1.2.65: ensure there is an input box to write into. The user may be sitting
-    // on the home screen (no conversation open), where no textarea exists; the old
-    // build returned 'no-input-found' and the send silently did nothing.
-    // Here we first look for a conversation entry in the DOM, click into it, and
-    // let the caller retry once the UI has rendered.
-    function findInput() {
-      return document.querySelector('textarea')
-          || document.querySelector('[contenteditable="true"]')
-          || document.querySelector('input[type=text]');
-    }
-    // Send button: exact selectors first, then a fuzzy sweep over buttons whose
-    // aria-label/class mentions send. The old build tried three exact selectors and
-    // silently fell back to Enter; if Enter inserts a newline in this frontend,
-    // the message never leaves the box (user-reported "it does not send").
-    function findSend(el) {
-      var sels = ['button[aria-label*="send" i]', 'button[aria-label*="\u53d1\u9001"]',
-                  '[data-testid*="send" i]'];
-      for (var i = 0; i < sels.length; i++) {
-        var b = document.querySelector(sels[i]);
-        if (b && b.disabled !== true) return b;
-      }
-      var cands = document.querySelectorAll('button, [role="button"]');
-      for (var k = cands.length - 1; k >= 0; k--) {
-        var c = cands[k];
-        var label = (c.getAttribute('aria-label') || '') + ' ' + (c.className || '');
-        if (/send|\u53d1\u9001/i.test(label) && c.disabled !== true) return c;
-      }
-      // Fallback: the last enabled button inside the input's own container
-      var scope = el.closest('form') || (el.parentElement && el.parentElement.parentElement);
-      if (scope) {
-        var btns = scope.querySelectorAll('button');
-        for (var j = btns.length - 1; j >= 0; j--) {
-          if (btns[j].disabled !== true) return btns[j];
-        }
-      }
-      return null;
-    }
-    var el = findInput();
-    if (!el) {
-      var cand = document.querySelector('[data-session-id]')
-              || document.querySelector('a[href*="session"]')
-              || document.querySelector('[role="listitem"]')
-              || document.querySelector('[class*="session" i]');
-      if (cand instanceof HTMLElement) {
-        cand.click();
-        return 'entering-session';
-      }
-      return 'no-input-found';
-    }
-    el.focus();
-    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-      var proto = el.tagName === 'TEXTAREA'
-        ? window.HTMLTextAreaElement.prototype
-        : window.HTMLInputElement.prototype;
-      var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-      setter.call(el, t);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    } else {
-      // contenteditable (rich-text editors: Lexical / ProseMirror / Quill ...).
-      //
-      // v1.2.95 - REWRITE after live reproduce on the real WebUI (emulator + CDP).
-      // Facts established by experiment:
-      //  1) execCommand('insertText') on this Lexical editor DOUBLED the text: the
-      //     framework imports the DOM mutation AND applies the beforeinput that
-      //     execCommand fires. One write became two.
-      //  2) Dispatching cancelable 'beforeinput' ALSO doubled.
-      //  3) A synthetic ClipboardEvent('paste') with a DataTransfer is processed
-      //     by Lexical's native paste pipeline EXACTLY ONCE - but ASYNCHRONOUSLY:
-      //     the content lands a beat later. A synchronous check right after the
-      //     dispatch still sees the old content, which made the old in-JS fallback
-      //     kick in and double the text anyway.
-      // So this snippet does ONE thing only: fire the paste. Whether the write
-      // landed is checked by the Kotlin caller (readSendText), which falls back
-      // to buildVoiceRepairJs (execCommand, safe for framework-less editors)
-      // when the paste had no effect. No in-JS fallback here - any
-      // synchronous second write races the paste and doubles the text.
-      el.focus();
-      // Ctrl+A keydown lets the editor select its own content first.
-      el.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true, bubbles: true,
-      }));
-      var dt = new DataTransfer();
-      dt.setData('text/plain', t);
-      el.dispatchEvent(new ClipboardEvent('paste', {
-        bubbles: true, cancelable: true, clipboardData: dt,
-      }));
-    }
-    // Do NOT click send synchronously: a React controlled input updates its state
-    // asynchronously, so right after dispatching the input event the send button may
-    // still be disabled and the click is a no-op.
-    //
-    // v1.2.92 - regression fix. v1.2.88 deferred that click with
-    // requestAnimationFrame to shave latency, but rAF callbacks ride on frame
-    // production and a backgrounded WebView produces no frames: tapping "send"
-    // while the app was in the background left the click queued, so the message
-    // only went out the instant the user returned to the foreground (user: "it
-    // only sends the moment I come back"). The pre-v1.2.88 setTimeout version
-    // did work in the background.
-    //
-    // Now the app side owns both the commit and the verdict: we expose two
-    // synchronous hooks and Kotlin calls them on its own Handler schedule, so no
-    // JS timer and no frame is involved and background behaves like foreground.
-    window.__dshEl = el;
-    // One-shot ticket, handed out per write (see __dshFire). Not a time window:
-    // v1.2.92 throttled by elapsed time, and Kotlin's "still in the box after 4s,
-    // fire again" retry sailed straight through it (4s > 1.5s) - when the
-    // frontend was slow to clear the box that second click sent the same text
-    // again, which is exactly the "two copies" the user kept seeing.
-    window.__dshTicket = false;
-    window.__dshFire = function () {
-      if (!window.__dshTicket) return 'consumed';   // already committed this text
-      var target = (window.__dshEl && document.body.contains(window.__dshEl))
-        ? window.__dshEl : findInput();
-      if (!target) return 'no-input';
-      var v = (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')
-        ? (target.value || '') : (target.textContent || '');
-      if (!v.trim()) return 'empty';   // nothing to send - never click on empty
-      var btn = findSend(target);
-      // Spend the ticket BEFORE clicking: whatever happens next, this text gets
-      // exactly one commit attempt. Retrying a submit that already reached the
-      // frontend is what produced duplicate messages.
-      window.__dshTicket = false;
-      if (btn) { btn.click(); return 'clicked'; }
-      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-      target.dispatchEvent(new KeyboardEvent('keyup',   { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-      return 'enter';
-    };
-    // Verdict source: the frontend clears the input once the message is committed.
-    window.__dshReadVal = function () {
-      var e = window.__dshEl;
-      if (!e) return 'none';
-      if (!document.body.contains(e)) return 'gone';
-      var v = (e.tagName === 'TEXTAREA' || e.tagName === 'INPUT') ? (e.value || '') : (e.textContent || '');
-      return v.trim() ? 'text' : 'empty';
-    };
-    // Actual text in the box. Kotlin compares it against what it tried to send:
-    // only a match means "this is our text, safe to (re)submit"; anything else is
-    // the user's own typing and must be left alone.
-    window.__dshText = function () {
-      var e = window.__dshEl;
-      if (!e) {
-        var f = findInput();
-        if (!f) return '';
-        e = f;
-      }
-      if (!document.body.contains(e)) return '';
-      var v = (e.tagName === 'TEXTAREA' || e.tagName === 'INPUT') ? (e.value || '') : (e.textContent || '');
-      return v.trim();
-    };
-    // Hand out exactly one commit ticket for the text just written. Kotlin calls
-    // __dshFire() later (250ms, on its own Handler) to spend it.
-    // ⚠️ Grant MUST come after the hook block above: that block re-initialises
-    // __dshTicket = false, and in v1.2.94 the grant sat before it - the reset
-    // clobbered the grant, every fire returned 'consumed' and nothing was ever
-    // submitted (the text just sat in the box). This order is load-bearing.
-    window.__dshTicket = true;
-    return 'ok:written';
-  } catch (e) { return 'err:' + e.message; }
-})();
-""".trimIndent()
-        }
-
-        /**
-         * 补写（v1.2.95）：paste 通道无效时的回退写入。
-         *
-         * 专用场景：编辑器**不响应合成 paste 事件**（无框架的普通 contenteditable）。
-         * 此时 execCommand 是标准路径且没有框架去双处理 DOM 变更，安全。
-         *
-         * ⚠️ 绝不能对 Lexical 这类框架编辑器使用（实测翻倍）——调用方必须先
-         * 用 readSendText 确认 paste 没生效才允许走这里。
-         */
-        fun buildVoiceRepairJs(text: String): String {
-            val escaped = org.json.JSONObject.quote(text)
-            return """
-(function(){
-  try {
-    var t = $escaped;
-    var el = window.__dshEl && document.body.contains(window.__dshEl)
-      ? window.__dshEl
-      : (document.querySelector('textarea')
-         || document.querySelector('[contenteditable="true"]')
-         || document.querySelector('input[type=text]'));
-    if (!el) return 'no-input';
-    el.focus();
-    function contentOf(node) { return (node.textContent || '').trim(); }
-    function selectAllIn(node) {
-      try {
-        var sel = window.getSelection();
-        var range = document.createRange();
-        range.selectNodeContents(node);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      } catch (e) {}
-    }
-    selectAllIn(el);
-    try { document.execCommand('insertText', false, t); } catch (e) {}
-    if (contentOf(el) !== t.trim() && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
-      var proto = el.tagName === 'TEXTAREA'
-        ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, t);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    return 'repaired:' + contentOf(el).slice(0, 40);
-  } catch (e) { return 'err:' + e.message; }
-})();
-""".trimIndent()
-        }
-
-
 
         /** 页面缩放持久化：SharedPreferences 名 + key（设置页与引导共用）。
          *  屏幕朝向偏好（v1.2.120 起三态 portrait/landscape/auto）集中在
@@ -1746,40 +1173,4 @@ class MainActivity : Activity() {
                 "})()"
     }
 
-    /** JS Bridge：只暴露后台进度这一个能力（页面固定为 127.0.0.1:3080）。 */
-    private class ProgressJsBridge(private val ctx: android.content.Context) {
-        @android.webkit.JavascriptInterface
-        fun progress(payload: String) {
-            runCatching { ProgressHub.onJsProgress(ctx, payload) }
-        }
-
-        /**
-         * 兼容旧调用名（v1.5.7 的 notice）：v2.5.6 起旧的 notice 小条已删除，
-         * 无障碍/自动化文案统一并入工具链下方的动作链。
-         */
-        @android.webkit.JavascriptInterface
-        fun notice(text: String) {
-            runCatching { StatusOverlay.setA11yAction(text) }
-        }
-
-        /**
-         * v2.5.6：把「无障碍/打开应用」动作追加到悬浮窗第④段动作链。
-         *
-         * 与工具链分开：插件/门禁在做读屏点击、启动或跳转别的 App 时调这里，
-         * 用户一眼能分清「AI 在调工具」和「App 真的在点/在跳」。
-         */
-        @android.webkit.JavascriptInterface
-        fun a11y(line: String) {
-            runCatching { StatusOverlay.setA11yAction(line) }
-        }
-
-        /** 打开原生设置页（v1.3.70）：WebUI 侧可用来直达后台进度等设置。 */
-        @android.webkit.JavascriptInterface
-        fun openSettings() {
-            runCatching {
-                ctx.startActivity(android.content.Intent(ctx, SettingsActivity::class.java)
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-        }
-    }
 }
