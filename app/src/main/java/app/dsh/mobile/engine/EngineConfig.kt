@@ -259,6 +259,7 @@ object EngineConfig {
                 " 2>/dev/null; chmod -R u+rwX " + q + "$pub" + q +
                 " 2>/dev/null; echo ok"
             val fixed = runCatching { Privilege.runSu(suCmd)?.contains("ok") == true }
+                .onFailure { Log.w(TAG, "$name: su chown failed: ${it.message}") }
                 .getOrDefault(false)
             val retried = fixed && runCatching {
                 val marker2 = ".dsh-probe-" + System.nanoTime()
@@ -575,10 +576,15 @@ object EngineConfig {
             |# Web providers: leave this row unpatched on purpose. Patching `web`'s
             |# searchProvider/fetchProvider makes the shipped web-search settings page
             |# reject every save ("this deployment did not accept these values") on this engine build, because
-            |# the form round-trips the row config against the values it served. The
-            |# composite fetch provider below is still registered, so a user (or a
-            |# future patch that changes the form's defaults) can opt in by setting
-            |# fetchProvider: android-fetch-auto from the settings UI.
+            |# the form round-trips the row config against the values it served.
+            |#
+            |# v2.5.66: the bundled `android-fetch-auto` composite provider is gone. It
+            |# existed to route fake-IP (198.18.0.0/15) hostnames — which the engine's
+            |# own fetch provider rejected with "not a public range" — through the
+            |# official deepseek fetch API. On dsh 0.2.2 the default provider resolves
+            |# and fetches such hosts by itself (measured on device: example.com
+            |# 2s, github.com 9s, web_search 3s with the plugin absent), so shipping a
+            |# second provider only made provider selection ambiguous.
             |- id: web
             |  name: '@deepseek-ai/dsh-web'
             |
@@ -607,20 +613,6 @@ object EngineConfig {
             |- insert:
             |    - id: android-fast-mode
             |      name: ./android-plugins/fast-mode.mjs
-            |
-            |# Web fetch composite (v1.3.27): official DeepSeek Fetch API first, local HTTP(S)
-            |# fetch as the fallback. Two reasons, one provider:
-            |#  1. the official Fetch API refuses sites it cannot scrape (anti-bot / captcha
-            |#     answers 404 "failed to fetch URL"), while the local hop behind the
-            |#     side-router reads them fine;
-            |#  2. this engine pins npm 0.2.1-rc.2, which predates the upstream
-            |#     allowedNonPublicRanges knob, so the local hop's SSRF guard rejects every
-            |#     fake-IP answer (198.18.0.0/15) with WEB_BLOCKED_URL.
-            |# The plugin registers the composite provider below; its local resolver allows the
-            |# configured fake-IP ranges and still rejects loopback / RFC1918 / link-local.
-            |- insert:
-            |    - id: android-fetch-auto
-            |      name: ./android-plugins/android-fetch-auto.mjs
             |
             |# Narrow-screen UI fixes (v1.2.175 - v1.2.181). Each is a *client plugin
             |# package* (directory form, e.g. mobile-ui/package.json): the package
@@ -656,7 +648,7 @@ object EngineConfig {
         // sit beside it. Deploy from assets (kept in sync by the same idempotent check).
         runCatching {
             // 单文件插件（.mjs）：overlay 直接指向文件
-            listOf("priv-mode.mjs", "bridge-token.mjs", "fast-mode.mjs", "plugin-health.mjs", "android-fetch-auto.mjs").forEach { fileName ->
+            listOf("priv-mode.mjs", "bridge-token.mjs", "fast-mode.mjs", "plugin-health.mjs").forEach { fileName ->
                 val src = ctx.assets.open("android-plugins/$fileName").use { it.readBytes() }
                 val dst = File(f.parentFile, "android-plugins/$fileName")
                 deployOne(dst, src.toString(Charsets.UTF_8), fileName)

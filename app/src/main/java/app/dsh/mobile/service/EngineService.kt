@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import app.dsh.mobile.webview.WebViewJs
 import app.dsh.mobile.AppGate
 import app.dsh.mobile.DshApp
 import app.dsh.mobile.MainActivity
@@ -62,7 +63,7 @@ class EngineService : Service() {
 
         // Android 13+ 通知权限需动态请求；无权限时前台服务仍合法，只是通知不可见
         if (Build.VERSION.SDK_INT >= 33) {
-            MainActivity.maybeRequestNotificationPermission(this)
+            WebViewJs.maybeRequestNotificationPermission(this)
         }
 
         app.supervisor.start(app.appScope)
@@ -126,7 +127,6 @@ class EngineService : Service() {
 
     override fun onDestroy() {
         running = null
-        stateJob?.cancel()
         stateJob?.cancel()
         stateJob = null
         stateScope.cancel()

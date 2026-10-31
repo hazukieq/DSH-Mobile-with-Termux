@@ -134,13 +134,13 @@ class EngineSupervisor(private val ctx: Context) {
         else -> "http://127.0.0.1:${EngineConfig.DEFAULT_PORT}/"
     }
 
-    private var process: EngineProcess? = null
+    @Volatile private var process: EngineProcess? = null
     /** 启动前摘掉的插件名；恢复成功后的首个 Healthy 状态会带上它，随后清空。 */
     @Volatile private var recoveredPlugin: String? = null
     /** 本次引擎启动时 engine.log 的长度：extractTokenUrl 只搜此偏移之后的日志段 */
     @Volatile private var logOffsetAtSpawn = 0L
-    private var loopJob: Job? = null
-    private var userStop = false
+    @Volatile private var loopJob: Job? = null
+    @Volatile private var userStop = false
     private var scopeRef: CoroutineScope? = null
 
     /**
@@ -658,15 +658,21 @@ class EngineSupervisor(private val ctx: Context) {
         for (p in pids) runCatching { android.os.Process.sendSignal(p, 9) }
     }
 
-    /** 等端口释放（最多 ms），避免刚 kill 完立刻 spawn 又撞 EADDRINUSE。 */
-    private fun waitPortFree(port: Int, ms: Long) {
+    /**
+     * 等端口释放（最多 ms），避免刚 kill 完立刻 spawn 又撞 EADDRINUSE。
+     *
+     * Phase 0.3：原实现用 `Thread.sleep` 轮询，会**阻塞所在工作线程且不可取消**
+     * （引擎重启时若正好在等端口，协程取消要等到下一次 sleep 返回才生效）。
+     * 改成 suspend + `delay`：同样 100 ms 间隔，但让线程空出来、可被取消。
+     */
+    private suspend fun waitPortFreeAsync(port: Int, ms: Long) {
         val deadline = System.currentTimeMillis() + ms
         while (System.currentTimeMillis() < deadline && portListenInodes(port).isNotEmpty()) {
-            Thread.sleep(100)
+            delay(100)
         }
     }
 
-    private fun spawnEngine(bootId: String): EngineProcess {
+    private suspend fun spawnEngine(bootId: String): EngineProcess {
         // 【v1.2.32】启动前孤儿清理：App 被强杀/force-stop 后，引擎 node 可能成孤儿
         // 继续占着 3080（普通模式与 App 同 uid；Root 模式需 su）。此时新引擎必然
         // EADDRINUSE 无限重启（用户实测 62 次）。pkill 只匹配我们的引擎路径，
@@ -675,7 +681,7 @@ class EngineSupervisor(private val ctx: Context) {
         // v1.6.3：dshmarket 的自重启 helper 可能已经/即将在 3080 上起一个独立 dsh web。
         // spawn 前清掉外来监听者并等端口真正释放，避免两条重启路径抢端口导致 WebView 反复断线。
         runCatching { killForeignPortHolders(EngineConfig.DEFAULT_PORT) }
-        runCatching { waitPortFree(EngineConfig.DEFAULT_PORT, 2_000L) }
+        runCatching { waitPortFreeAsync(EngineConfig.DEFAULT_PORT, 2_000L) }
         // 【v1.2.36】记录本次启动的日志起点：token 提取只认这段之后的输出。
         // 否则健康探测先于 stdout 泵送达 "dsh web: ?token=" 行时，会提取到上一次
         // 引擎的旧 token → WebView 加载已失效地址 → "Webpage not available"
