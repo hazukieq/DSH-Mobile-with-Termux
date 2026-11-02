@@ -1,5 +1,9 @@
 # Android CLI 与官方 skills（本项目开发手册）
 
+> **开发文档，不随包发布。** 这份是给「开发 DSH Mobile 的人/agent」看的，
+> 不要拷进 `app/src/main/assets/docs/`（那里只放发给 App 内 agent 与用户的产物文档，
+> 门禁脚本 `scripts/check-bundled-docs.py` 会拦）。
+
 `android` CLI 是我们做 Android 侧工作的首选工具（见根 `AGENTS.md`「Android CLI 优先」）。
 它把「装机 / 看屏幕 / 点控件 / 读布局 / 查文档 / 查 APK / 管 SDK / 管技能」都收在一个命令里，
 比裸 `adb` 快（增量安装、annotated 截图）也更稳（不猜坐标、不猜组件名）。

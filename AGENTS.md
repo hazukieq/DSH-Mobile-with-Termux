@@ -22,3 +22,9 @@
 - `android layout`、`android screen resolve` 首次使用会往设备装 instrumentation，遇到设备存储紧张/网络差要留时间。
 - 本项目专属前置（引擎层 zip、vips 闭包、pnpm 载荷）只有我们的 gradle 流程会处理，`android build` 不会。
 - 完整手册（命令表 / 官方 skills 规范与仓库分类 / DSH 对接 / 已验证的坑）见 `docs/ANDROID-CLI.md`。
+
+### 文档两类，别混
+
+- **开发文档**（`docs/`，给改代码的人/agent 看）：`ANDROID-CLI.md`、`refactor_guide.md`、`code_review.md`、`AI_CONTEXT.md`。**绝不拷进 `app/src/main/assets/docs/`**，那是随 APK 发布给用户与 App 内 agent 的。
+- **产物文档**（`app/src/main/assets/docs/`，随包）：`README.md`、`ENGINE-BUILD.md`、`SECURITY-AUDIT.md`、`A11Y-SCOPE.md` 等面向使用者的说明。
+- 门禁：`python3 scripts/check-bundled-docs.py`（漏打包会 exit 1）。
