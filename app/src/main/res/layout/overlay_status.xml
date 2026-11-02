@@ -1,14 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  AI 状态悬浮窗（v1.2.58 初版；v1.3.75 展开卡片 + 实时滚动）
-
-  形态：
-    ① 折叠态 —— 圆形状态点（26dp 球），不打扰
-    ② 展开态 —— 点击后变成圆角卡片，四段式：
-         思考链 → 工具链 → 无障碍/打开应用动作链 → 会话标题 + 倒计时
-
-  展开内容用 ScrollView 包住：后台思考文本可能很长，折行显示并自动滚到最新一行；
-  动作行/标题过长时用跑马灯（marquee）滚动。
+  悬浮窗：折叠态是一枚正方悬浮球（里面只有一个状态点），展开态是圆角卡片。
+  尺寸由 StatusOverlay.applyWindowSize() 决定，XML 里的宽高只是展开态默认值。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlayRoot"
@@ -23,8 +16,20 @@
     android:minWidth="0dp"
     android:elevation="0dp">
 
-    <!-- 状态行：圆点 + 可滚动内容 + 麦克风（折叠态只显示圆点） -->
+    <!-- 球态专用圆点：直接挂在根容器上，靠 layout_gravity=center 落在球心。
+         和下面状态行里的 overlayDot 是两个独立 View —— 折叠/展开各自用布局保证居中，
+         不再靠运行期 margin 计算（那是历史上反复偏心的根源）。 -->
+    <View
+        android:id="@+id/overlayBallDot"
+        android:layout_width="14dp"
+        android:layout_height="14dp"
+        android:layout_gravity="center"
+        android:visibility="gone"
+        android:background="@drawable/bg_overlay_dot" />
+
+    <!-- 状态行：圆点 + 可滚动内容（展开态使用） -->
     <LinearLayout
+        android:id="@+id/overlayRow"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"

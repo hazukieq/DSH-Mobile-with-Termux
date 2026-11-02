@@ -73,6 +73,9 @@ object StatusOverlay {
     @Volatile private var statusText: TextView? = null
     @Volatile private var statusScroll: android.widget.ScrollView? = null
     @Volatile private var statusDot: View? = null
+    @Volatile private var statusRow: LinearLayout? = null
+    /** 球态专用圆点（与状态行里的 statusDot 分开，居中由布局保证）。 */
+    @Volatile private var ballDot: View? = null
     /** v2.5.5：三段式展开的第三段 —— 会话标题 + 倒计时。 */
     @Volatile private var sessionText: TextView? = null
     @Volatile private var elapsedText: TextView? = null
@@ -221,6 +224,9 @@ object StatusOverlay {
                 //  ③ 在 post 里应用初始档位 —— 此时已完成首次测量，
                 //     子 View 才有真实边界可绑手柄（否则绑到 [0,0,0,0] 的控件上）
                 statusText = status; statusDot = dot
+                statusRow = view.findViewById(R.id.overlayRow)
+                ballDot = view.findViewById(R.id.overlayBallDot)
+                ballDot?.background?.setTint(COLOR_IDLE)
                 statusScroll = view.findViewById<android.widget.ScrollView>(R.id.overlayScroll)
                 sessionText = view.findViewById(R.id.overlaySession)
                 elapsedText = view.findViewById(R.id.overlayElapsed)
@@ -479,82 +485,64 @@ object StatusOverlay {
      * 按当前档位应用可见性（所有控件都在同一窗口里，只切 visibility）。
      * @param r 根 View（显式传入：本方法可能在 root 字段赋值前就被调用）
      */
+    /** 按档位应用布局。窗口尺寸只由 [applyWindowSize] 决定，其它任何地方都不写宽高。 */
     private fun applyExpandLevel(r: View? = root) {
         val ctx = appCtx ?: return
-        // 折叠态：隐藏文字/麦克风/动作/会话，只留圆点；同时收紧内边距让它接近圆形
+        val view = r ?: return
         val collapsed = expandLevel == 0
-        // 空闲且没有内容时，三块固定占位（92dp 滚动区 / 24dp 动作行 / 16dp 底部行）
-        // 会留成一大片空白（用户问「为什么没内容还这么大空白」）。
-        // 空闲态尺寸不会再频繁变化（不闪烁），所以这里把它们收起来，只留状态行。
         val idleText = ctx.getString(R.string.overlay_idle)
         val idleCompact = !collapsed && !working && statusText?.text?.toString() == idleText
         idleCompactNow = idleCompact
-        // 折叠成球时必须把内边距/圆点外边距清零并整体居中，否则圆点在球里偏到右下角
-        // （用户实测：定宽面板改完后球的圆点「变样了」）。
-        (r as? android.widget.LinearLayout)?.let { vg ->
-            if (collapsed) {
-                vg.setPadding(0, 0, 0, 0)
-                // 必须 TOP|START，不能 CENTER：状态行高度 = 圆点+上边距(24dp) 小于内容区(34dp)，
-                // CENTER 会把整行再往下推 5dp，圆点就又偏下（实测 y 偏 +13px）。
-                vg.gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            } else {
-                vg.setPadding(dp(ctx, 10), dp(ctx, 8), dp(ctx, 12), dp(ctx, 8))
-                vg.gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            }
+
+        // 内边距：球态必须为 0（否则球心会被 padding 顶偏）；卡片态 10/8/12/8。
+        if (collapsed) view.setPadding(0, 0, 0, 0)
+        else view.setPadding(dp(ctx, 10), dp(ctx, 8), dp(ctx, 12), dp(ctx, 8))
+        val bgRes = if (collapsed) R.drawable.bg_overlay_ball else R.drawable.bg_overlay_panel
+        if (bgRes != lastBgRes) {
+            lastBgRes = bgRes
+            runCatching { view.setBackgroundResource(bgRes) }
         }
-        // 圆点在「状态行」里的对齐：折叠态必须 CENTER —— 只给根容器设 gravity 没用，
-        // 因为状态行是 match_parent，圆点仍然贴着行首（实测偏移 -27px，用户一眼看出不对）。
-        // 折叠态：显式给球一个正方形窗口 + 用 margin 把圆点推到正中。
-        // 不用 layout_gravity —— 状态行是 match_parent、父链上有 weight，实测 gravity 不生效
-        // （圆点仍偏左 28px）。直接算像素最稳。
-        val ballPx = dp(ctx, 42)
-        val dotPx = dp(ctx, 14)
-        if (collapsed) {
-            runCatching {
-                r?.layoutParams?.let { lp -> lp.width = ballPx; lp.height = ballPx; r.layoutParams = lp }
-                params?.let { prm -> prm.width = ballPx; prm.height = ballPx; wm?.updateViewLayout(r, prm) }
-            }
-        } else {
-            runCatching {
-                // 展开态宽度固定 240dp（与 XML 一致）：用 WRAP_CONTENT 会缩成窄条，
-                // 因为内容少时（只有「空闲」两字）整块卡片会收成一根竖条。
-                // 宽度交给 XML 的 240dp（这里不要再写 lp.width：会被后续 measure 覆盖成窄条）。
-                r?.layoutParams?.let { lp ->
-                    if (lp.width != dp(ctx, 240)) lp.width = dp(ctx, 240)
-                    if (lp.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-                        lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                    r.layoutParams = lp
-                }
-                params?.let { prm ->
-                    prm.width = dp(ctx, 240)
-                    prm.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                    wm?.updateViewLayout(r, prm)
+
+        // 球态：窗口本身就是正方形，圆点靠 gravity 居中——不用 margin 像素补偿。
+        (view as? LinearLayout)?.gravity =
+            if (collapsed) Gravity.CENTER else (Gravity.TOP or Gravity.START)
+        statusRow?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        statusRow?.let { row ->
+            val lp = row.layoutParams as? LinearLayout.LayoutParams
+            if (lp != null) {
+                val h = if (collapsed) LinearLayout.LayoutParams.MATCH_PARENT
+                else LinearLayout.LayoutParams.WRAP_CONTENT
+                val g = if (collapsed) Gravity.CENTER else (Gravity.TOP or Gravity.START)
+                if (lp.height != h || lp.gravity != g) {
+                    lp.height = h
+                    lp.gravity = g
+                    row.layoutParams = lp
                 }
             }
         }
-        (statusDot?.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { m ->
-            if (collapsed) {
-                // 注意：下面还会把根容器 padding 覆盖成 4dp（球内环留白），
-                // 所以居中 margin 必须把这段 padding 算进去，否则圆点偏右下
-                // （实测：(ball-dot)/2 会多出 padding 的量 → 偏 +9/+16px）。
-                val innerPad = dp(ctx, 4)
-                val centered = (ballPx - innerPad * 2 - dotPx) / 2
-                // 像素级校准（用 getLocationInWindow 实测两轮收敛）：+4px / -20px
-                m.marginStart = centered + 4
-                m.marginEnd = 0
-                m.topMargin = (centered - 24).coerceAtLeast(0)
-            } else {
-                m.marginStart = 0
-                m.marginEnd = dp(ctx, 7)
-                m.topMargin = dp(ctx, 3)
+        statusDot?.let { d ->
+            val lp = d.layoutParams as? LinearLayout.LayoutParams
+            if (lp != null) {
+                val size = dp(ctx, DOT_DP)
+                val me = if (collapsed) 0 else dp(ctx, 7)
+                val mt = if (collapsed) 0 else dp(ctx, 3)
+                if (lp.width != size || lp.height != size || lp.marginEnd != me || lp.topMargin != mt) {
+                    lp.width = size
+                    lp.height = size
+                    lp.marginEnd = me
+                    lp.topMargin = mt
+                    d.layoutParams = lp
+                }
             }
-            statusDot?.layoutParams = m
         }
+
+        // 球态只显示独立圆点（布局居中）；卡片态反过来。
+        ballDot?.visibility = if (collapsed) View.VISIBLE else View.GONE
+
+        // 内容可见性：卡片空闲态只留状态行（滚动区/动作行/页脚都收起）。
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
-        // 展开态把滚动区高度**钉死**：思考/工具文案长短变化只走内部滚动，
-        // 不再触发「窗口尺寸变化 → updateViewLayout → 整棵视图重排」（闪烁的根因）。
-        if (!collapsed) {
-            statusScroll?.let { sc ->
+        statusScroll?.let { sc ->
+            if (!collapsed) {
                 val fixedH = dp(ctx, 92)
                 val lp = sc.layoutParams
                 if (lp != null && lp.height != fixedH) {
@@ -562,131 +550,60 @@ object StatusOverlay {
                     sc.layoutParams = lp
                 }
             }
+            sc.visibility = if (collapsed || idleCompact) View.GONE else View.VISIBLE
         }
-        statusScroll?.visibility = if (collapsed || idleCompact) View.GONE else View.VISIBLE
-        // v2.5.93：这里原本会把滚动区高度改回 WRAP_CONTENT（v2.5.9 的老兜底），
-        // 结果把上面刚设好的固定高度冲掉 —— 思考长文一来面板就撑满整屏。
-        // 现在滚动区恒为固定高度，内容在内部滚动，窗口尺寸不变。
-        // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
-        refreshActionVisibility()
-        // v2.5.6：无障碍/打开应用动作链——折叠成球时隐藏，展开且有内容才显示
-        // 固定占位：展开态**始终**占这 24dp，内容有无只换文字不换尺寸
         a11yText?.visibility = if (!collapsed && !idleCompact) View.VISIBLE else View.GONE
-        statusScroll?.post {
-            capScrollHeight()
-            // 展开后才刚完成第一次布局，再补一次收紧（v2.5.9）
-            statusScroll?.postDelayed({ capScrollHeight() }, 60L)
-        }
-        root?.requestLayout()
-        root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
-        // 档位切换会改变窗口宽高：等布局完成后按新尺寸重新贴边（合并到一帧，避免连续重排闪烁）。
+        footRow?.visibility = if (collapsed || idleCompact) View.GONE else View.VISIBLE
+        refreshActionVisibility()
+
+        applyWindowSize(ctx, view, collapsed)
+
         if (!anchorPending) {
             anchorPending = true
-            r?.postOnAnimation {
+            view.postOnAnimation {
                 anchorPending = false
                 anchorToEdge()
             }
         }
+        bindHandle(view, params ?: return, ctx)
+        view.requestLayout()
+        view.post { runCatching { bindHandle(view, params ?: return@post, ctx) } }
+    }
 
-        r?.let { v ->
-            val pad = if (collapsed) dp(ctx, 4) else dp(ctx, 8)
-            v.setPadding(
-                if (collapsed) dp(ctx, 4) else dp(ctx, 10),
-                pad,
-                if (collapsed) dp(ctx, 4) else dp(ctx, 12),
-                pad,
-            )
-            // 折叠态 = 苹果 AssistiveTouch 式悬浮球（球体+内环，见 bg_overlay_ball）；
-            // 展开后回到圆角卡片。旧版是拉伸成椭圆的深灰块，观感像按钮。
-            val bgRes = if (collapsed) R.drawable.bg_overlay_ball else R.drawable.bg_overlay_panel
-            if (bgRes != lastBgRes) {
-                lastBgRes = bgRes
-                runCatching { v.setBackgroundResource(bgRes) }
-            }
-            // 折叠态强制**正圆**（COLLAPSED_BALL_DP）：球里只有一个小圆点，内容撑不满控件，
-            // 必须靠 minimumWidth/Height 才能量出正方形（旧版实测 95x77 = 椭圆）。
-            // 展开态交还给内容自适应（置 0）。
-            val minSize = if (collapsed) dp(ctx, COLLAPSED_BALL_DP) else 0
-            if (v.minimumWidth != minSize || v.minimumHeight != minSize) {
-                v.minimumWidth = minSize
-                v.minimumHeight = minSize
-            }
-            // v1.3.94：窗口尺寸必须显式更新。只改子 View 可见性时 WMS 仍保留上一次
-            // 展开时的大 frame（实测折叠后仍有 647x418 的透明区域，挡住下面 App 的触摸）。
-            params?.let { p ->
-                if (collapsed) {
-                    val side = dp(ctx, COLLAPSED_BALL_DP) + dp(ctx, 8)
-                    p.width = side
-                    p.height = side
-                } else {
-                    // v2.5.96：展开态宽度必须显式给 240dp。这里原先写 WRAP_CONTENT，
-                    // 而它在 applyExpandLevel 之后执行，会把刚设好的 660px 冲掉 →
-                    // 卡片被内容量成 121px 的竖条（logcat 实测 view=121x121）。
-                    p.width = dp(ctx, 240)
-                    p.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                }
-                runCatching { wm?.updateViewLayout(v, p) }
-                // v1.3.95：vivo 上只改 LayoutParams 的宽高，WMS 偶尔仍保留旧 frame
-                //（折叠后留下一大片透明可点区域，挡住下面 App）。档位变化时直接重挂窗口。
-                if (lastAppliedLevel != expandLevel) {
-                    lastAppliedLevel = expandLevel
-                    runCatching {
-                        wm?.removeView(v)
-                        wm?.addView(v, p)
-                    }
-                    // 展开/折叠后尺寸变了，立即贴回原来的边（用户要求：始终贴边）
-                    v.post {
-                        runCatching {
-                            p.x = dockX(v, p, ctx)
-                            wm?.updateViewLayout(v, p)
-                        }
-                    }
-                }
-            }
-            // 折叠态让状态点落在**球心**（内容居中）；展开态回到默认靠左上排布。
-            // 根容器是 LinearLayout（overlay_status.xml），gravity 决定子项对齐方式。
-            (v as? LinearLayout)?.gravity =
-                if (collapsed) Gravity.CENTER else Gravity.NO_GRAVITY
-            statusDot?.let { d ->
-                val lp = d.layoutParams
-                // 两种形态同一尺寸（见 DOT_DP 注释）：切换时这颗点不会忽大忽小
-                val size = dp(ctx, DOT_DP)
-                var changed = false
-                if (lp.width != size || lp.height != size) {
-                    lp.width = size; lp.height = size; changed = true
-                }
-                // 折叠态去掉右侧间距 —— 那 7dp 是给展开态状态文字留的，
-                // 留着会把居中的圆点顶偏，不在球心
-                (lp as? LinearLayout.LayoutParams)?.let { mlp ->
-                    val m = if (collapsed) 0 else dp(ctx, 7)
-                    if (mlp.marginEnd != m) {
-                        mlp.marginEnd = m
-                        changed = true
-                    }
-                }
-                if (changed) d.layoutParams = lp
-            }
-            // ⚠️ 每次档位变化后**重绑手柄**：档位决定哪些子 View 可见，
-            // 手柄必须绑在当前可见的那个上（否则点击落空 —— 实测踩坑）。
-            bindHandle(v, params ?: return@let, ctx)
-
-            // ⚠️ 必须请求重新布局：改 visibility 不会自动重新测量，
-            // 新显示的控件会保持 [0,0,0,0]（尺寸为 0 → 收不到触摸）。
-            // 实测：level 1 时 status/mic 都是 vis=0 但 [0,0,0,0]，点麦克风完全无响应。
-            v.requestLayout()
-            v.post {
-                // 布局完成后再刷一次手柄绑定（此时子 View 才有真实边界）
-                bindHandle(v, params ?: return@post, ctx)
-                Log.i(TAG, "  after layout: status=[${statusText?.left},${statusText?.right}]")
+    /** 窗口尺寸的唯一真源：折叠=正方球；展开空闲=240dp x 64dp；展开运行=240dp x WRAP。 */
+    private fun applyWindowSize(ctx: Context, view: View, collapsed: Boolean) {
+        val side = dp(ctx, COLLAPSED_BALL_DP)
+        val w = if (collapsed) side else dp(ctx, 240)
+        val h = when {
+            collapsed -> side
+            working -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            else -> dp(ctx, 64)
+        }
+        view.layoutParams?.let { lp ->
+            if (lp.width != w || lp.height != h) {
+                lp.width = w
+                lp.height = h
+                view.layoutParams = lp
             }
         }
-        Log.i(TAG, "expand level = $expandLevel")
-        // 诊断：打印关键子控件的实际位置与可见性（确认麦克风到底在哪）
-        statusText?.let {
-            Log.i(TAG, "  status: vis=${it.visibility} [${it.left},${it.top},${it.right},${it.bottom}]")
-        }
-        statusDot?.let {
-            Log.i(TAG, "  dot: vis=${it.visibility} [${it.left},${it.top},${it.right},${it.bottom}]")
+        val p = params ?: return
+        p.width = w
+        p.height = h
+        Log.i(TAG, "[win] level=$expandLevel collapsed=$collapsed ${w}x$h")
+        runCatching { wm?.updateViewLayout(view, p) }
+        // 档位变化时重挂窗口：只改 LayoutParams 时部分 ROM 会保留旧 frame（透明区域挡住下层）
+        if (lastAppliedLevel != expandLevel) {
+            lastAppliedLevel = expandLevel
+            runCatching {
+                wm?.removeView(view)
+                wm?.addView(view, p)
+            }
+            view.post {
+                runCatching {
+                    p.x = dockX(view, p, ctx)
+                    wm?.updateViewLayout(view, p)
+                }
+            }
         }
     }
 
@@ -966,7 +883,7 @@ object StatusOverlay {
             statusText?.text = body
             Log.i(TAG, "setStatus len=${body.length} full=${full.length}")
             clearReplyReady()
-            statusDot?.background?.setTint(COLOR_WORKING)
+            tintDots(COLOR_WORKING)
             statusScroll?.post {
                 capScrollHeight()
                 statusScroll?.fullScroll(View.FOCUS_DOWN)
@@ -1084,7 +1001,7 @@ object StatusOverlay {
             /** 真正的空闲布局（调用时必须处于 alpha=0 或本来就不需要淡出）。 */
             fun applyIdleNow() {
                 statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
-                statusDot?.background?.setTint(COLOR_IDLE)
+                tintDots(COLOR_IDLE)
                 working = false
                 // v2.5.8：空闲时倒计时清掉，只留会话标题（展开态仍能看出是哪个会话）
                 startedAt = 0L
@@ -1109,7 +1026,7 @@ object StatusOverlay {
                 view.animate().alpha(0f).setDuration(80L).withEndAction {
                     // 此刻不可见 → 安全地改尺寸
                     statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
-                    statusDot?.background?.setTint(COLOR_IDLE)
+                    tintDots(COLOR_IDLE)
                     working = false
                     startedAt = 0L
                     stopTicker()
@@ -1149,7 +1066,7 @@ object StatusOverlay {
                 text = summary ?: (ctx?.getString(R.string.overlay_turn_done) ?: "Reply ready")
                 setTextColor(COLOR_DONE)
             }
-            statusDot?.background?.setTint(COLOR_DONE)
+            tintDots(COLOR_DONE)
             refreshActionVisibility()
         }
     }
@@ -1166,7 +1083,7 @@ object StatusOverlay {
             val s = statusText ?: return@main
             working = true
             s.text = summary
-            statusDot?.background?.setTint(COLOR_DONE)
+            tintDots(COLOR_DONE)
             refreshActionVisibility()
             // ⚠️ 必须可取消：这个 6 秒定时器若不被作废，会在「用户马上又让 AI 干活」时
             // 把新写入的「执行中」覆盖成「空闲」——主人实测反馈的正是这个现象。
@@ -1193,6 +1110,12 @@ object StatusOverlay {
 
     private fun main(block: () -> Unit) {
         runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post(block) }
+    }
+
+    /** 状态色同时作用到两枚圆点（球态那枚 + 卡片态那枚）。 */
+    private fun tintDots(color: Int) {
+        runCatching { statusDot?.background?.setTint(color) }
+        runCatching { ballDot?.background?.setTint(color) }
     }
 
     private fun dp(ctx: Context, v: Int): Int =
