@@ -146,7 +146,9 @@ object ShizukuHttpBridge {
                     result.fold(
                         onSuccess = { respond(s, 200, it) },
                         onFailure = {
-                            respond(s, 503, "shz: Shizuku 服务未运行或未授权（${it.message ?: it.javaClass.simpleName}）\n")
+                            // 消息保持英文：本仓库禁止 Kotlin 字面量出现 CJK（check-i18n）——
+                            // 面向用户的提示一律走 strings.xml；这里是给 AI/日志看的诊断串。
+                            respond(s, 503, "shz: shizuku unavailable or not authorized (${it.message ?: it.javaClass.simpleName})\n")
                         },
                     )
                 }

@@ -15,6 +15,8 @@ App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）
   §8.7 `ownOverlay` 命中与绕行、§9 能力矩阵、§10 回执必读 / 坐标来源两条纪律。
 - `CLICK_CHAIN_UPGRADE.md` —— 多步点击链的写法与失败重试策略。
 - 依赖许可与分发义务见仓库根 `docs/CREDITS.md`（**不随包**，不上机）。
+- `DEVELOPMENT-ENV.md` —— **开发工具与环境配置**：主机/设备工具与版本、构建与签名变量、
+  引擎层构建链、交叉编译、验收与审计入口、镜像与代理、环境变量总表、从零搭环境与踩坑对照。
 - `CROSS_COMPILE.md` —— 交叉编译指南：Android 上没有 wheel 的 Python 包（C/C++/Rust 扩展）如何在设备内或主机 NDK 上编出来。
 - `android-agent-routes.md` · `android-agent-routes.zh.md` —— AgentBridge 路由清单（端点级）。
 - `A11Y-SCOPE.md` · `A11Y-SCOPE.en.md` —— 无障碍服务的边界：哪些操作需要它、哪些绝不需要。
