@@ -88,6 +88,13 @@ internal object EngineEnvBuilder {
             "TMPDIR=${EnginePaths.tmpDir(ctx)}",
             "PORT=$port",
             "NODE_ENV=production",
+            // 冷启动提速：V8 把 ESM/CJS 的编译产物缓存到磁盘，第二次启动少做一遍解析+编译
+            // （真机实测 7.9s → 6.8s）。缓存目录放在 dsh-home（私有、随引擎一起备份/迁移），
+            // 32MB 量级，首次启动会建立、之后命中。
+            // 注意：必须放在 **App 私有目录**（filesDir）。dsh-home 可能被外置成
+            // /sdcard/Documents/dshdata 的软链，共享存储走 FUSE、不支持原子 rename，
+            // Node 会静默放弃写缓存（实测缓存目录建成但 0 文件、启动耗时无变化）。
+            "NODE_COMPILE_CACHE=${java.io.File(ctx.filesDir, "cache/node-compile-cache")}",
             // 取值统一小写（normal/shizuku/root），与 AGENTS 种子里 AI 读到的文档一致。
             // 此前注入 .name（ROOT）、种子写 lowercase（root）→ AI 按文档写
             // `[ "$DSH_ANDROID_PRIV_MODE" = "root" ]` 永远不成立，静默走错分支。

@@ -144,6 +144,7 @@ class SplashController(
      * （不能让用户卡在遮罩里看不到工具栏与错误）。保证最短展示 700ms，避免一闪而过。
      */
     fun dismiss() {
+        app.dsh.mobile.DshApp.coldStart("splash.dismiss")
         splashWatchdog?.let { wd -> splash?.removeCallbacks(wd) }
         splashWatchdog = null
         val v = splash ?: return

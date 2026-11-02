@@ -5,6 +5,8 @@ import app.dsh.mobile.R
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -319,6 +321,7 @@ class EngineSupervisor(private val ctx: Context) {
             fun step(name: String) {
                 val now = System.currentTimeMillis()
                 Log.i(TAG, "boot step $name: ${now - stepT}ms (total ${now - bootT0}ms)")
+                app.dsh.mobile.DshApp.coldStart("engine.step.$name")
                 stepT = now
             }
             try {
@@ -336,7 +339,17 @@ class EngineSupervisor(private val ctx: Context) {
                 // 孤儿进程回收（v1.2.104）：**必须早于桥 bind 与引擎 fork** ——
                 // 历史孤儿会攥着继承来的 3080/3083 监听 socket 不撒手（无 CLOEXEC，
                 // 见 OrphanReaper 顶部），不先清掉，桥会静默 bind 失败、引擎会起不来。
-                withContext(Dispatchers.IO) { OrphanReaper.reap(ctx) }
+                // 孤儿回收与属性自愈互不依赖：并行做，省掉约 0.5s 串行等待
+                // （真机 boot step 实测 orphan-reap 0.56s、home-owner-check 0.58s）。
+                val needFix = coroutineScope {
+                    val reap = async(Dispatchers.IO) { OrphanReaper.reap(ctx) }
+                    val owner = async(Dispatchers.IO) { Privilege.dshHomeNeedsOwnershipFix(ctx) }
+                    // 用户数据外置（软链）与上面两项互不依赖，一起并行
+                    val data = async(Dispatchers.IO) { EngineConfig.ensureUserDataExternal(ctx) }
+                    reap.await()
+                    data.await()
+                    owner.await()
+                }
                 step("orphan-reap")
 
                 // Agent 能力桥（v1.1.0）：notify/scr 的 HTTP 后端，全模式启动
@@ -354,14 +367,12 @@ class EngineSupervisor(private val ctx: Context) {
                 // 用户只能靠「删掉重装」恢复（卸载清空私有目录 = 变相重置属性），
                 // 这正是该缺陷最典型的现场指纹。
                 // 现在无论什么模式都查一遍，检测到就修（chown + chmod + restorecon）。
-                val needFix = withContext(Dispatchers.IO) { Privilege.dshHomeNeedsOwnershipFix(ctx) }
+                step("home-owner-check")
                 if (needFix) {
                     Log.w(TAG, "found files with broken ownership/permissions (root residue or bad labels); healing")
                     val fixed = withContext(Dispatchers.IO) { Privilege.fixHomeOwnership(ctx) }
                     Log.w(TAG, "attribute healing ${if (fixed) "succeeded" else "unavailable (no shizuku/su)"}")
                 }
-                step("home-owner-check")
-
                 _state.value = State.Installing
                 withContext(Dispatchers.IO) {
                     var lastPct = -1
@@ -380,7 +391,6 @@ class EngineSupervisor(private val ctx: Context) {
                 // 用户数据外置（v1.2.99）：sessions/workspaces 迁到公开目录（软链），
                 // profiles 保持私有（上游强制凭证 0600，共享存储给不了权限位）。
                 // 必须在 spawn 前完成 —— 引擎启动即读这些目录。
-                withContext(Dispatchers.IO) { EngineConfig.ensureUserDataExternal(ctx) }
                 step("user-data")
 
                 _state.value = State.Starting
@@ -390,9 +400,11 @@ class EngineSupervisor(private val ctx: Context) {
                 val bootId = java.util.UUID.randomUUID().toString()
                 val proc = withContext(Dispatchers.IO) { spawnEngine(bootId) }
                 process = proc
+                app.dsh.mobile.DshApp.coldStart("engine.spawned")
                 step("spawn")
 
                 val healthy = pollHealth(EngineConfig.DEFAULT_PORT, proc)
+                if (healthy) app.dsh.mobile.DshApp.coldStart("engine.portReady")
                 step("health-poll")
                 if (!healthy) {
                     // 端口没监听/被外来进程占着：清掉外来者，下一轮 spawn 才能拿到端口
@@ -458,6 +470,7 @@ class EngineSupervisor(private val ctx: Context) {
                         val restartMs = restartStartedAt?.let { " (total restart took ${t1 - it}ms)" } ?: ""
                         restartStartedAt = null
                         Log.i(TAG, (if (safe) "engine healthy in SAFE MODE on :${EngineConfig.DEFAULT_PORT}" else "engine healthy on :${EngineConfig.DEFAULT_PORT}") + restartMs)
+                    app.dsh.mobile.DshApp.coldStart("engine.healthy")
                         _state.value =
                             if (safe) State.SafeMode(EngineConfig.DEFAULT_PORT, tokenUrl, notice)
                             else State.Healthy(EngineConfig.DEFAULT_PORT, tokenUrl, notice)

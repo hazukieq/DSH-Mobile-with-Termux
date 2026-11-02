@@ -1,5 +1,6 @@
 package app.dsh.mobile.engine
 
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import java.io.FileDescriptor
@@ -58,6 +59,9 @@ class EngineProcess private constructor(
         start()
     }
 
+    /** 本进程启动时刻（用于 engine.log 每行的 [+Nms] 前缀） */
+    private val spawnedAt = SystemClock.elapsedRealtime()
+
     private fun pumpLoop() {
         val maxLogBytes = 2L shl 20 // 2MB 环形截断
         try {
@@ -74,6 +78,8 @@ class EngineProcess private constructor(
                         + "Android=${android.os.Build.VERSION.RELEASE} ${android.os.Build.VERSION.INCREMENTAL}\n",
                 )
                 val buf = ByteArray(4096)
+                // 行缓冲：engine.log 每行加 [+Nms] 前缀，方便回答「引擎启动 8s 卡在哪」
+                val lineBuf = StringBuilder()
                 while (!closed.get()) {
                     val n = input.read(buf)
                     if (n < 0) break
@@ -81,12 +87,26 @@ class EngineProcess private constructor(
                         val chunk = String(buf, 0, n, Charsets.UTF_8)
                         Log.d(TAG, chunk.trim())
                         tokenRegex.findAll(chunk).lastOrNull()?.let { tokenUrl = it.groupValues[1] }
-                        if (logFile.length() < maxLogBytes) {
-                            logFile.appendText(chunk)
-                        } else {
-                            // 超限则保留后半段重新起头，避免无限膨胀
-                            val tail = logFile.readText().takeLast((maxLogBytes / 2).toInt())
-                            logFile.writeText(tail)
+                        lineBuf.append(chunk)
+                        val out = StringBuilder()
+                        var start = 0
+                        for (i in lineBuf.indices) {
+                            if (lineBuf[i] == '\n') {
+                                out.append("[+").append(SystemClock.elapsedRealtime() - spawnedAt)
+                                    .append("ms] ").append(lineBuf, start, i).append('\n')
+                                start = i + 1
+                            }
+                        }
+                        if (start > 0) lineBuf.delete(0, start)
+                        if (lineBuf.length > 8192) lineBuf.setLength(0)  // 单行超大：丢弃防内存涨
+                        val text = out.toString()
+                        if (text.isNotEmpty()) {
+                            if (logFile.length() < maxLogBytes) {
+                                logFile.appendText(text)
+                            } else {
+                                val tail = logFile.readText().takeLast((maxLogBytes / 2).toInt())
+                                logFile.writeText(tail + text)
+                            }
                         }
                     }
                 }
@@ -105,7 +125,13 @@ class EngineProcess private constructor(
     fun stop(graceMs: Long = 10_000) {
         if (!closed.compareAndSet(false, true)) return
         val t0 = System.currentTimeMillis()
-        Pty.nativeSignalChild(15)
+        // 先 SIGINT：Node 的 ESM 编译缓存（NODE_COMPILE_CACHE）**只在正常退出时落盘**，
+        // 直接 TERM/KILL 会让缓存永远建不起来（实测：TERM 后缓存 0 文件、下次冷启动仍慢
+        // 1.3s；INT 后写入 5437 文件 / 32MB）。给 2s 让 node 走完 exit hook，再 TERM。
+        Pty.nativeSignalChild(2)
+        val intDeadline = System.currentTimeMillis() + 2_000L
+        while (System.currentTimeMillis() < intDeadline && !exitFuture.isDone) Thread.sleep(30)
+        if (!exitFuture.isDone) Pty.nativeSignalChild(15)
         val deadline = t0 + graceMs
         while (System.currentTimeMillis() < deadline && !exitFuture.isDone) {
             Thread.sleep(50)

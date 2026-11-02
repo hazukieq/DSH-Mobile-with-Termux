@@ -127,6 +127,7 @@ class MainActivity : Activity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        DshApp.coldStart("activity.onCreate")
         super.onCreate(savedInstanceState)
         // 首启保护：若用户尚未完成引导（如直接拉起 MainActivity），先跳 Onboarding
         if (!Privilege.isOnboarded(this)) {
@@ -379,6 +380,7 @@ class MainActivity : Activity() {
     private var mobileUiWarned = false
 
     private fun onEnginePageFinished(view: WebView, url: String?) {
+        DshApp.coldStart("webview.pageFinished")
         scheduleMobileUiSelfCheck(view)
         // 引擎重启（token 变了）→ 旧页面的返回栈必须作废：否则 BACK 会退回
         // 上一个 token 的引擎页/预览页，那些页面连的是已死的引擎，表现为白屏。

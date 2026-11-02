@@ -20,6 +20,7 @@ class DshApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        processStartElapsed = android.os.SystemClock.elapsedRealtime()
         JsAssets.init(this)
         CoordAutoCalibrator.install(this)
         // ⚠️ v1.2.110：全局崩溃捕获 —— 用户反馈「进程异常退出」（1.2.97 升级后 ×2 人，
@@ -65,6 +66,16 @@ class DshApp : Application() {
     }
 
     companion object {
+        /** 进程启动时刻（elapsedRealtime），冷启动各阶段耗时都以它为基准 */
+        @Volatile var processStartElapsed: Long = 0L
+
+        /** 冷启动打点：统一 TAG，方便 `logcat -s DshColdStart` 看整条链路 */
+        fun coldStart(stage: String) {
+            val base = processStartElapsed
+            val ms = if (base == 0L) -1L else android.os.SystemClock.elapsedRealtime() - base
+            android.util.Log.i("DshColdStart", "+${ms}ms $stage")
+        }
+
         /** 设置页 UI 偏好（页面缩放/横竖屏），与 SettingsActivity 共用 */
         const val PREFS_UI = "dsh_ui"
 
