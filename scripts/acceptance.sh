@@ -62,7 +62,8 @@ run "引擎版本文件" bash -c 'adb -s '"$DEVICE"' shell "su -c \"cat /data/us
 run "冷启动打点" bash -c 'for i in $(seq 1 20); do adb -s '"$DEVICE"' logcat -d -s DshColdStart|grep -q engine.portReady && exit 0; sleep 2; done; exit 1'
 
 # 交互与特权的完整回归（分享 / mobile-ui 部署 / 长按菜单 / NORMAL→ROOT→SHIZUKU 模式切换）
-run "真机交互+特权冒烟" bash scripts/smoke-device.sh --device "$DEVICE"
+run "Shizuku 服务就绪" bash scripts/start-shizuku.sh --device "$DEVICE"
+run "真机交互+特权冒烟" bash scripts/smoke-device.sh --device "$DEVICE" --priv-cycle
 fi
 
 echo

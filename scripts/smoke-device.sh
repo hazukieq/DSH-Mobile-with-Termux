@@ -150,6 +150,8 @@ if [ -z "$ONLY" ] || [ "$ONLY" = "priv" ]; then
           # 所以这里用 su + 显式 token 复现引擎侧调用条件。
           out=$(S "DSH_BRIDGE_TOKEN=$(token) $PREFIX/bin/shz id 2>&1" | head -2 | tr '\n' ' ')
           if echo "$out" | grep -q 'uid='; then
+            # 注意：Shizuku 若由 root 启动（su 启动 shizuku_server），这里会显示 uid=0；
+            # 正常经 adb/tcp 启动则是 uid=2000(shell)。两者都说明「命令确实经 Shizuku 执行」。
             ok "$m: shz 实跑成功（$out）"
           elif echo "$out" | grep -qi 'shizuku'; then
             ok "$m: shz 明确报错不挂起（$out）"
