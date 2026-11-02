@@ -28,6 +28,7 @@ import org.json.JSONObject
  *  - `off`：全部关闭。
  */
 object ProgressHub {
+    @Volatile private var lastKindWasActive = false
     private const val TAG = "ProgressHub"
     private const val PREFS = "dsh_progress"
     private const val KEY_MODE = "mode"
@@ -270,9 +271,19 @@ object ProgressHub {
                     }
                     val title = snap.title.take(60).ifBlank { stateLabel(ctx, snap.kind) }
                     StatusOverlay.setSession(if (label.isNotBlank()) "$title · $label" else title)
-                    if ((snap.kind == "done" || snap.kind == "error") && snap.detail.isBlank()) {
+                    // v2.5.98：原来是 `&& snap.detail.isBlank()` 才标红 —— 但真实一轮对话
+                    // detail（思考链/工具行）永远不空，于是「回复结束变红」从来不会触发
+                    //（用户实测：圆点颜色从没变过）。现在只要 kind=done/error 就标红。
+                    // v2.5.98：真实一轮的收尾 kind 是 done/error 或直接回 idle，且 detail 从不为空；
+                    // 旧条件 (done||error) && detail.isBlank() 永不成立 → 圆点从没变红。
+                    // 现在按「活动态 → 非活动态」的转换标红。
+                    val active = snap.kind == "thinking" || snap.kind == "tool" || snap.kind == "working"
+                    // 实测（logcat 06:55:39）：一轮结束只收到 kind=done 的快照，
+                    // 中间没有活动态快照 → 不能依赖「活动→非活动」转换。直接认 done/error。
+                    if (snap.kind == "done" || snap.kind == "error" || (!active && lastKindWasActive)) {
                         StatusOverlay.markReplyReady()
                     }
+                    lastKindWasActive = active
                 }
                 cancelNotification(ctx)
                 return
