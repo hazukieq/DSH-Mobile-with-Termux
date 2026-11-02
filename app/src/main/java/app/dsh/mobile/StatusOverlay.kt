@@ -108,7 +108,7 @@ object StatusOverlay {
     private var anchorPending = false
 
     /** 状态文字初始颜色（清红时还原） */
-    private var statusTextColor: Int = 0xFF111111.toInt()
+    private var statusTextColor: Int = 0xFFE6EAF2.toInt()   // 面板底是深色，字必须浅色
     /** 当前窗口由哪种 type 创建：无障碍窗口随服务销毁，应用悬浮窗不随 Activity/服务走。 */
     @Volatile private var windowTypeUsed = 0
     @Volatile private var appCtx: Context? = null
@@ -120,6 +120,8 @@ object StatusOverlay {
      * 空闲时不该还挂着上一次的动作文案（主人要的是「现在在干什么」）。
      */
     @Volatile private var working = false
+    private var lastStatusBody: String = ""
+    private var lastStatusAt: Long = 0L
 
     /**
      * 是否是我们**自己**因为「AI 开始干活」而自动展开的。
@@ -193,7 +195,7 @@ object StatusOverlay {
 
                 status.text = ctx.getString(R.string.overlay_idle)
                 dot.background.setTint(COLOR_IDLE)
-                statusTextColor = status.currentTextColor
+                statusTextColor = 0xFFE6EAF2.toInt()   // 固定浅色：XML 里的是给浅底准备的深色字
 
 
                 val p = WindowManager.LayoutParams(
@@ -506,13 +508,17 @@ object StatusOverlay {
             }
         } else {
             runCatching {
+                // 展开态宽度固定 240dp（与 XML 一致）：用 WRAP_CONTENT 会缩成窄条，
+                // 因为内容少时（只有「空闲」两字）整块卡片会收成一根竖条。
+                // 宽度交给 XML 的 240dp（这里不要再写 lp.width：会被后续 measure 覆盖成窄条）。
                 r?.layoutParams?.let { lp ->
-                    lp.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                    lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    if (lp.width != dp(ctx, 240)) lp.width = dp(ctx, 240)
+                    if (lp.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                     r.layoutParams = lp
                 }
                 params?.let { prm ->
-                    prm.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    prm.width = dp(ctx, 240)
                     prm.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                     wm?.updateViewLayout(r, prm)
                 }
@@ -550,17 +556,9 @@ object StatusOverlay {
             }
         }
         statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
-        // v2.5.9（用户实测 bug）：折叠期间 ScrollView 是 GONE，子 View 没被测量，
-        // capScrollHeight() 会把高度锁成 0/很小；再展开时窗口就"长出"一条很矮的滚动区。
-        // 展开的这一刻先交还 wrap_content，让内容自己量一遍，随后再 post 收紧到 132dp。
-        statusScroll?.let { sc ->
-            val lp = sc.layoutParams ?: return@let
-            if (!collapsed && lp.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
-                lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                sc.layoutParams = lp
-                sc.requestLayout()
-            }
-        }
+        // v2.5.93：这里原本会把滚动区高度改回 WRAP_CONTENT（v2.5.9 的老兜底），
+        // 结果把上面刚设好的固定高度冲掉 —— 思考长文一来面板就撑满整屏。
+        // 现在滚动区恒为固定高度，内容在内部滚动，窗口尺寸不变。
         // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
         refreshActionVisibility()
         // v2.5.6：无障碍/打开应用动作链——折叠成球时隐藏，展开且有内容才显示
@@ -613,7 +611,10 @@ object StatusOverlay {
                     p.width = side
                     p.height = side
                 } else {
-                    p.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    // v2.5.96：展开态宽度必须显式给 240dp。这里原先写 WRAP_CONTENT，
+                    // 而它在 applyExpandLevel 之后执行，会把刚设好的 660px 冲掉 →
+                    // 卡片被内容量成 121px 的竖条（logcat 实测 view=121x121）。
+                    p.width = dp(ctx, 240)
                     p.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
                 }
                 runCatching { wm?.updateViewLayout(v, p) }
@@ -939,9 +940,21 @@ object StatusOverlay {
             working = true
             // v1.3.75：内容实时滚动 —— 保留换行、折行显示，每次更新后滚到最新一行。
             // 用户要求「点击后再展开」，所以这里**不**自动升档（折叠球由用户点开）。
-            val body = text.trim().take(16000)
+            // v2.5.95：桥每 ~250ms 推一次**累积全文**（实测 len 2702→4782 连涨），
+            // 原来每次都把全文塞进 TextView 再 fullScroll → 每 250ms 一次全量重排。
+            // 现在：① 只留末尾 600 字（显示区 92dp≈4 行）；② 文本没变不动；
+            // ③ 400ms 内最多更新一次（丢中间帧，末尾状态自然会再到）。
+            val full = text.trim()
+            val body = if (full.length > 600) full.takeLast(600) else full
+            val nowMs = android.os.SystemClock.uptimeMillis()
+            if (body == lastStatusBody || nowMs - lastStatusAt < 400L) {
+                Log.i(TAG, "setStatus skip len=${full.length}")
+                return@main
+            }
+            lastStatusBody = body
+            lastStatusAt = nowMs
             statusText?.text = body
-            Log.i(TAG, "setStatus len=${body.length}")
+            Log.i(TAG, "setStatus len=${body.length} full=${full.length}")
             clearReplyReady()
             statusDot?.background?.setTint(COLOR_WORKING)
             statusScroll?.post {
