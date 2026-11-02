@@ -53,7 +53,8 @@ setmode(){ local m="$1" uid; stop_app; uid=$(app_uid)
 XML
   adb -s "$DEVICE" push /tmp/dsh_priv.xml /sdcard/Download/dsh_priv.xml >/dev/null 2>&1
   S "cp -f /sdcard/Download/dsh_priv.xml $PREFS && chown $uid:$uid $PREFS && chmod 660 $PREFS"
-  start_app; }
+  start_app
+  local i; for i in $(seq 1 10); do [ "$(A "curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:3080/")" = "401" ] && sleep 2 || break; done; }
 
 [ -z "$DEVICE" ] && { echo "需要 --device <serial>"; exit 2; }
 [ "$(adb devices | grep -c "^$DEVICE[[:space:]]")" = "1" ] || { echo "设备 $DEVICE 未连接"; exit 2; }
@@ -126,6 +127,8 @@ if [ -z "$ONLY" ] || [ "$ONLY" = "priv" ]; then
         *)       want_su=1; want_shz=0; want_uid="";;
       esac
       engine_up || { bad "$m: 引擎未起"; return; }
+      wait_file(){ local t="$1" want="$2" i got; for i in $(seq 1 40); do got=$(S "test $t && echo 1"); [ "${got:-0}" = "$want" ] && return 0; sleep 1; done; return 1; }
+      wait_file "-f $PREFIX/bin/su" "$want_su" || true
       local su_present=0; [ "$(S "test -f $PREFIX/bin/su && echo 1")" = "1" ] && su_present=1
       if [ "$want_su" = 1 ]; then
         [ "$su_present" = 1 ] && ok "$m: su 遮罩存在" || bad "$m: 缺 su 遮罩"
@@ -133,12 +136,26 @@ if [ -z "$ONLY" ] || [ "$ONLY" = "priv" ]; then
       else
         [ "$su_present" = 0 ] && ok "$m: su 遮罩已移除（AI 可用 su）" || bad "$m: ROOT 下仍有 su 遮罩"
       fi
+      wait_file "-f $PREFIX/bin/shz" "$want_shz" || true
       local shz_present=0; [ "$(S "test -f $PREFIX/bin/shz && echo 1")" = "1" ] && shz_present=1
       if [ "$want_shz" = 1 ]; then
         [ "$shz_present" = 1 ] && ok "$m: shz 已注入" || bad "$m: 缺 shz"
         if [ "$shz_present" = 1 ]; then
-          out=$(A "$PREFIX/bin/shz id" | head -1)
-          echo "$out" | grep -q 'uid=' && ok "$m: shz 实跑（$out）" || skip "$m: shz 实跑（Shizuku 服务未运行/未授权）"
+          # 桥在引擎 healthy 之后才起，且要等 shz 包装器落盘；轮询到端口可连为止（最多 60s）
+          local i; for i in $(seq 1 20); do
+            [ "$(A "curl -s -m 2 -o /dev/null -w '%{http_code}' -X POST -H 'X-DSH-Token: $(token)' --data 'true' http://127.0.0.1:3082/shizuku_exec")" != "000" ] && break
+            sleep 3
+          done
+          # shz 在 app 私有目录、且需要桥 token（引擎内部由环境变量注入），
+          # 所以这里用 su + 显式 token 复现引擎侧调用条件。
+          out=$(S "DSH_BRIDGE_TOKEN=$(token) $PREFIX/bin/shz id 2>&1" | head -2 | tr '\n' ' ')
+          if echo "$out" | grep -q 'uid='; then
+            ok "$m: shz 实跑成功（$out）"
+          elif echo "$out" | grep -qi 'shizuku'; then
+            ok "$m: shz 明确报错不挂起（$out）"
+          else
+            bad "$m: shz 输出不可识别: ${out:0:100}"
+          fi
         fi
       else
         [ "$shz_present" = 0 ] && ok "$m: 无 shz" || bad "$m: 非 SHIZUKU 模式下仍有 shz"

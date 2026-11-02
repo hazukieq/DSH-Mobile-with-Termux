@@ -33,11 +33,17 @@ object ShizukuHttpBridge {
     /** 桥端口 = 引擎端口 + 2（默认 3080 → 3082），避开引擎 webServer。 */
     fun port(enginePort: Int): Int = enginePort + 2
 
-    /** 启动环回 HTTP 服务；模式非 Shizuku 或不可用时不启动。幂等。 */
+    /**
+     * 启动环回 HTTP 服务；幂等。
+     *
+     * 只在模式不是 SHIZUKU 时停用。**不要**因为「Shizuku 服务当前不可用」就不启动：
+     * 那样 shz 会连不上端口（curl 000 / 空输出），AI 拿不到任何解释。
+     * 现在改为始终监听，执行时再报「服务未运行或未授权」，让失败可诊断。
+     */
     @Synchronized
     fun start(ctx: android.content.Context, enginePort: Int) {
         appCtx = ctx.applicationContext
-        if (Privilege.getMode(ctx) != PrivMode.SHIZUKU || !Privilege.shizukuUsable()) {
+        if (Privilege.getMode(ctx) != PrivMode.SHIZUKU) {
             stop()
             return
         }
@@ -132,8 +138,18 @@ object ShizukuHttpBridge {
                     "/"
                 }
 
-                val output = if (cmd.isBlank()) "shz: empty command\n" else Privilege.shizukuExec(appCtx ?: return, cmd)
-                respond(s, 200, output)
+                if (cmd.isBlank()) {
+                    respond(s, 400, "shz: empty command\n")
+                } else {
+                    val ctx = appCtx
+                    val result = runCatching { Privilege.shizukuExec(ctx!!, cmd) }
+                    result.fold(
+                        onSuccess = { respond(s, 200, it) },
+                        onFailure = {
+                            respond(s, 503, "shz: Shizuku 服务未运行或未授权（${it.message ?: it.javaClass.simpleName}）\n")
+                        },
+                    )
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "handle error: ${e.message}")
