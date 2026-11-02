@@ -564,7 +564,8 @@ object StatusOverlay {
         // 动作行（AI 正在干什么）：统一走 refreshActionVisibility（档位 ≥1 且有活干才显示）
         refreshActionVisibility()
         // v2.5.6：无障碍/打开应用动作链——折叠成球时隐藏，展开且有内容才显示
-        a11yText?.visibility = if (!collapsed && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
+        // 固定占位：展开态**始终**占这 24dp，内容有无只换文字不换尺寸
+        a11yText?.visibility = if (!collapsed) View.VISIBLE else View.GONE
         statusScroll?.post {
             capScrollHeight()
             // 展开后才刚完成第一次布局，再补一次收紧（v2.5.9）
@@ -848,7 +849,8 @@ object StatusOverlay {
         a11yText?.visibility = if (expanded && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
         val foot = footRow ?: return
         val hasFoot = sessionText?.text?.isNotEmpty() == true || elapsedText?.text?.isNotEmpty() == true
-        foot.visibility = if (expanded && hasFoot) View.VISIBLE else View.GONE
+        // 固定占位：展开态始终占这 16dp（无内容时留空），避免出现/消失时窗口高度跳变
+        foot.visibility = if (expanded) View.VISIBLE else View.GONE
     }
 
     /** 排一个「holdMs 后回空闲」，可被后续任何新状态取消 */
@@ -1051,7 +1053,10 @@ object StatusOverlay {
     fun setIdle() {
         main {
             val r = root
-            val needFade = autoExpanded && r != null && expandLevel > 0
+            // v2.5.92：**不再自动收球**。原来每次状态回落(setIdle)都收缩成球，
+            // 下一条状态又展开 → 一轮对话里反复「球↔面板」，观感就是持续闪烁。
+            // 收球只由用户点击触发（expandPanel 循环档位）。
+            val needFade = false
 
             /** 真正的空闲布局（调用时必须处于 alpha=0 或本来就不需要淡出）。 */
             fun applyIdleNow() {
@@ -1063,11 +1068,7 @@ object StatusOverlay {
                 stopTicker()
                 elapsedText?.text = ""
                 refreshActionVisibility()
-                if (autoExpanded) {
-                    autoExpanded = false
-                    expandLevel = 0
-                    applyExpandLevel()
-                }
+                autoExpanded = false
             }
 
             if (!needFade) {

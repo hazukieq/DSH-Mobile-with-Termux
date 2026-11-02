@@ -69,14 +69,14 @@
     <TextView
         android:id="@+id/overlayA11y"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="24dp"
         android:layout_marginTop="3dp"
         android:layout_marginStart="16dp"
         android:maxWidth="216dp"
         android:textSize="10.5sp"
         android:textColor="#FF9AA0A6"
         android:lineSpacingExtra="1dp"
-        android:maxLines="4"
+        android:maxLines="2"
         android:ellipsize="end"
         android:visibility="gone"
         android:text="" />
@@ -85,7 +85,7 @@
     <LinearLayout
         android:id="@+id/overlayFoot"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="16dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:layout_marginTop="6dp"
