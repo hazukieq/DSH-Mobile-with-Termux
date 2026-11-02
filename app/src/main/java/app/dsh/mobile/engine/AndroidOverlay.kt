@@ -12,27 +12,13 @@ import java.io.File
  */
 internal object AndroidOverlay {
 
-    fun ensureAndroidOverlay(ctx: android.content.Context): File {
-        val f = File(EngineConfig.engineRoot(ctx), "android-overlay.yml")
-        // NOTE: keep this file free of CJK text — the i18n gate scans Kotlin string
-        // literals and would flag it (explanations live in the Kotlin comments below).
-        //
-        // Why all three rows are pinned here instead of relying on DSH_PERMISSION_MODE
-        // alone: permission-presets derives its default from the *composed* pair
-        // (sandbox mode + approval policy) and throws "composed sandbox and approval
-        // defaults match no preset" when the pair names no table entry. A partially
-        // applied permission stack (e.g. sandbox resolved but approval left at the
-        // schema default 'ask') yields exactly {danger-full-access, ask} — which is
-        // not in the table — and the entry then fails to activate on every boot.
-        // Pinning the trio makes the composed pair match by construction.
-        //
-        // ⚠️ A patch REPLACES the targeted row's whole `config` (applyEntryPatches
-        // does `target[key] = value`), so each row below restates every key it owns:
-        //   · permission needs the full presets table — the plugin's own schema
-        //     default only carries workspace-write + danger-full-access, and losing
-        //     `read-only` would remove a preset the WebUI offers.
-        //   · sandbox-policy needs workspaceRoot (schema marks it required).
-        val body = """
+    /**
+     * Android overlay 文档本体（纯字符串，无 IO）。
+     *
+     * 抽成独立函数是为了让 JVM 单测能校验「必需插件都还在、id 不重复」——
+     * overlay 少注册一个插件不会编译失败，只会在真机上静默丢功能（历史踩过）。
+     */
+    internal fun overlayDocument(): String = """
             |# [dsh-android] Android compatibility overlay (auto-generated, do not edit)
             |# Sandbox backends (landlock/seatbelt) do not exist on Android, and any
             |# confined mode would make the AI's shell tool refuse to run every command
@@ -193,6 +179,28 @@ internal object AndroidOverlay {
             |      name: ./android-plugins/mobile-progress/index.js
             |
             |""".trimMargin()
+
+    fun ensureAndroidOverlay(ctx: android.content.Context): File {
+        val f = File(EngineConfig.engineRoot(ctx), "android-overlay.yml")
+        // NOTE: keep this file free of CJK text — the i18n gate scans Kotlin string
+        // literals and would flag it (explanations live in the Kotlin comments below).
+        //
+        // Why all three rows are pinned here instead of relying on DSH_PERMISSION_MODE
+        // alone: permission-presets derives its default from the *composed* pair
+        // (sandbox mode + approval policy) and throws "composed sandbox and approval
+        // defaults match no preset" when the pair names no table entry. A partially
+        // applied permission stack (e.g. sandbox resolved but approval left at the
+        // schema default 'ask') yields exactly {danger-full-access, ask} — which is
+        // not in the table — and the entry then fails to activate on every boot.
+        // Pinning the trio makes the composed pair match by construction.
+        //
+        // ⚠️ A patch REPLACES the targeted row's whole `config` (applyEntryPatches
+        // does `target[key] = value`), so each row below restates every key it owns:
+        //   · permission needs the full presets table — the plugin's own schema
+        //     default only carries workspace-write + danger-full-access, and losing
+        //     `read-only` would remove a preset the WebUI offers.
+        //   · sandbox-policy needs workspaceRoot (schema marks it required).
+        val body = overlayDocument()
         runCatching {
             if (!f.isFile || f.readText() != body) f.writeText(body)
         }

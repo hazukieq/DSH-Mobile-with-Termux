@@ -64,16 +64,14 @@ internal object EngineEnvBuilder {
         // on platform android" → WebUI 侧边栏终端打不开。Android 有 /proc，检查器可用。
         AndroidOverlay.patchEngineForAndroid(root)
         val env = mutableListOf(
-            "PATH=" + (listOf(File(root, "bin"), File(EnginePaths.dshHome(ctx), "local/bin"),
-                File(EnginePaths.dshHome(ctx), ".local/share/pnpm")) +
-                listOf("/system/bin", "/system/xbin")).joinToString(":"),
+            "PATH=" + EngineEnvSpec.pathValue(root.absolutePath, EnginePaths.dshHome(ctx).absolutePath),
             "DSH_SHZ_PORT=${ShizukuHttpBridge.port(port)}",
             // 桥 token（v1.2.99）：只交给引擎子进程，供 scr/notify 等闸门脚本鉴权。
             // 第三方 App 拿不到 → 无法调用读屏/点击/通知等设备能力。
             "DSH_BRIDGE_TOKEN=${AgentBridge.currentToken().orEmpty()}",
-            "LD_LIBRARY_PATH=" + listOf(File(root, "lib")).joinToString(":"),
+            "LD_LIBRARY_PATH=" + EngineEnvSpec.ldValue(root.absolutePath),
             "PREFIX=$root",
-            "COREPACK_HOME=${File(EnginePaths.dshHome(ctx), ".cache/corepack").absolutePath}",
+            "COREPACK_HOME=" + EngineEnvSpec.corepackHome(EnginePaths.dshHome(ctx).absolutePath),
             // SHELL（v1.3.1，issue #18「终端错误」）：必须显式注入。
             // 引擎的 dsh-subprocess-local 按 `process.env.SHELL || os.userInfo().shell`
             // 推导默认 shell（terminalEnvironment），而 runtime 里的 node 是 Termux 官方

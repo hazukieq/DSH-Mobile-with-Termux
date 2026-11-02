@@ -103,6 +103,8 @@ android {
 
 
 dependencies {
+    // JVM 单测（纯逻辑，不依赖 Android 框架）
+    testImplementation("junit:junit:4.13.2")
     // YOLO 实验（debug 专门，正式包先不开）
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

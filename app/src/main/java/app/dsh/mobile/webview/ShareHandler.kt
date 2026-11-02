@@ -34,9 +34,9 @@ class ShareHandler(
 
     companion object {
         private const val TAG = "DshShare"
-        private const val MAX_SHARE_FILES = 20
-        private const val MAX_SHARE_FILE_BYTES = 512L * 1024 * 1024      // 单文件 512 MB
-        private const val MAX_SHARE_TOTAL_BYTES = 1024L * 1024 * 1024    // 单次合计 1 GB
+        private val MAX_SHARE_FILES get() = ShareLogic.MAX_SHARE_FILES
+        private val MAX_SHARE_FILE_BYTES get() = ShareLogic.MAX_SHARE_FILE_BYTES
+        private val MAX_SHARE_TOTAL_BYTES get() = ShareLogic.MAX_SHARE_TOTAL_BYTES
     }
 
     /**
@@ -80,11 +80,11 @@ class ShareHandler(
         uris.distinct().take(MAX_SHARE_FILES).forEach { uri ->
             runCatching {
                 val declared = sizeOf(uri) ?: -1L
-                if (declared > MAX_SHARE_FILE_BYTES || total + declared > MAX_SHARE_TOTAL_BYTES) {
+                if (ShareLogic.fileDeclaredOverflow(declared, total)) {
                     skipped++
                     return@forEach
                 }
-                val name = (displayNameOf(uri) ?: "shared-${System.currentTimeMillis()}").replace('/', '_')
+                val name = ShareLogic.sanitizeName(displayNameOf(uri), "shared-${System.currentTimeMillis()}")
                 val dst = java.io.File(inbox, "${System.currentTimeMillis()}-$name")
                 var written = 0L
                 var overflow = false
@@ -96,7 +96,7 @@ class ShareHandler(
                             if (n <= 0) break
                             written += n
                             // 大小未知的 Uri 也要在写入过程中兜住上限
-                            if (written > MAX_SHARE_FILE_BYTES || total + written > MAX_SHARE_TOTAL_BYTES) {
+                            if (ShareLogic.streamOverflow(written, total)) {
                                 overflow = true
                                 break
                             }

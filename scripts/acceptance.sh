@@ -29,6 +29,10 @@ run "i18n 一致性"      python3 scripts/check-i18n.py
 run "文档端点/子命令"   python3 scripts/check-doc-endpoints.py
 run "开发文档未随包"    python3 scripts/check-bundled-docs.py
 run "内置 pnpm 完整性"  python3 scripts/check-bundled-pnpm.py
+if [ "$STATIC_ONLY" = 0 ]; then
+  export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}
+  run "JVM 单测" flock /tmp/dsh-gradle.lock "$HOME/Projects/common/dsh-android-build/gradle-8.9/bin/gradle" -p . testDebugUnitTest --no-daemon
+fi
 
 echo "== 2/4 构建 release APK"
 if [ "$SKIP_BUILD" = 1 ]; then echo "  SKIP (--skip-build)"
