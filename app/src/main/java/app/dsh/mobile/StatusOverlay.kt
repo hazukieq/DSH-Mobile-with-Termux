@@ -452,6 +452,22 @@ object StatusOverlay {
         val ctx = appCtx ?: return
         // 折叠态：隐藏文字/麦克风/动作/会话，只留圆点；同时收紧内边距让它接近圆形
         val collapsed = expandLevel == 0
+        // 折叠成球时必须把内边距/圆点外边距清零并整体居中，否则圆点在球里偏到右下角
+        // （用户实测：定宽面板改完后球的圆点「变样了」）。
+        (r as? android.widget.LinearLayout)?.let { vg ->
+            if (collapsed) {
+                vg.setPadding(0, 0, 0, 0)
+                vg.gravity = android.view.Gravity.CENTER
+            } else {
+                vg.setPadding(dp(ctx, 10), dp(ctx, 8), dp(ctx, 12), dp(ctx, 8))
+                vg.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            }
+        }
+        (statusDot?.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { m ->
+            m.marginEnd = if (collapsed) 0 else dp(ctx, 7)
+            m.topMargin = if (collapsed) 0 else dp(ctx, 3)
+            statusDot?.layoutParams = m
+        }
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
         statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
         // v2.5.9（用户实测 bug）：折叠期间 ScrollView 是 GONE，子 View 没被测量，
