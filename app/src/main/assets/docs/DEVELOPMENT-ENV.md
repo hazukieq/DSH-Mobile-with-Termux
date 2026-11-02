@@ -25,6 +25,22 @@
 
 ## 1. 主机（PC）环境
 
+### 1.0 宿主系统基线（本仓库验证用的那台）
+
+| 项 | 实测值 |
+| --- | --- |
+| 发行版 | **Ubuntu 24.04.5 LTS**（x86_64） |
+| 内核 | 7.0.0-42-generic |
+| CPU | 13th Gen Intel Core i7-13650HX（20 线程） |
+| 内存 | 32 GB（`MemTotal 32554084 kB`，构建时可用约 20 GB） |
+| 交换分区 | 无（所以 Gradle 堆别开太大：本仓库用 `-Xmx4096m`） |
+| 磁盘 | 根分区 196 GB，构建期需 ≥ 60 GB 空闲（APK 318 MB + `node_modules` ~1 GB + NDK/SDK ~20 GB） |
+| GPU | Intel Raptor Lake-S UHD + NVIDIA GeForce RTX 5060 Laptop（驱动 580.178.04；本仓库构建不需要 GPU） |
+| Shell / locale | zsh / `LANG=en_US.UTF-8`、`LANGUAGE=zh_CN:en_US:en`（**正因 locale 含中文，ELF 解析必须显式 `LC_ALL=C`**） |
+| 网络代理 | 默认不设 `http_proxy`；大文件慢时用旁路由 `http://192.168.31.2:7893` |
+
+最低可用配置（能出包即可）：4 核 / 8 GB 内存 / 40 GB 空闲磁盘 / 任意 64 位 Linux（macOS 未验证）。
+
 ### 1.1 JDK 与 Gradle
 ```bash
 java -version                      # openjdk 21.0.10 (BellSoft)
