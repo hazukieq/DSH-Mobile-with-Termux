@@ -21,3 +21,4 @@
 - 截图/交互类工作先 `android screen capture -a` 拿带编号的图，再用编号做点击，避免手算坐标。
 - `android layout`、`android screen resolve` 首次使用会往设备装 instrumentation，遇到设备存储紧张/网络差要留时间。
 - 本项目专属前置（引擎层 zip、vips 闭包、pnpm 载荷）只有我们的 gradle 流程会处理，`android build` 不会。
+- 完整手册（命令表 / 官方 skills 规范与仓库分类 / DSH 对接 / 已验证的坑）见 `docs/ANDROID-CLI.md`。
