@@ -129,6 +129,11 @@ class EngineProcess private constructor(
         // 直接 TERM/KILL 会让缓存永远建不起来（实测：TERM 后缓存 0 文件、下次冷启动仍慢
         // 1.3s；INT 后写入 5437 文件 / 32MB）。给 2s 让 node 走完 exit hook，再 TERM。
         Pty.nativeSignalChild(2)
+        // root 模式下直接子进程是 su 外壳，INT 不会转发给 node —— 按 cmdline 补一刀，
+        // 让 node 走正常退出路径（编译缓存只在 exit hook 里落盘）。
+        if (suUsed) runCatching {
+            Privilege.runSu("pkill -INT -f 'dsh/lib/bin.js' 2>/dev/null; true", timeoutMs = 3_000L)
+        }
         val intDeadline = System.currentTimeMillis() + 2_000L
         while (System.currentTimeMillis() < intDeadline && !exitFuture.isDone) Thread.sleep(30)
         if (!exitFuture.isDone) Pty.nativeSignalChild(15)
