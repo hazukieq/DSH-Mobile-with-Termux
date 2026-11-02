@@ -20,7 +20,7 @@
 | 按编号定位 | `android screen resolve ...` | 把 #编号替换成坐标，避免手算 |
 | 点/按键/滑动 | `android input tap/key/swipe ...`（`android input --help`） | 配合 `-a` 的编号 |
 | 布局树 | `android layout --device <serial> [--flat] [--full]` | 首次会装 instrumentation server，之后快 |
-| 官方文档 | `android docs <query>` | 官方 Knowledge Base |
+| 官方文档 | `android docs search "<query>"` / `android docs fetch kb://...` | 官方 Knowledge Base；`search` 必须带子命令，关键词加引号 |
 | 查 APK | `android analyze <apk> [--analysis=basic,optimization]` | 体积/权限/组件/优化 |
 | 描述工程 | `android describe` | 输出构建目标与产物路径 JSON |
 | 模拟器 | `android emulator start/stop/list` | |
