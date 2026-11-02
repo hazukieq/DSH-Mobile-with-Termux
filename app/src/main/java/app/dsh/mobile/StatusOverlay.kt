@@ -457,7 +457,9 @@ object StatusOverlay {
         (r as? android.widget.LinearLayout)?.let { vg ->
             if (collapsed) {
                 vg.setPadding(0, 0, 0, 0)
-                vg.gravity = android.view.Gravity.CENTER
+                // 必须 TOP|START，不能 CENTER：状态行高度 = 圆点+上边距(24dp) 小于内容区(34dp)，
+                // CENTER 会把整行再往下推 5dp，圆点就又偏下（实测 y 偏 +13px）。
+                vg.gravity = android.view.Gravity.TOP or android.view.Gravity.START
             } else {
                 vg.setPadding(dp(ctx, 10), dp(ctx, 8), dp(ctx, 12), dp(ctx, 8))
                 vg.gravity = android.view.Gravity.TOP or android.view.Gravity.START
@@ -474,8 +476,6 @@ object StatusOverlay {
             runCatching {
                 r?.layoutParams?.let { lp -> lp.width = ballPx; lp.height = ballPx; r.layoutParams = lp }
                 params?.let { prm -> prm.width = ballPx; prm.height = ballPx; wm?.updateViewLayout(r, prm) }
-            mainHandler.postDelayed({
-            }, 150L)
             }
         } else {
             runCatching {
@@ -492,10 +492,21 @@ object StatusOverlay {
             }
         }
         (statusDot?.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { m ->
-            val pad = if (collapsed) (ballPx - dotPx) / 2 else dp(ctx, 7)
-            m.marginStart = if (collapsed) pad else 0
-            m.marginEnd = if (collapsed) 0 else dp(ctx, 7)
-            m.topMargin = if (collapsed) (ballPx - dotPx) / 2 else dp(ctx, 3)
+            if (collapsed) {
+                // 注意：下面还会把根容器 padding 覆盖成 4dp（球内环留白），
+                // 所以居中 margin 必须把这段 padding 算进去，否则圆点偏右下
+                // （实测：(ball-dot)/2 会多出 padding 的量 → 偏 +9/+16px）。
+                val innerPad = dp(ctx, 4)
+                val centered = (ballPx - innerPad * 2 - dotPx) / 2
+                // 像素级校准（用 getLocationInWindow 实测两轮收敛）：+4px / -20px
+                m.marginStart = centered + 4
+                m.marginEnd = 0
+                m.topMargin = (centered - 24).coerceAtLeast(0)
+            } else {
+                m.marginStart = 0
+                m.marginEnd = dp(ctx, 7)
+                m.topMargin = dp(ctx, 3)
+            }
             statusDot?.layoutParams = m
         }
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
