@@ -415,6 +415,24 @@ object StatusOverlay {
         return if (dockRight) (screenW - vw - margin).coerceAtLeast(margin) else margin
     }
 
+    /**
+     * 按「当前尺寸」重新贴到所在一侧。
+     *
+     * 用于档位切换（球 ↔ 卡片）后的锚定：窗口 x 是左上角坐标，球变宽成 240dp 卡片时
+     * 左上角不动、右边缘却往右长出去 —— 观感就是「一开始说话悬浮窗跳了一下」。
+     * 这里在布局完成后再按新宽度重新算 x，保持贴边的一侧不移动。
+     */
+    private fun anchorToEdge() {
+        val v = root ?: return
+        val prm = params ?: return
+        val ctx = appCtx ?: return
+        runCatching {
+            prm.x = dockX(v, prm, ctx)
+            prm.y = clampY(v, prm, ctx)
+            wm?.updateViewLayout(v, prm)
+        }
+    }
+
     /** 松手后吸附到最近的水平边缘（避免长期悬在屏幕中央挡内容） */
     private fun snapToEdge(p: WindowManager.LayoutParams, ctx: Context) {
         val view = root ?: return
@@ -533,6 +551,8 @@ object StatusOverlay {
         }
         root?.requestLayout()
         root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
+        // 档位切换会改变窗口宽高：等布局完成后按新尺寸重新贴边，避免「开始时跳一下」。
+        r?.post { r?.post { anchorToEdge() } }
 
         r?.let { v ->
             val pad = if (collapsed) dp(ctx, 4) else dp(ctx, 8)
