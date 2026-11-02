@@ -55,7 +55,17 @@ cp -a ~/.claude/skills/<skill-id>/. ~/.dsh/skills/<skill-id>/
 ```
 
 我们已把 36 个官方技能全部装进 `~/.dsh/skills`（与自建技能合计 59 个）。
-`android skills update` 之后记得同样 `cp -a` 同步一次。
+
+**软链方案（已启用，免手动同步）**：把 DSH 侧的技能目录指向 Claude 侧，`android skills update` 后自动生效。
+
+```bash
+trash ~/.dsh/skills/<skill-id>          # 删掉旧副本（先确认没本地改动）
+ln -s ~/.claude/skills/<skill-id> ~/.dsh/skills/<skill-id>
+```
+
+已对 `android-cli` 做了这个切换（`android-cli -> /home/hazukie/.claude/skills/android-cli`，可正常读到 SKILL.md）。
+DSH 侧扫描技能时按路径读 `SKILL.md`，`fs.readFile` 会跟随符号链接，所以内容与 Claude 侧实时一致。
+若某天某技能在 DSH 里没被加载，退回 `cp -a` 拷贝即可（保留硬副本，代价是每次 update 要重拷）。
 
 ## 4. 本项目常用的官方技能
 
