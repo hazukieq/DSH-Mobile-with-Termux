@@ -463,9 +463,39 @@ object StatusOverlay {
                 vg.gravity = android.view.Gravity.TOP or android.view.Gravity.START
             }
         }
+        // 圆点在「状态行」里的对齐：折叠态必须 CENTER —— 只给根容器设 gravity 没用，
+        // 因为状态行是 match_parent，圆点仍然贴着行首（实测偏移 -27px，用户一眼看出不对）。
+        // 折叠态：显式给球一个正方形窗口 + 用 margin 把圆点推到正中。
+        // 不用 layout_gravity —— 状态行是 match_parent、父链上有 weight，实测 gravity 不生效
+        // （圆点仍偏左 28px）。直接算像素最稳。
+        val ballPx = dp(ctx, 42)
+        val dotPx = dp(ctx, 14)
+        if (collapsed) {
+            runCatching {
+                r?.layoutParams?.let { lp -> lp.width = ballPx; lp.height = ballPx; r.layoutParams = lp }
+                params?.let { prm -> prm.width = ballPx; prm.height = ballPx; wm?.updateViewLayout(r, prm) }
+            mainHandler.postDelayed({
+            }, 150L)
+            }
+        } else {
+            runCatching {
+                r?.layoutParams?.let { lp ->
+                    lp.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    r.layoutParams = lp
+                }
+                params?.let { prm ->
+                    prm.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    prm.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    wm?.updateViewLayout(r, prm)
+                }
+            }
+        }
         (statusDot?.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { m ->
+            val pad = if (collapsed) (ballPx - dotPx) / 2 else dp(ctx, 7)
+            m.marginStart = if (collapsed) pad else 0
             m.marginEnd = if (collapsed) 0 else dp(ctx, 7)
-            m.topMargin = if (collapsed) 0 else dp(ctx, 3)
+            m.topMargin = if (collapsed) (ballPx - dotPx) / 2 else dp(ctx, 3)
             statusDot?.layoutParams = m
         }
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
