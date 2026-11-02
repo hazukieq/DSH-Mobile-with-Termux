@@ -98,6 +98,15 @@ object StatusOverlay {
     /** 红色「回复已给出」状态（见 markReplyReady） */
     @Volatile private var replyReady = false
 
+    /** 上一次实际应用过的折叠态（-1=未应用）：只在真正切换时改背景/内边距，避免闪 */
+    private var lastCollapsedApplied = -1
+
+    /** 上一次设为的背景资源（避免每次刷新都 setBackgroundResource，重设 drawable 会闪） */
+    private var lastBgRes = 0
+
+    /** 待执行的贴边锚定（合并同一帧内的多次请求） */
+    private var anchorPending = false
+
     /** 状态文字初始颜色（清红时还原） */
     private var statusTextColor: Int = 0xFF111111.toInt()
     /** 当前窗口由哪种 type 创建：无障碍窗口随服务销毁，应用悬浮窗不随 Activity/服务走。 */
@@ -528,6 +537,18 @@ object StatusOverlay {
             statusDot?.layoutParams = m
         }
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        // 展开态把滚动区高度**钉死**：思考/工具文案长短变化只走内部滚动，
+        // 不再触发「窗口尺寸变化 → updateViewLayout → 整棵视图重排」（闪烁的根因）。
+        if (!collapsed) {
+            statusScroll?.let { sc ->
+                val fixedH = dp(ctx, 92)
+                val lp = sc.layoutParams
+                if (lp != null && lp.height != fixedH) {
+                    lp.height = fixedH
+                    sc.layoutParams = lp
+                }
+            }
+        }
         statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
         // v2.5.9（用户实测 bug）：折叠期间 ScrollView 是 GONE，子 View 没被测量，
         // capScrollHeight() 会把高度锁成 0/很小；再展开时窗口就"长出"一条很矮的滚动区。
@@ -551,8 +572,14 @@ object StatusOverlay {
         }
         root?.requestLayout()
         root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
-        // 档位切换会改变窗口宽高：等布局完成后按新尺寸重新贴边，避免「开始时跳一下」。
-        r?.post { r?.post { anchorToEdge() } }
+        // 档位切换会改变窗口宽高：等布局完成后按新尺寸重新贴边（合并到一帧，避免连续重排闪烁）。
+        if (!anchorPending) {
+            anchorPending = true
+            r?.postOnAnimation {
+                anchorPending = false
+                anchorToEdge()
+            }
+        }
 
         r?.let { v ->
             val pad = if (collapsed) dp(ctx, 4) else dp(ctx, 8)
@@ -564,11 +591,10 @@ object StatusOverlay {
             )
             // 折叠态 = 苹果 AssistiveTouch 式悬浮球（球体+内环，见 bg_overlay_ball）；
             // 展开后回到圆角卡片。旧版是拉伸成椭圆的深灰块，观感像按钮。
-            runCatching {
-                v.setBackgroundResource(
-                    if (collapsed) R.drawable.bg_overlay_ball
-                    else R.drawable.bg_overlay_panel
-                )
+            val bgRes = if (collapsed) R.drawable.bg_overlay_ball else R.drawable.bg_overlay_panel
+            if (bgRes != lastBgRes) {
+                lastBgRes = bgRes
+                runCatching { v.setBackgroundResource(bgRes) }
             }
             // 折叠态强制**正圆**（COLLAPSED_BALL_DP）：球里只有一个小圆点，内容撑不满控件，
             // 必须靠 minimumWidth/Height 才能量出正方形（旧版实测 95x77 = 椭圆）。
@@ -845,6 +871,9 @@ object StatusOverlay {
      * 这里按内容实测高度夹到 176dp（不够就不动），超出则固定高度并内部滚动。
      */
     private fun capScrollHeight() {
+        // v2.5.90：滚动区已改为固定高度（见 applyExpandLevel），不再按内容夹高——
+        // 按内容夹高会让每条状态都改一次窗口高度，观感就是持续闪烁。
+        if (true) return
         val sc = statusScroll ?: return
         val ctx = appCtx ?: return
         val maxPx = dp(ctx, 132)
