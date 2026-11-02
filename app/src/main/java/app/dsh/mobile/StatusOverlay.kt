@@ -545,7 +545,7 @@ object StatusOverlay {
         statusScroll?.let { sc ->
             val targetH = when {
                 collapsed -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                working && !idleCompactNow -> dp(ctx, 92)   // 运行中固定高度：文案变长只内部滚动，窗口不跳
+                !idleCompactNow -> dp(ctx, 92)   // 有内容就固定高度：文案变长只内部滚动，窗口不跳
                 else -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             }
             val lp = sc.layoutParams
@@ -581,7 +581,7 @@ object StatusOverlay {
         // 折叠=正方球；展开空闲=贴合内容（只有 dot + 文案）；展开运行=固定 240dp 宽
         val w = when {
             collapsed -> side
-            working && !idleCompactNow -> dp(ctx, 240)
+            !idleCompactNow -> dp(ctx, 240)
             else -> WRAP
         }
         val h = if (collapsed) side else WRAP
@@ -865,6 +865,11 @@ object StatusOverlay {
         }
     }
 
+    /** 状态文字更新后把滚动区滚到底（最新一行可见）。 */
+    private fun scrollStatusToBottom() {
+        statusScroll?.let { sc -> sc.post { runCatching { sc.fullScroll(View.FOCUS_DOWN) } } }
+    }
+
     fun setStatus(text: String) {
         if (working) replyReady = false   // 新活动开始 → 清红（红只代表「整轮结束」）
         main {
@@ -888,6 +893,7 @@ object StatusOverlay {
             lastStatusBody = body
             lastStatusAt = nowMs
             statusText?.text = body
+            scrollStatusToBottom()
             Log.i(TAG, "setStatus len=${body.length} full=${full.length}")
             clearReplyReady()
             tintDots(COLOR_WORKING)
