@@ -280,9 +280,8 @@ object ProgressHub {
                     val active = snap.kind == "thinking" || snap.kind == "tool" || snap.kind == "working"
                     // 实测（logcat 06:55:39）：一轮结束只收到 kind=done 的快照，
                     // 中间没有活动态快照 → 不能依赖「活动→非活动」转换。直接认 done/error。
-                    if (snap.kind == "done" || snap.kind == "error" || (!active && lastKindWasActive)) {
-                        StatusOverlay.markReplyReady()
-                    }
+                    // 标红只由「整轮对话结束」触发（AgentBridge.onTurnEnd，来自 WebUI 的 turn/end），
+                    // 这里只记录活动态，不再自行标红 —— 否则一轮里多个 done 会误报。
                     lastKindWasActive = active
                 }
                 cancelNotification(ctx)

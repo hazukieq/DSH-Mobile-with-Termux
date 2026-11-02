@@ -908,7 +908,8 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 obj.optString("action").takeIf { it.isNotBlank() },
             ).joinToString(" · ")
             if (notice.isNotBlank()) StatusOverlay.setA11yAction(notice)
-            if (obj.optBoolean("complete", false)) StatusOverlay.markReplyReady()
+            // 注：obj.complete 只代表这一次动作完成，不代表整轮对话结束，故不标红；
+            // 标红统一由 AgentBridge.onTurnEnd（WebUI 的 turn/end）负责。
             // v1.3.68：同一份进度也进入后台提示（通知/悬浮窗），不再依赖无障碍
             ProgressHub.onAgentProgress(
                 ctx,

@@ -866,6 +866,7 @@ object StatusOverlay {
     }
 
     fun setStatus(text: String) {
+        if (working) replyReady = false   // 新活动开始 → 清红（红只代表「整轮结束」）
         main {
             cancelIdleReset()   // 新状态来了 → 作废"回空闲"定时器（否则会把这里覆盖掉）
             val wasWorking = working
