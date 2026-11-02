@@ -491,7 +491,8 @@ object StatusOverlay {
         val view = r ?: return
         val collapsed = expandLevel == 0
         val idleText = ctx.getString(R.string.overlay_idle)
-        val idleCompact = !collapsed && !working && statusText?.text?.toString() == idleText
+        // 文案是「空闲」就按空闲排：不看 working 标志（它在异常退出时可能残留 true）
+        val idleCompact = !collapsed && statusText?.text?.toString() == idleText
         idleCompactNow = idleCompact
 
         // 内边距：球态必须为 0（否则球心会被 padding 顶偏）；卡片态 10/8/12/8。
@@ -542,15 +543,18 @@ object StatusOverlay {
         // 内容可见性：卡片空闲态只留状态行（滚动区/动作行/页脚都收起）。
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
         statusScroll?.let { sc ->
-            if (!collapsed) {
-                val fixedH = dp(ctx, 92)
-                val lp = sc.layoutParams
-                if (lp != null && lp.height != fixedH) {
-                    lp.height = fixedH
-                    sc.layoutParams = lp
-                }
+            val targetH = when {
+                collapsed -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                working && !idleCompactNow -> dp(ctx, 92)   // 运行中固定高度：文案变长只内部滚动，窗口不跳
+                else -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             }
-            sc.visibility = if (collapsed || idleCompact) View.GONE else View.VISIBLE
+            val lp = sc.layoutParams
+            if (lp != null && lp.height != targetH) {
+                lp.height = targetH
+                sc.layoutParams = lp
+            }
+            // 状态文字永远可见：空闲时也要能看到「空闲」二字（之前把它 GONE 掉 → 面板空白的根源）
+            sc.visibility = if (collapsed) View.GONE else View.VISIBLE
         }
         a11yText?.visibility = if (!collapsed && !idleCompact) View.VISIBLE else View.GONE
         footRow?.visibility = if (collapsed || idleCompact) View.GONE else View.VISIBLE
@@ -573,12 +577,14 @@ object StatusOverlay {
     /** 窗口尺寸的唯一真源：折叠=正方球；展开空闲=240dp x 64dp；展开运行=240dp x WRAP。 */
     private fun applyWindowSize(ctx: Context, view: View, collapsed: Boolean) {
         val side = dp(ctx, COLLAPSED_BALL_DP)
-        val w = if (collapsed) side else dp(ctx, 240)
-        val h = when {
+        val WRAP = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        // 折叠=正方球；展开空闲=贴合内容（只有 dot + 文案）；展开运行=固定 240dp 宽
+        val w = when {
             collapsed -> side
-            working -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-            else -> dp(ctx, 64)
+            working && !idleCompactNow -> dp(ctx, 240)
+            else -> WRAP
         }
+        val h = if (collapsed) side else WRAP
         view.layoutParams?.let { lp ->
             if (lp.width != w || lp.height != h) {
                 lp.width = w
