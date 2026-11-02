@@ -1061,19 +1061,14 @@ object StatusOverlay {
      * 会话结束 / 被停止：整枚悬浮窗变红并保持，直到用户点它（提示「回复已经给出」）。
      * 旧行为是 15s 自动回灰，用户容易错过。
      */
+    /** 一轮结束/停止：圆点变红提示「可以看了」。**不改写状态文字**——文案一旦被覆盖，
+     *  正在滚动的思考链就没法回看（用户明确要求只在圆点上表达）。 */
+    @Suppress("UNUSED_PARAMETER")
     fun markReplyReady(summary: String? = null) {
         main {
             replyReady = true
             working = false
-            cancelIdleReset()
-            cancelCollapse()
-            val ctx = appCtx
-            statusText?.apply {
-                text = summary ?: (ctx?.getString(R.string.overlay_turn_done) ?: "Reply ready")
-                setTextColor(COLOR_DONE)
-            }
             tintDots(COLOR_DONE)
-            refreshActionVisibility()
         }
     }
 
@@ -1084,16 +1079,15 @@ object StatusOverlay {
         runCatching { statusText?.setTextColor(statusTextColor) }
     }
 
+    /** 完成闪一下：同样**只改圆点颜色**，不覆盖状态文字（否则滚动内容被冲掉、无法回看）。 */
+    @Suppress("UNUSED_PARAMETER")
     fun flashComplete(summary: String, holdMs: Long = 15_000L) {
         main {
-            val s = statusText ?: return@main
-            working = true
-            s.text = summary
+            working = false
+            replyReady = true
             tintDots(COLOR_DONE)
-            refreshActionVisibility()
             // ⚠️ 必须可取消：这个 6 秒定时器若不被作废，会在「用户马上又让 AI 干活」时
             // 把新写入的「执行中」覆盖成「空闲」——主人实测反馈的正是这个现象。
-            scheduleIdle(holdMs)
         }
     }
 
