@@ -120,6 +120,8 @@ object StatusOverlay {
      * 空闲时不该还挂着上一次的动作文案（主人要的是「现在在干什么」）。
      */
     @Volatile private var working = false
+    /** 空闲紧凑态：三块固定占位收起，面板只剩状态行 */
+    @Volatile private var idleCompactNow = false
     private var lastStatusBody: String = ""
     private var lastStatusAt: Long = 0L
 
@@ -481,6 +483,12 @@ object StatusOverlay {
         val ctx = appCtx ?: return
         // 折叠态：隐藏文字/麦克风/动作/会话，只留圆点；同时收紧内边距让它接近圆形
         val collapsed = expandLevel == 0
+        // 空闲且没有内容时，三块固定占位（92dp 滚动区 / 24dp 动作行 / 16dp 底部行）
+        // 会留成一大片空白（用户问「为什么没内容还这么大空白」）。
+        // 空闲态尺寸不会再频繁变化（不闪烁），所以这里把它们收起来，只留状态行。
+        val idleText = ctx.getString(R.string.overlay_idle)
+        val idleCompact = !collapsed && !working && statusText?.text?.toString() == idleText
+        idleCompactNow = idleCompact
         // 折叠成球时必须把内边距/圆点外边距清零并整体居中，否则圆点在球里偏到右下角
         // （用户实测：定宽面板改完后球的圆点「变样了」）。
         (r as? android.widget.LinearLayout)?.let { vg ->
@@ -555,7 +563,7 @@ object StatusOverlay {
                 }
             }
         }
-        statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        statusScroll?.visibility = if (collapsed || idleCompact) View.GONE else View.VISIBLE
         // v2.5.93：这里原本会把滚动区高度改回 WRAP_CONTENT（v2.5.9 的老兜底），
         // 结果把上面刚设好的固定高度冲掉 —— 思考长文一来面板就撑满整屏。
         // 现在滚动区恒为固定高度，内容在内部滚动，窗口尺寸不变。
@@ -563,7 +571,7 @@ object StatusOverlay {
         refreshActionVisibility()
         // v2.5.6：无障碍/打开应用动作链——折叠成球时隐藏，展开且有内容才显示
         // 固定占位：展开态**始终**占这 24dp，内容有无只换文字不换尺寸
-        a11yText?.visibility = if (!collapsed) View.VISIBLE else View.GONE
+        a11yText?.visibility = if (!collapsed && !idleCompact) View.VISIBLE else View.GONE
         statusScroll?.post {
             capScrollHeight()
             // 展开后才刚完成第一次布局，再补一次收紧（v2.5.9）
@@ -847,11 +855,11 @@ object StatusOverlay {
         val expanded = expandLevel >= 1
         // 第三段：会话标题 + 倒计时
         // 无障碍/打开应用动作链（第④段）：展开态且有内容才显示
-        a11yText?.visibility = if (expanded && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
+        a11yText?.visibility = if (expanded && !idleCompactNow && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
         val foot = footRow ?: return
         val hasFoot = sessionText?.text?.isNotEmpty() == true || elapsedText?.text?.isNotEmpty() == true
         // 固定占位：展开态始终占这 16dp（无内容时留空），避免出现/消失时窗口高度跳变
-        foot.visibility = if (expanded) View.VISIBLE else View.GONE
+        foot.visibility = if (expanded && !idleCompactNow) View.VISIBLE else View.GONE
     }
 
     /** 排一个「holdMs 后回空闲」，可被后续任何新状态取消 */
@@ -937,7 +945,9 @@ object StatusOverlay {
     fun setStatus(text: String) {
         main {
             cancelIdleReset()   // 新状态来了 → 作废"回空闲"定时器（否则会把这里覆盖掉）
+            val wasWorking = working
             working = true
+            if (!wasWorking) runCatching { applyExpandLevel() }   // 离开空闲态 → 恢复固定占位
             // v1.3.75：内容实时滚动 —— 保留换行、折行显示，每次更新后滚到最新一行。
             // 用户要求「点击后再展开」，所以这里**不**自动升档（折叠球由用户点开）。
             // v2.5.95：桥每 ~250ms 推一次**累积全文**（实测 len 2702→4782 连涨），
