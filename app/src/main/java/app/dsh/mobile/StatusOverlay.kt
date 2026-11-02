@@ -94,6 +94,12 @@ object StatusOverlay {
     @Volatile private var lastAppliedLevel = -1
     /** 贴边方向：true=右边缘，false=左边缘。展开/折叠后始终贴回这一侧。 */
     @Volatile private var dockRight = true
+
+    /** 红色「回复已给出」状态（见 markReplyReady） */
+    @Volatile private var replyReady = false
+
+    /** 状态文字初始颜色（清红时还原） */
+    private var statusTextColor: Int = 0xFF111111.toInt()
     /** 当前窗口由哪种 type 创建：无障碍窗口随服务销毁，应用悬浮窗不随 Activity/服务走。 */
     @Volatile private var windowTypeUsed = 0
     @Volatile private var appCtx: Context? = null
@@ -178,6 +184,7 @@ object StatusOverlay {
 
                 status.text = ctx.getString(R.string.overlay_idle)
                 dot.background.setTint(COLOR_IDLE)
+                statusTextColor = status.currentTextColor
 
 
                 val p = WindowManager.LayoutParams(
@@ -216,6 +223,18 @@ object StatusOverlay {
                 view.post {
                     expandLevel = rememberedLevel
                     applyExpandLevel(view)
+                }
+
+                // 旋转（横屏看视频等）后重新贴边：宽高变了而 p.x/p.y 还是旧值。
+                runCatching {
+                    (ctx.applicationContext as? android.app.Application)?.registerComponentCallbacks(
+                        object : android.content.ComponentCallbacks {
+                            override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+                                main { root?.let { v -> params?.let { prm -> runCatching { snapToEdge(prm, appCtx ?: ctx) }; v.requestLayout() } } }
+                            }
+                            override fun onLowMemory() {}
+                        },
+                    )
                 }
 
                 // ⚠️ 右对齐必须在**测量完成后**做。
@@ -323,6 +342,7 @@ object StatusOverlay {
             Log.i(TAG, "handle touch: action=${ev.actionMasked} at (${ev.x.toInt()},${ev.y.toInt()})")
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    clearReplyReady()
                     downX = ev.rawX; downY = ev.rawY
                     startX = p.x; startY = p.y
                     dragging = true; moved = false
@@ -362,9 +382,19 @@ object StatusOverlay {
         }
     }
 
+    /** 当前屏幕可用区域（旋转后实时取；缓存的 displayMetrics 会导致「不贴边、左右拖不动」）。 */
+    private fun screenRect(ctx: Context): android.graphics.Rect {
+        val w = wm
+        if (android.os.Build.VERSION.SDK_INT >= 30 && w != null) {
+            runCatching { return w.currentWindowMetrics.bounds }
+        }
+        val dm = ctx.resources.displayMetrics
+        return android.graphics.Rect(0, 0, dm.widthPixels, dm.heightPixels)
+    }
+
     /** 垂直位置只做屏幕内约束（默认 y 由调用方给）。 */
     private fun clampY(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
-        val screenH = ctx.resources.displayMetrics.heightPixels
+        val screenH = screenRect(ctx).height()
         val vh = when {
             v.height > 0 -> v.height
             p.height > 0 -> p.height
@@ -375,7 +405,7 @@ object StatusOverlay {
 
     /** 计算贴边后的 x（按当前窗口宽度与 dockRight 侧）。 */
     private fun dockX(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
-        val screenW = ctx.resources.displayMetrics.widthPixels
+        val screenW = screenRect(ctx).width()
         val margin = dp(ctx, 8)
         val vw = when {
             v.width > 0 -> v.width
@@ -395,29 +425,8 @@ object StatusOverlay {
         dockRight = !(p.x + vw / 2 < screenW / 2)
         val target = if (dockRight) screenW - vw - margin else margin
         p.y = clampY(view, p, ctx)
+        p.x = target
         runCatching { wm?.updateViewLayout(view, p) }
-        animateX(p, target)
-    }
-
-    /** 简单的逐帧位移动画（避免引入动画库；60fps 下约 180ms 走完） */
-    private fun animateX(p: WindowManager.LayoutParams, targetX: Int) {
-        val view = root ?: return
-        val start = p.x
-        val steps = (SNAP_MS / 16).toInt().coerceAtLeast(1)
-        var i = 0
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        val runnable = object : Runnable {
-            override fun run() {
-                i++
-                val t = i.toFloat() / steps
-                // ease-out：起步快、收尾缓，手感更自然
-                val eased = 1f - (1f - t) * (1f - t)
-                p.x = start + ((targetX - start) * eased).toInt()
-                runCatching { wm?.updateViewLayout(view, p) }
-                if (i < steps) handler.postDelayed(this, 16)
-            }
-        }
-        handler.post(runnable)
     }
 
     /**
@@ -825,6 +834,7 @@ object StatusOverlay {
             val body = text.trim().take(16000)
             statusText?.text = body
             Log.i(TAG, "setStatus len=${body.length}")
+            clearReplyReady()
             statusDot?.background?.setTint(COLOR_WORKING)
             statusScroll?.post {
                 capScrollHeight()
@@ -994,6 +1004,33 @@ object StatusOverlay {
     /**
      * 对话完成提示：绿色高亮 + 短暂显示，到点自动回空闲。
      */
+    /**
+     * 会话结束 / 被停止：整枚悬浮窗变红并保持，直到用户点它（提示「回复已经给出」）。
+     * 旧行为是 15s 自动回灰，用户容易错过。
+     */
+    fun markReplyReady(summary: String? = null) {
+        main {
+            replyReady = true
+            working = false
+            cancelIdleReset()
+            cancelCollapse()
+            val ctx = appCtx
+            statusText?.apply {
+                text = summary ?: (ctx?.getString(R.string.overlay_turn_done) ?: "Reply ready")
+                setTextColor(COLOR_DONE)
+            }
+            statusDot?.background?.setTint(COLOR_DONE)
+            refreshActionVisibility()
+        }
+    }
+
+    /** 清红（用户点/拖悬浮窗、或新状态到来时） */
+    private fun clearReplyReady() {
+        if (!replyReady) return
+        replyReady = false
+        runCatching { statusText?.setTextColor(statusTextColor) }
+    }
+
     fun flashComplete(summary: String, holdMs: Long = 15_000L) {
         main {
             val s = statusText ?: return@main

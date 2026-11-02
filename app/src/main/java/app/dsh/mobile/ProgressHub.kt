@@ -271,7 +271,7 @@ object ProgressHub {
                     val title = snap.title.take(60).ifBlank { stateLabel(ctx, snap.kind) }
                     StatusOverlay.setSession(if (label.isNotBlank()) "$title · $label" else title)
                     if ((snap.kind == "done" || snap.kind == "error") && snap.detail.isBlank()) {
-                        StatusOverlay.flashCompleteDefault(15_000L)
+                        StatusOverlay.markReplyReady()
                     }
                 }
                 cancelNotification(ctx)

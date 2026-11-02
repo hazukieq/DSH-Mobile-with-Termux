@@ -261,7 +261,7 @@ object AgentBridge {
     internal fun onTurnEnd(ctx: Context, session: String) {
         runCatching {
             Log.i(TAG, "turn/end detected in $session")
-            StatusOverlay.flashComplete(ctx.getString(R.string.overlay_turn_done))
+            StatusOverlay.markReplyReady(ctx.getString(R.string.overlay_turn_done))
             appHandler.notify(
                 ctx,
                 JSONObject().apply {
