@@ -578,7 +578,13 @@ object StatusOverlay {
         }
         bindHandle(view, params ?: return, ctx)
         view.requestLayout()
-        view.post { runCatching { bindHandle(view, params ?: return@post, ctx) } }
+        view.post {
+            runCatching { bindHandle(view, params ?: return@post, ctx) }
+            runCatching {
+                val xy = IntArray(2); view.getLocationOnScreen(xy)
+                Log.i(TAG, "[geo] level=$expandLevel ${view.width}x${view.height} at ${xy[0]},${xy[1]} idle=$idleCompactNow")
+            }
+        }
     }
 
     /** 窗口尺寸的唯一真源：折叠=正方球；展开空闲=240dp x 64dp；展开运行=240dp x WRAP。 */
@@ -589,9 +595,13 @@ object StatusOverlay {
         val w = when {
             collapsed -> side
             !idleCompactNow -> dp(ctx, 240)
+            else -> dp(ctx, 120)      // 空闲：只留 dot + 「空闲」，固定一小块
+        }
+        val h = when {
+            collapsed -> side
+            idleCompactNow -> dp(ctx, 44)
             else -> WRAP
         }
-        val h = if (collapsed) side else WRAP
         view.layoutParams?.let { lp ->
             if (lp.width != w || lp.height != h) {
                 lp.width = w
