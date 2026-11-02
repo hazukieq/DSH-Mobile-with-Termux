@@ -549,9 +549,16 @@ object StatusOverlay {
                 else -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             }
             val lp = sc.layoutParams
-            if (lp != null && lp.height != targetH) {
-                lp.height = targetH
-                sc.layoutParams = lp
+            if (lp != null) {
+                var changed = false
+                if (lp.height != targetH) { lp.height = targetH; changed = true }
+                // 只有「有内容（非空闲）」的展开态才需要固定 92dp 滚动区；
+                // 空闲态保持贴合内容（不受这次修复影响）。
+                if (!idleCompactNow && lp is LinearLayout.LayoutParams && lp.weight != 0f) {
+                    lp.weight = 0f   // XML 的 layout_weight=1 会把滚动区撑成"占满剩余高度"，必须清零
+                    changed = true
+                }
+                if (changed) sc.layoutParams = lp
             }
             // 状态文字永远可见：空闲时也要能看到「空闲」二字（之前把它 GONE 掉 → 面板空白的根源）
             sc.visibility = if (collapsed) View.GONE else View.VISIBLE
