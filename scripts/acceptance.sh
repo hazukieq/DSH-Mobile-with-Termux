@@ -60,6 +60,9 @@ run "装机" adb -s "$DEVICE" install -r -d "$APK"
 run "引擎就绪(401)" bash -c 'adb -s'"$DEVICE"' shell am force-stop com.termux; adb -s'"$DEVICE"' logcat -c; adb -s'"$DEVICE"' shell am start -n com.termux/app.dsh.mobile.MainActivity >/dev/null; for i in $(seq 1 40); do c=$(adb -s '"$DEVICE"' shell "curl -s -o /dev/null -m 3 -w %{http_code} http://127.0.0.1:3080/"|tr -d "\r"); [ "$c" = 401 ] && exit 0; sleep 2; done; exit 1'
 run "引擎版本文件" bash -c 'adb -s '"$DEVICE"' shell "su -c \"cat /data/user/0/com.termux/files/usr/.dsh-engine-version\""|grep -q "0\.2\."'
 run "冷启动打点" bash -c 'for i in $(seq 1 20); do adb -s '"$DEVICE"' logcat -d -s DshColdStart|grep -q engine.portReady && exit 0; sleep 2; done; exit 1'
+
+# 交互与特权的完整回归（分享 / mobile-ui 部署 / 长按菜单 / NORMAL→ROOT→SHIZUKU 模式切换）
+run "真机交互+特权冒烟" bash scripts/smoke-device.sh --device "$DEVICE"
 fi
 
 echo
