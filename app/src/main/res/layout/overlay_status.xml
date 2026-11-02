@@ -12,7 +12,7 @@
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlayRoot"
-    android:layout_width="wrap_content"
+    android:layout_width="240dp"
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/bg_overlay_panel"
@@ -25,7 +25,7 @@
 
     <!-- 状态行：圆点 + 可滚动内容 + 麦克风（折叠态只显示圆点） -->
     <LinearLayout
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="top">
@@ -40,7 +40,8 @@
 
         <ScrollView
             android:id="@+id/overlayScroll"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
             android:maxWidth="216dp"
             android:maxHeight="132dp"
@@ -50,7 +51,7 @@
 
             <TextView
                 android:id="@+id/overlayStatus"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:maxWidth="216dp"
                 android:textSize="13sp"
@@ -67,7 +68,7 @@
          只显示「无障碍服务真正做的事」——读屏点击/滑动/按键、启动或跳转别的 App。 -->
     <TextView
         android:id="@+id/overlayA11y"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="3dp"
         android:layout_marginStart="16dp"
@@ -83,7 +84,7 @@
     <!-- 会话标题 + 倒计时（v2.5.5）：展开时单独一行，标题被省略而不是被秒数挤掉 -->
     <LinearLayout
         android:id="@+id/overlayFoot"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -97,9 +98,8 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:maxWidth="180dp"
             android:singleLine="true"
-            android:ellipsize="middle"
+            android:ellipsize="end"
             android:textSize="11sp"
             android:textColor="#FF9AA0A6"
             android:text="" />
