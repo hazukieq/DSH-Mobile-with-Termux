@@ -739,6 +739,41 @@ object StatusOverlay {
         }
     }
 
+    /**
+     * 自动化操作期间让悬浮窗**不吃点击**。
+     *
+     * 为什么需要：窗口是 FLAG_NOT_FOCUSABLE|NOT_TOUCH_MODAL，但**仍然可触摸**——
+     * 球/卡片覆盖的那一块，注入的 tap/swipe 会先落到我们自己的窗口上，被当成
+     * 「拖动悬浮窗」，于是自动点击在那一块区域永远点不中目标。
+     * 操作期间加 FLAG_NOT_TOUCHABLE（可见、但不参与命中测试），操作结束立刻去掉。
+     */
+    @Volatile private var opsAvoid = false
+
+    fun beginOpsAvoid() {
+        if (opsAvoid) return
+        opsAvoid = true
+        applyOpsAvoid()
+    }
+
+    fun endOpsAvoid() {
+        if (!opsAvoid) return
+        opsAvoid = false
+        applyOpsAvoid()
+    }
+
+    private fun applyOpsAvoid() {
+        main {
+            val p = params ?: return@main
+            val r = root ?: return@main
+            val w = wm ?: return@main
+            val notTouchable = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            val next = if (opsAvoid) (p.flags or notTouchable) else (p.flags and notTouchable.inv())
+            if (next == p.flags) return@main
+            p.flags = next
+            runCatching { if (r.isAttachedToWindow) w.updateViewLayout(r, p) }
+        }
+    }
+
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** 待执行的「回空闲」任务（必须可取消，见 scheduleIdle 注释） */

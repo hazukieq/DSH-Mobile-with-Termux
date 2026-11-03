@@ -42,7 +42,28 @@ import app.dsh.mobile.engine.SceneMemory
  */
 internal class Router(private val bridge: AgentBridge) {
 
+    /**
+     * 这些端点会**注入真实输入**（点击/滑动/按键/文本）或包着它们：
+     * 悬浮窗在操作期间必须 FLAG_NOT_TOUCHABLE，否则它盖住的那块区域点不中目标。
+     */
+    private val OPS_AVOID_PATHS = setOf(
+        "/act", "/batch", "/pick", "/overlay",
+        "/open/file", "/open/folder", "/open/share",
+    )
+
     internal fun route(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
+        // 动作类请求：先让悬浮窗「不吃点击」，否则它盖住的那块区域永远点不中目标。
+        val avoid = method == "POST" && (path in ACTING_PATHS || path in OPS_AVOID_PATHS)
+        if (avoid) runCatching { StatusOverlay.beginOpsAvoid() }
+        try {
+            return routeInner(ctx, method, path, query, body)
+        } finally {
+            if (avoid) runCatching { StatusOverlay.endOpsAvoid() }
+        }
+    }
+
+    /** 除了 ACTING_PATHS，还要覆盖真正注入输入的批量/链式入口（见 OPS_AVOID_PATHS）。 */
+    private fun routeInner(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
         with(bridge) {
         // 每次请求都顺手预取一次 OCR（TTL 防刷）：a11y 受限时可直接兜底
         DshAccessibilityService.instance?.let { screen.prefetchOcr(it) }
