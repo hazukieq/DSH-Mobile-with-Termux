@@ -33,7 +33,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="top|start">
+        android:gravity="center_vertical">
 
         <View
             android:id="@+id/overlayDot"
@@ -46,6 +46,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="6dp"
+            android:layout_marginTop="2dp"
             android:maxWidth="216dp"
             android:scrollbars="vertical"
             android:overScrollMode="never">
