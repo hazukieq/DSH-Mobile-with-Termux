@@ -908,6 +908,7 @@ object StatusOverlay {
             lastStatusBody = body
             lastStatusAt = nowMs
             statusText?.text = body
+            runCatching { applyExpandLevel() }   // 文案变了要重排：空闲→工作会切到固定 92dp 滚动区
             scrollStatusToBottom()
             Log.i(TAG, "setStatus len=${body.length} full=${full.length}")
             clearReplyReady()
