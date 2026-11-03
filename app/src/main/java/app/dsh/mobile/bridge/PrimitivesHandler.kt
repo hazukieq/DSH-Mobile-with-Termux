@@ -103,7 +103,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
 
     /**
      * 语义封装：点击 → 控件出现（默认 2s 内会消失）→ 立刻对它做动作。
-     * body: {tap:[x,y]|tapText, expect:"进度条"|{text,desc,id}, appear_ms=600,
+     * body: {tap:[x,y]|tapText, expect:"\u8fdb\u5ea6\u6761"|{text,desc,id}, appear_ms=600,
      *        action:{kind:"tap"|"swipe"|"drag-to"|"none", dx,dy,x,y,duration_ms}}
      */
     internal fun transient(ctx: android.content.Context, body: String): Pair<Int, String> {
@@ -148,7 +148,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         if (node == null) {
             return 200 to JSONObject().put("ok", false).put("error", "not_found")
                 .put("expect", wantText).put("appear_ms", appearMs).put("elapsed_ms", foundMs)
-                .put("hint", "控件没出现：可能触发点不对，或它在 a11y 树里没有文字/描述").toString()
+                .put("hint", "\u63a7\u4ef6\u6ca1\u51fa\u73b0\uff1a\u53ef\u80fd\u89e6\u53d1\u70b9\u4e0d\u5bf9\uff0c\u6216\u5b83\u5728 a11y \u6811\u91cc\u6ca1\u6709\u6587\u5b57/\u63cf\u8ff0").toString()
         }
         val cx = node.optInt("x"); val cy = node.optInt("y")
         val appearAt = System.currentTimeMillis()
