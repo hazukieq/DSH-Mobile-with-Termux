@@ -64,8 +64,15 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
     /** 短命控件（进度条/临时按钮）：在 holdMs 窗口内做一次连贯拖动。 */
     internal fun dragFast(body: String): Pair<Int, String> {
         val o = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
-        val x1 = o.getDouble("x1"); val y1 = o.getDouble("y1")
-        val x2 = o.getDouble("x2"); val y2 = o.getDouble("y2")
+        // 两种写法都收：{x1,y1,x2,y2} 或 {from:[x,y], to:[x,y]}（agent 常按坐标对写）。
+        val x1: Double; val y1: Double; val x2: Double; val y2: Double
+        if (o.has("from") && o.has("to")) {
+            val f = o.getJSONArray("from"); val t = o.getJSONArray("to")
+            x1 = f.getDouble(0); y1 = f.getDouble(1); x2 = t.getDouble(0); y2 = t.getDouble(1)
+        } else {
+            x1 = o.getDouble("x1"); y1 = o.getDouble("y1")
+            x2 = o.optDouble("x2", x1); y2 = o.optDouble("y2", y1)
+        }
         val ms = o.optLong("duration_ms", 180L).coerceIn(60L, 600L)
         val g = JSONObject().apply {
             put("type", "swipe")

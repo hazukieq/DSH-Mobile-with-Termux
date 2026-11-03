@@ -11,6 +11,7 @@
   {"gesture": {"direction": "down", "amount": 1}},
   {"op": "scroll-probe", "direction": "down"},
   {"op": "drag-fast", "x1": 300, "y1": 1600, "x2": 900, "y2": 1600, "duration_ms": 180},
+  {"op": "drag-fast", "from": [300, 1600], "to": [900, 1600], "duration_ms": 180},   // 两种写法等价
   {"wait": {"text": "已发送", "timeout_ms": 5000}}
 ]}
 ```
