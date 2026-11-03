@@ -72,9 +72,8 @@ object StatusOverlay {
     @Volatile private var params: WindowManager.LayoutParams? = null
     @Volatile private var statusText: TextView? = null
     @Volatile private var statusScroll: android.widget.ScrollView? = null
-    @Volatile private var statusDot: View? = null
     @Volatile private var statusRow: LinearLayout? = null
-    /** 球态专用圆点（与状态行里的 statusDot 分开，居中由布局保证）。 */
+    /** 球态专用圆点（折叠态唯一可见内容，居中由布局保证）。 */
     @Volatile private var ballDot: View? = null
     /** v2.5.5：三段式展开的第三段 —— 会话标题 + 倒计时。 */
     @Volatile private var sessionText: TextView? = null
@@ -196,11 +195,8 @@ object StatusOverlay {
 
                 val view = LayoutInflater.from(ctx).inflate(R.layout.overlay_status, null)
                 val status = view.findViewById<TextView>(R.id.overlayStatus)
-                val dot = view.findViewById<View>(R.id.overlayDot)
 
                 status.text = ctx.getString(R.string.overlay_idle)
-                // 占位 View（0dp、无 background）——图标已由 TextView.drawableStart 提供
-                dot.background?.setTint(COLOR_IDLE)
                 statusTextColor = 0xFFE6EAF2.toInt()   // 固定浅色：XML 里的是给浅底准备的深色字
 
 
@@ -224,7 +220,7 @@ object StatusOverlay {
                 //  ② addView（先挂到 window，布局才有意义）
                 //  ③ 在 post 里应用初始档位 —— 此时已完成首次测量，
                 //     子 View 才有真实边界可绑手柄（否则绑到 [0,0,0,0] 的控件上）
-                statusText = status; statusDot = dot
+                statusText = status
                 statusRow = view.findViewById(R.id.overlayRow)
                 ballDot = view.findViewById(R.id.overlayBallDot)
                 ballDot?.background?.setTint(COLOR_IDLE)
@@ -297,7 +293,6 @@ object StatusOverlay {
      */
     private fun bindHandle(view: View, p: WindowManager.LayoutParams, ctx: Context) {
         val statusTv = view.findViewById<TextView>(R.id.overlayStatus)
-        val dotV = view.findViewById<View>(R.id.overlayDot)
         // 先摘掉全部旧监听 + **复位 clickable**（档位切换会换目标）
         //
         // 🔴 修主人实测的「球心点不动、点旁边才行」：
@@ -305,7 +300,7 @@ object StatusOverlay {
         // 只清监听、不复位 isClickable 的话，那颗点会**自己吃掉触摸**
         // （clickable 的 View 在 onTouchEvent 里消费 DOWN，父容器再也收不到），
         // 表现就是「点球心（= 圆点所在位置）毫无反应，点球的其他位置正常」。
-        listOfNotNull(view, statusTv, dotV).forEach { v ->
+        listOfNotNull(view, statusTv).forEach { v ->
             v.setOnTouchListener(null)
             v.setOnLongClickListener(null)
             v.isClickable = false
@@ -523,21 +518,6 @@ object StatusOverlay {
                 }
             }
         }
-        statusDot?.let { d ->
-            val lp = d.layoutParams as? LinearLayout.LayoutParams
-            if (lp != null) {
-                val size = dp(ctx, DOT_DP)
-                val me = if (collapsed) 0 else dp(ctx, 7)
-                val mt = if (collapsed) 0 else dp(ctx, 3)
-                if (lp.width != size || lp.height != size || lp.marginEnd != me || lp.topMargin != mt) {
-                    lp.width = size
-                    lp.height = size
-                    lp.marginEnd = me
-                    lp.topMargin = mt
-                    d.layoutParams = lp
-                }
-            }
-        }
 
         // 球态只显示独立圆点（布局居中）；卡片态反过来。
         ballDot?.visibility = if (collapsed) View.VISIBLE else View.GONE
@@ -718,7 +698,7 @@ object StatusOverlay {
                 wm?.removeView(r)
             }
             wm?.let { sweepLiveViews(it) }
-            root = null; params = null; statusText = null; statusDot = null
+            root = null; params = null; statusText = null
             statusScroll = null; a11yText = null
             hidden = userHidden
             Log.i(TAG, if (userHidden) "overlay hidden by user" else "overlay hidden (auto)")
@@ -1153,7 +1133,6 @@ object StatusOverlay {
 
     /** 状态色同时作用到两枚圆点（球态那枚 + 卡片态那枚）。 */
     private fun tintDots(color: Int) {
-        runCatching { statusDot?.background?.setTint(color) }
         runCatching { ballDot?.background?.setTint(color) }
         // 展开态图标是 TextView 的 drawableStart：给这份 drawable 也上色，否则圆点永远是默认灰
         runCatching {

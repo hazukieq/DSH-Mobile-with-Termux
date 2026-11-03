@@ -33,15 +33,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
+        android:layout_gravity="center_horizontal"
         android:gravity="center_vertical">
-        <!-- 占位：历史代码里 overlayDot 被用于绑定手势/配色；图标已改由 TextView.drawableStart 提供，
-             这里保留 0dp 占位以免破坏 R.id 引用（不可见、不参与布局）。 -->
-        <View
-            android:id="@+id/overlayDot"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone" />
-
         <ScrollView
             android:id="@+id/overlayScroll"
             android:layout_width="wrap_content"
