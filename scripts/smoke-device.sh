@@ -182,6 +182,36 @@ if [ -z "$ONLY" ] || [ "$ONLY" = "priv" ]; then
   fi
 fi
 
+# ---------- 6 Agent 原语（/act：wait step + transient 匹配） ----------
+if [ -z "$ONLY" ] || [ "$ONLY" = "act" ]; then
+  sec "6 Agent 原语"
+  if [ "$ROOT_OK" = 0 ]; then skip "/act 原语回归（需要 root 读桥 token）"
+  else
+    A "am start -n $PKG/app.dsh.mobile.MainActivity" >/dev/null 2>&1; sleep 6
+    tok=$(S "cat $PREFIX/.bridge-token 2>/dev/null"); tok=${tok//$'\r'/}
+    if [ -z "$tok" ]; then bad "读不到桥 token"
+    else
+      # 6.1 wait step 必须被识别并返回结构化结果（不再落 action:"unknown"）
+      r=$(S "curl -s -m 20 -X POST -H 'X-DSH-Token: $tok' -H 'Content-Type: application/json' \
+        --data '{\"steps\":[{\"wait\":{\"text\":\"引擎\",\"timeout_ms\":3000}}],\"onFail\":\"continue\"}' \
+        http://127.0.0.1:3083/act")
+      case "$r" in
+        *'"action":"wait"'*) ok "wait step 已识别（$(echo "$r" | grep -o 'condition[^,]*' | head -1)）" ;;
+        *) bad "wait step 未生效: ${r:0:140}" ;;
+      esac
+      # 6.2 transient 用拼接串做包含匹配（text/desc 任一命中即可）
+      r=$(S "curl -s -m 25 -X POST -H 'X-DSH-Token: $tok' -H 'Content-Type: application/json' \
+        --data '{\"steps\":[{\"op\":\"transient\",\"expect\":{\"any\":[\"引擎\",\"隐藏\",\"设置\"]},\"appear_ms\":1200,\"budget_ms\":2000,\"action\":{\"kind\":\"none\"}}],\"onFail\":\"continue\"}' \
+        http://127.0.0.1:3083/act")
+      case "$r" in
+        *'"ok":true'*'"node"'*) ok "transient 包含匹配命中（$(echo "$r" | grep -o 'appear_ms[^,]*' | head -1)）" ;;
+        *not_found*) skip "transient 未命中（当前页面无该文案）" ;;
+        *) bad "transient 异常: ${r:0:140}" ;;
+      esac
+    fi
+  fi
+fi
+
 printf '\n==============================\nPASS %d   FAIL %d   SKIP %d\n' "$PASS" "$FAIL" "$SKIP"
 [ "$SKIP" -gt 0 ] && echo "SKIP: ${SKIP} 项（见上）"
 if [ "$FAIL" -gt 0 ]; then printf 'FAIL (%d): %s\n' "$FAIL" "${FAILS[*]}"; exit 1; fi

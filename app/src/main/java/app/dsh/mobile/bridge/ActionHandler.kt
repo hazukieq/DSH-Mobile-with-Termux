@@ -559,13 +559,14 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                     val arr = if (sw == null) st.optJSONArray("swipe") else null
                     var x1 = 0f; var y1 = 0f; var x2 = 0f; var y2 = 0f
                     var dur = 300L
-                    var human = false
+                    // 默认拟人化注入（与 /gesture 同一路径）：精确直线 dispatchSwipe 在部分 seekbar 上会被忽略
+                    var human = true
                     if (sw != null) {
                         x1 = sw.optDouble("x1").toFloat(); y1 = sw.optDouble("y1").toFloat()
                         x2 = sw.optDouble("x2").toFloat(); y2 = sw.optDouble("y2").toFloat()
                         dur = if (sw.has("durationMs")) sw.optLong("durationMs", 300L)
                         else sw.optLong("duration_ms", 300L)
-                        human = sw.optBoolean("human", false)
+                        human = sw.optBoolean("human", true)
                     } else if (arr != null && arr.length() >= 4) {
                         x1 = arr.optDouble(0).toFloat(); y1 = arr.optDouble(1).toFloat()
                         x2 = arr.optDouble(2).toFloat(); y2 = arr.optDouble(3).toFloat()

@@ -183,6 +183,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         val kind = act.optString("kind", "none")
         val a0 = System.currentTimeMillis()
         var actionResult = "none"
+        var actionDetail: JSONObject? = null
         when (kind) {
             "tap" -> actionResult = if (svc.dispatchTap(cx.toFloat(), cy.toFloat())) "ok" else "fail"
             "swipe", "drag-to" -> {
@@ -203,6 +204,11 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
                 }.toString()
                 val r = bridge.action.gesture(g)
                 actionResult = if (r.first == 200 && !r.second.contains("\"ok\":false")) "ok" else r.second
+                actionDetail = JSONObject().apply {
+                    put("from", JSONArray().put(x1).put(y1))
+                    put("to", JSONArray().put(x2).put(y2))
+                    put("duration_ms", dur)
+                }
             }
         }
         val spent = System.currentTimeMillis() - appearAt
