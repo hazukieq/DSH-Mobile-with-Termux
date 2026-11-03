@@ -315,7 +315,8 @@ object StatusOverlay {
             // v1.6.7：展开态**不能**把整张卡片都装上拖动手势 —— 那会把手指滑动
             // 抢去拖窗口，ScrollView 收不到事件，长回复就只能看到前几行（用户实测）。
             // 现在只有「动作行/状态点」可以点收/拖动，正文区域完全交给 ScrollView 滚动。
-            statusDot?.let { d ->
+            // 展开态：点文字区域收起（图标是 TextView 的 drawableStart，没有独立 View 可点）
+            (statusText ?: view).let { d ->
                 attachGesture(d, p, ctx, onClick = { collapseToBall() })
             }
             // v2.5.6：思考正文不再挂任何手势 —— 原 repo 的「点一下继续展开（循环档位）」
@@ -1153,6 +1154,13 @@ object StatusOverlay {
     private fun tintDots(color: Int) {
         runCatching { statusDot?.background?.setTint(color) }
         runCatching { ballDot?.background?.setTint(color) }
+        // 展开态图标是 TextView 的 drawableStart：给这份 drawable 也上色，否则圆点永远是默认灰
+        runCatching {
+            val tv = statusText ?: return@runCatching
+            val dr = tv.compoundDrawablesRelative.firstOrNull() ?: return@runCatching
+            dr.mutate().setTint(color)
+            tv.setCompoundDrawablesRelative(dr, null, null, null)
+        }
     }
 
     private fun dp(ctx: Context, v: Int): Int =
