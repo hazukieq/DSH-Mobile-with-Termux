@@ -13,7 +13,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * AI 状态悬浮窗（v1.2.57 初版，v1.2.58 重做外观 + 补上拖动）。
  *
  * ## 为什么用 TYPE_ACCESSIBILITY_OVERLAY
  * 由无障碍服务自身持有，**不需要用户再授权「显示在其他应用上层」**。
@@ -23,7 +22,6 @@ import android.widget.TextView
  *  · **点击**：展开/收起详情行（点与拖由移动阈值区分：<10dp 视为点击）
  *  · **长按**：隐藏（用户明确不要时尊重）
  *
- * ⚠️ v1.2.58 修正：初版注释写了「拖动：移动位置」但**根本没实现**——
  * 文档承诺了功能却没做，用户实测发现「不能移动」。本次补上。
  *
  * ## 外观
@@ -43,9 +41,7 @@ object StatusOverlay {
      * 是个**椭圆**且触摸只认中间那个点，所以看起来「像个按钮」（主人实测反馈）。
      * 44dp：够大能点准（远超 40dp 的最小触摸目标），又不至于占屏。
      */
-    // v1.2.157 用户反馈：44dp 的球在展开成面板时"旁边延展、整体内缩"（球比面板高）。
     // 改为 26dp 紧凑圆点：展开后是自然的变大，观感平滑；中间状态点大小不变（DOT_DP）。
-    // v2.2.1（用户要求）：折叠态圆球改小到 36dp；展开态尺寸不受影响（展开走 wrap_content，
     // 只有折叠时才强制这个最小正圆，DOT_DP 也不动）。
     private const val COLLAPSED_BALL_DP = 36
 
@@ -61,7 +57,6 @@ object StatusOverlay {
 
     @Volatile private var root: View? = null
     /**
-     * v2.5.24：所有还挂在 WindowManager 上的视图（只在主线程读写）。
      *
      * 实测（vivo Pad 2.5.23）：屏幕上出现**两个**悬浮窗（110x110 圆球 + wrap 卡片），
      * dumpsys 里是两条独立窗口。原因是 root 引用被清掉后旧 View 仍 attach 着，
@@ -77,12 +72,10 @@ object StatusOverlay {
     @Volatile private var ballDot: View? = null
     /** 展开态固定图标（只在卡片静止区域，不随 ScrollView 滚动）。 */
     @Volatile private var statusDot: View? = null
-    /** v2.5.5：三段式展开的第三段 —— 会话标题 + 倒计时。 */
     @Volatile private var sessionText: TextView? = null
     @Volatile private var elapsedText: TextView? = null
     @Volatile private var footRow: android.view.View? = null
 
-    /** 第④段：无障碍 / 打开应用动作链（v2.5.6）。与上面的工具链分开，最多留最近 4 条。 */
     @Volatile private var a11yText: TextView? = null
     private val a11yLines = ArrayDeque<String>()
     /** 倒计时基准（工作起始墙钟）；<=0 表示没有在跑的任务。 */
@@ -92,7 +85,6 @@ object StatusOverlay {
     /** 展开档位：0=折叠(仅圆点) / 1=状态+麦克风 / 2=再加动作+会话列表 */
     @Volatile private var expandLevel = 0
     @Volatile private var hidden = false
-    /** v1.3.77：用户手动展开过的档位，重建窗口/下次显示时沿用（保持展开）。 */
     @Volatile private var rememberedLevel = 0
     /** 上一次应用过的档位：档位变化时窗口尺寸必须重建，否则 WMS 保留旧 frame。 */
     @Volatile private var lastAppliedLevel = -1
@@ -138,7 +130,6 @@ object StatusOverlay {
     /** 状态点配色（与 drawable 默认色一致，运行时切换） */
     private const val COLOR_IDLE = 0xFF9AA0A6.toInt()      // 中性灰
     private const val COLOR_WORKING = 0xFF7DD3FC.toInt()   // 强调蓝
-    // v2.4.8（用户要求）：完成/结束时圆点变**红**，比绿色醒目，避免错过。
     private const val COLOR_DONE = 0xFFFF5A5F.toInt()      // 完成/结束：红
 
     fun isAvailable(): Boolean = DshAccessibilityService.instance != null
@@ -155,7 +146,6 @@ object StatusOverlay {
     }
 
     /**
-     * v1.3.68：与无障碍解耦的显示入口（后台进度提示用）。
      *
      * 优先用 **应用悬浮窗**（TYPE_APPLICATION_OVERLAY + SYSTEM_ALERT_WINDOW 权限），
      * 这样没开无障碍也能显示；没有悬浮窗权限但无障碍在跑时回退到无障碍窗口。
@@ -163,14 +153,12 @@ object StatusOverlay {
      */
     fun show(ctx: Context): Boolean {
         if (root != null) return true
-        // v1.5.2：必须用**调用方 context**（通常是 Activity）建窗口。
         // 实测：applicationContext 建的 TYPE_APPLICATION_OVERLAY 在 App 退到后台后
         // WMS 会把它标记为 hidden（mLastHidden=true / isVisible=false），切到别的 App 就看不见；
         // Activity token 建的窗口反而能跨 App 持续显示。
         val app = ctx
         val appOverlay = runCatching { android.provider.Settings.canDrawOverlays(app) }.getOrDefault(false)
         val svc = DshAccessibilityService.instance
-        // v1.5.5：无障碍已连接时**优先用无障碍窗口**承载悬浮窗。
         // 无障碍窗口由服务持有、不依赖 Activity 生命周期，切 App/Activity 重建都不会
         // 被 WMS 置 hidden（用户实测：开了无障碍后思考链路会「断」，就是窗口被隐藏后
         // 内容其实还在推、只是看不见）。没有无障碍时再用活动 Activity 的应用悬浮窗。
@@ -200,7 +188,6 @@ object StatusOverlay {
 
                 status.text = ctx.getString(R.string.overlay_idle)
                 statusTextColor = 0xFFE6EAF2.toInt()   // 固定浅色：XML 里的是给浅底准备的深色字
-
 
                 val p = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT,
@@ -279,7 +266,6 @@ object StatusOverlay {
     /**
      * 绑定手势目标（每次档位变化后都要重绑）。
      *
-     * ## 点击语义（v1.2.66 按主人实测反馈修正）
      *  · 折叠态：**整颗球**点一下 → 展开
      *  · 展开态：**状态文字**点一下 → 继续展开（详情档），到顶再点循环回球
      *  · 展开态：**面板其余部分**（包括那颗圆点、内边距）点一下 → **收起回球**
@@ -288,7 +274,6 @@ object StatusOverlay {
      * （根容器的手势在折叠态被摘掉了）—— 主人实测「第二阶段点不回去，必须点到第三阶段
      * 才能点回去」。那颗圆点长得就是折叠态的球，点它 = 收起来，才是符合直觉的预期。
      *
-     * ## 事件分发的坑（v1.2.65 实测）
      * 落在子 View 边界内的事件由**子 View 优先**处理，父容器手势只是兜底 ——
      * 所以根容器绑手势不会抢走麦克风（麦克风自己消费自己的），
      * 但绑过手势的 View 会吃掉事件：换档位时必须把旧目标的监听摘干净，
@@ -311,14 +296,12 @@ object StatusOverlay {
         }
         val expanded = expandLevel > 0 && statusTv != null && statusTv.visibility == View.VISIBLE
         if (expanded) {
-            // v1.6.7：展开态**不能**把整张卡片都装上拖动手势 —— 那会把手指滑动
             // 抢去拖窗口，ScrollView 收不到事件，长回复就只能看到前几行（用户实测）。
             // 现在只有「动作行/状态点」可以点收/拖动，正文区域完全交给 ScrollView 滚动。
             // 展开态：点文字区域收起（图标是 TextView 的 drawableStart，没有独立 View 可点）
             (statusText ?: view).let { d ->
                 attachGesture(d, p, ctx, onClick = { collapseToBall() })
             }
-            // v2.5.6：思考正文不再挂任何手势 —— 原 repo 的「点一下继续展开（循环档位）」
             // 是残留交互，展开态点正文只会让人以为有第四段；正文现在纯滚动。
             // 收起：点圆点或动作行；隐藏：长按动作行。
         } else {
@@ -384,7 +367,6 @@ object StatusOverlay {
                 MotionEvent.ACTION_UP -> {
                     dragging = false
                     if (moved) {
-                        // v1.6.1：拖到哪里都重新贴到最近的左右边（用户要求：移动后也贴边）
                         snapToEdge(p, ctx)
                     } else {
                         onClick()
@@ -467,7 +449,6 @@ object StatusOverlay {
     }
 
     /**
-     * 三段式展开（v1.2.65）：每点一下升一档，到顶后再点回到折叠态。
      *
      *  0 折叠：只有圆形状态点（最省空间，半透明）
      *  1 展开：状态点 + 状态文字 + 麦克风按钮
@@ -632,13 +613,11 @@ object StatusOverlay {
         hideInternal(userHidden = true)
     }
 
-    /** v1.3.68：与无障碍解耦的隐藏入口（用户主动隐藏）。 */
     fun hide(ctx: Context?) {
         hideInternal(userHidden = true)
     }
 
     /**
-     * v1.3.75：自动隐藏（回到前台时收起），**不**置 hidden 标记，
      * 否则下次后台展示会被 `if (root != null || hidden) return` 永久拦住。
      */
     fun hideAuto(ctx: Context?) {
@@ -646,11 +625,9 @@ object StatusOverlay {
     }
 
     /**
-     * v1.4.9：无障碍服务销毁时调用。只有窗口本身是 TYPE_ACCESSIBILITY_OVERLAY 才需要收起；
      * 应用悬浮窗（SYSTEM_ALERT_WINDOW）必须保留，否则切断无障碍/ROM 重启服务会把浮窗弄没。
      */
     /**
-     * v1.5.1：切到别的 App 后某些 ROM 会把应用悬浮窗 surface 置为 hidden
      *（dumpsys 里 mLastHidden=true / isVisible=false），此时窗口对象还在但看不见。
      * 重新挂一次窗口即可恢复显示（参数原样复用）。
      */
@@ -688,7 +665,6 @@ object StatusOverlay {
     }
 
     fun onAccessibilityLost() {
-        // v2.3.1：无障碍服务被系统销毁/重启时，无论窗口是 a11y overlay 还是 app overlay，
         // 都先收起——否则服务没了、app 窗口还挂在进程里（用户反馈「退出后悬浮窗还在」）。
         // 服务重新连接时 DshAccessibilityService.onServiceConnected 会按开关重新 show。
         hide(null)
@@ -709,7 +685,6 @@ object StatusOverlay {
     }
 
     /**
-     * 引擎退出时的彻底清理（v1.2.157，用户实测反馈修复）：
      * 退出引擎后悬浮窗仍在后台——球还挂着、`idleReset` 定时器还在排着
      * → 进程持续活跃耗电。这里一次清干净：取消回空闲、移除窗口视图、状态复位。
      */
@@ -727,7 +702,6 @@ object StatusOverlay {
     /** 用户隐藏后重新允许显示（引擎重启等场景调用） */
     fun resetHidden() { hidden = false }
 
-    // ---------- 截图避让（v1.2.164，用户反馈"截图会带上悬浮窗，遮挡 AI 视野"）----------
     // ⚠️ 实现选择：**不能**用 hide()/show() —— 那两个会 removeView + 完整重建视图
     // （见 hide 的 root=null 与 show 的 inflate），而截图在有帧差检测时要每秒采几十帧
     // → 球会疯狂闪烁 + 大量 GC。改用**透明度归零**：视图保留在窗口里，只是不可见，
@@ -755,14 +729,11 @@ object StatusOverlay {
         }
     }
 
-
-
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** 待执行的「回空闲」任务（必须可取消，见 scheduleIdle 注释） */
     @Volatile private var idleReset: Runnable? = null
 
-    /** 待执行的「平滑收起」任务（v1.2.185，见 setIdle 注释） */
     @Volatile private var collapsePending: Runnable? = null
 
     /**
@@ -777,7 +748,6 @@ object StatusOverlay {
     private fun cancelIdleReset() {
         idleReset?.let { runCatching { mainHandler.removeCallbacks(it) } }
         idleReset = null
-        // v1.2.185：新状态到来时，取消尚未执行的「平滑收起」——
         // 否则刚排队的收起会在新任务开始后把悬浮窗缩掉。
         cancelCollapse()
     }
@@ -809,25 +779,21 @@ object StatusOverlay {
     }
 
     /** 更新状态行（如「执行中」），并把状态点染成强调色 */
-    /** v1.3.75：浮窗文案单行化/截断，避免思考正文过长把窗口撑成巨幅。 */
     private fun fitText(text: String, max: Int = 90): String {
         val one = text.replace(Regex("\\s+"), " ").trim()
         return if (one.length <= max) one else one.take(max - 1).trimEnd() + "…"
     }
 
     /**
-     * v1.3.84：ScrollView 不认 android:maxHeight，长思考会把卡片撑到半屏。
      * 这里按内容实测高度夹到 176dp（不够就不动），超出则固定高度并内部滚动。
      */
     private fun capScrollHeight() {
-        // v2.5.90：滚动区已改为固定高度（见 applyExpandLevel），不再按内容夹高——
         // 按内容夹高会让每条状态都改一次窗口高度，观感就是持续闪烁。
         if (true) return
         val sc = statusScroll ?: return
         val ctx = appCtx ?: return
         val maxPx = dp(ctx, 132)
         val child = sc.getChildAt(0) ?: return
-        // v2.5.9：折叠态下子 View 没被测量（measuredHeight=0），直接用会把滚动区压成 0。
         // 宽度未知时按卡片正文最大宽度（216dp - 内边距）量一遍，保证拿到真实内容高度。
         var desired = child.measuredHeight
         if (desired <= 0 || child.width == 0) {
@@ -852,7 +818,6 @@ object StatusOverlay {
     }
 
     /**
-     * 追加一条「无障碍/打开应用」动作（v2.5.6）。
      *
      * 与 AI 的工具链分开显示：这里是 App 真的对外做的事——读屏点击/滑动/按键、
      * 启动或跳转别的 App（微信/支付宝/浏览器…）。连续相同行不重复，只留最近 4 条。
@@ -892,9 +857,7 @@ object StatusOverlay {
             val wasWorking = working
             working = true
             if (!wasWorking) runCatching { applyExpandLevel() }   // 离开空闲态 → 恢复固定占位
-            // v1.3.75：内容实时滚动 —— 保留换行、折行显示，每次更新后滚到最新一行。
             // 用户要求「点击后再展开」，所以这里**不**自动升档（折叠球由用户点开）。
-            // v2.5.95：桥每 ~250ms 推一次**累积全文**（实测 len 2702→4782 连涨），
             // 原来每次都把全文塞进 TextView 再 fullScroll → 每 250ms 一次全量重排。
             // 现在：① 只留末尾 600 字（显示区 92dp≈4 行）；② 文本没变不动；
             // ③ 400ms 内最多更新一次（丢中间帧，末尾状态自然会再到）。
@@ -923,27 +886,21 @@ object StatusOverlay {
 
     /**
      * 更新最近动作行（如 `tap-text "WLAN"`）。
-     * v1.2.67：展开态（档位 ≥1）就显示 —— 主人要求「能看到 AI 正在干什么」，
      * 之前只有档位 2 才显示，等于要点两下才看得到最近动作。
      */
     /**
-     * daemon（后台任务）执行进度（v1.2.159，用户反馈"daemon 在跑但无障碍里看不到在干什么"）。
      * 由 LocalLoopExecutor 每步调用：状态行显示「执行中」，动作行显示当前那一步在做什么。
      */
     fun setDaemonAction(text: String) {
-        // v2.5.8：动作行已删除，daemon 的每步动作并入「无障碍/打开应用」动作链
         setA11yAction(text)
     }
 
     fun setAction(text: String) {
-        // v2.5.8：动作行已删除 —— 无障碍/自动化动作统一写进专属动作链
         setA11yAction(text)
-        // 落盘（v1.2.88）：详情档要显示「上次做了什么 + 什么时候」，
         // 进程重启后仍要能看到，所以每次动作都记一次时间戳
         appCtx?.let { app.dsh.mobile.engine.LastAction.record(it, text) }
     }
 
-    /** v2.5.5：会话标题（展开态第三段左侧）。 */
     fun setSession(title: String) {
         val t = title.trim().take(80)
         main {
@@ -953,7 +910,6 @@ object StatusOverlay {
     }
 
     /**
-     * v2.5.5：倒计时（展开态第三段右侧）。
      *
      * 进度事件本身有节流/心跳（最长 2.5s 一次），只靠它刷新会看起来"卡住"；
      * 这里按「工作起始墙钟」在本地每秒 tick，事件只负责校准基准。
@@ -1010,7 +966,6 @@ object StatusOverlay {
     /**
      * 回到空闲态（灰色点 + 空闲文案）。
      *
-     * ⚠️ v1.2.185（用户反馈「发送之后语音悬浮框收起时会闪一两下」）：
      * 收起 = **悬浮窗尺寸变化**（展开卡片 → 圆形球：文字/动作行隐藏、padding、
      * minWidth/Height、背景全变），而 View 属性动画管不到窗口尺寸，直接改会在
      * 1~2 帧里看到整体跳变。
@@ -1022,7 +977,6 @@ object StatusOverlay {
     fun setIdle() {
         main {
             val r = root
-            // v2.5.92：**不再自动收球**。原来每次状态回落(setIdle)都收缩成球，
             // 下一条状态又展开 → 一轮对话里反复「球↔面板」，观感就是持续闪烁。
             // 收球只由用户点击触发（expandPanel 循环档位）。
             val needFade = false
@@ -1032,7 +986,6 @@ object StatusOverlay {
                 statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
                 tintDots(COLOR_IDLE)
                 working = false
-                // v2.5.8：空闲时倒计时清掉，只留会话标题（展开态仍能看出是哪个会话）
                 startedAt = 0L
                 stopTicker()
                 elapsedText?.text = ""
