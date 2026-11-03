@@ -43,6 +43,18 @@
             android:layout_marginTop="3dp"
             android:background="@drawable/bg_overlay_dot" />
 
+        <!-- 空闲文案：直接挂在这一行里，不经过 ScrollView —— 空闲时滚动区是 GONE，
+             文案若放在里面会被一起隐藏（历史 bug：卡片只剩一个圆点）。 -->
+        <TextView
+            android:id="@+id/overlayIdle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:layout_marginStart="8dp"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:visibility="gone" />
+
         <ScrollView
             android:id="@+id/overlayScroll"
             android:layout_width="0dp"
