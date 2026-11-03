@@ -542,6 +542,11 @@ object StatusOverlay {
 
         // 内容可见性：卡片空闲态只留状态行（滚动区/动作行/页脚都收起）。
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
+        // 空闲小块里必须能看到「空闲」二字：文字为空时补上（只补空值，不覆盖任何真实内容）
+        if (!collapsed && statusText?.text.isNullOrBlank()) {
+            statusText?.text = idleText
+            statusText?.setTextColor(statusTextColor)
+        }
         statusScroll?.let { sc ->
             val targetH = when {
                 collapsed -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
