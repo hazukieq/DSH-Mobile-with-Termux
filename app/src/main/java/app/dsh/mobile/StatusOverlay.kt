@@ -548,10 +548,11 @@ object StatusOverlay {
             statusText?.setTextColor(statusTextColor)
         }
         statusScroll?.let { sc ->
+            // 折叠态不参与测量；空闲 = 贴合文字；工作态 = 固定 92dp（文字在框内滚动，窗口不伸缩）。
             val targetH = when {
                 collapsed -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                !idleCompactNow -> dp(ctx, 92)   // 有内容就固定高度：文案变长只内部滚动，窗口不跳
-                else -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                idleCompactNow -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                else -> dp(ctx, 92)
             }
             val lp = sc.layoutParams
             if (lp != null) {
@@ -587,7 +588,7 @@ object StatusOverlay {
             runCatching { bindHandle(view, params ?: return@post, ctx) }
             runCatching {
                 val xy = IntArray(2); view.getLocationOnScreen(xy)
-                Log.i(TAG, "[geo] level=$expandLevel ${view.width}x${view.height} at ${xy[0]},${xy[1]} idle=$idleCompactNow")
+                Log.i(TAG, "[geo] level=$expandLevel ${view.width}x${view.height} at ${xy[0]},${xy[1]} idle=$idleCompactNow bg=$lastBgRes text='${statusText?.text}' vis=${statusText?.visibility} tw=${statusText?.width} sw=${statusScroll?.width} rw=${statusRow?.width}")
             }
         }
     }
@@ -604,7 +605,7 @@ object StatusOverlay {
         }
         val h = when {
             collapsed -> side
-            idleCompactNow -> dp(ctx, 44)
+            idleCompactNow -> dp(ctx, 56)   // 容纳 dot+文案（44dp 会把文字裁掉）
             else -> WRAP
         }
         view.layoutParams?.let { lp ->
