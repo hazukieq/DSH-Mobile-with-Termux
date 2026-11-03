@@ -184,6 +184,8 @@ object StatusOverlay {
                 windowTypeUsed = windowType
 
                 val view = LayoutInflater.from(ctx).inflate(R.layout.overlay_status, null)
+                // 悬浮窗是我们自己的 UI：不能进无障碍树，否则会混进节点树、挡住读屏与点击
+                view.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 val status = view.findViewById<TextView>(R.id.overlayStatus)
 
                 status.text = ctx.getString(R.string.overlay_idle)
@@ -702,30 +704,38 @@ object StatusOverlay {
     /** 用户隐藏后重新允许显示（引擎重启等场景调用） */
     fun resetHidden() { hidden = false }
 
-    // ⚠️ 实现选择：**不能**用 hide()/show() —— 那两个会 removeView + 完整重建视图
-    // （见 hide 的 root=null 与 show 的 inflate），而截图在有帧差检测时要每秒采几十帧
-    // → 球会疯狂闪烁 + 大量 GC。改用**透明度归零**：视图保留在窗口里，只是不可见，
-    // 截图拿到的就是干净画面，恢复时一次赋值即可，零重建。
+    // 截图/读屏时必须让悬浮窗**真正消失**（不是 alpha=0）：
+    //   - alpha=0 的窗口仍然参与命中测试与无障碍树，会挡住自动点击、把「空闲/执行中」混进节点树；
+    //   - 所以这里是 removeView / addView（同一份视图对象，不重建、不重新 inflate，状态不丢）。
     @Volatile private var hiddenForCapture = false
 
-    /** 为截图临时隐藏（alpha=0，不销毁视图） */
+    /** 截图前把悬浮窗从窗口移除（真正不可见、不可点、不进无障碍树） */
     fun beginCaptureAvoid(svc: AccessibilityService?) {
         main {
-            val r = root ?: return@main
             if (hiddenForCapture) return@main
+            val r = root ?: return@main
+            val w = wm ?: return@main
             hiddenForCapture = true
-            r.alpha = 0f
+            runCatching { w.removeViewImmediate(r) }
         }
-        // 给渲染管线一帧时间（alpha 生效后再截，否则可能截到半透明残影）
+        // 等一帧，确保移除已生效再截（否则可能截到残留帧）
         Thread.sleep(35L)
     }
 
-    /** 截图完成后恢复可见 */
+    /** 截图完成后原样挂回窗口（沿用原 params 与档位状态） */
     fun endCaptureAvoid(svc: AccessibilityService?) {
         main {
             if (!hiddenForCapture) return@main
             hiddenForCapture = false
-            root?.alpha = 1f
+            val r = root ?: return@main
+            val w = wm ?: return@main
+            val p = params ?: return@main
+            runCatching {
+                if (r.isAttachedToWindow) return@runCatching
+                r.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                w.addView(r, p)
+                applyExpandLevel(r)
+            }
         }
     }
 

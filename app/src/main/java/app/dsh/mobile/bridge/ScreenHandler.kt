@@ -775,7 +775,11 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         if (svc == null) {
             // v1.9.6：无障碍不可用时，尝试 root/Shizuku 的 screencap 回退
             if (params["engine"]?.lowercase() == "ppocr6") {
-                val shot = ShotFallback.capture(ctx)
+                // 特权 screencap 也会把悬浮窗截进去：截之前真正移除，截完挂回。
+                val shot = run {
+                    StatusOverlay.beginCaptureAvoid(svc)
+                    try { ShotFallback.capture(ctx) } finally { StatusOverlay.endCaptureAvoid(svc) }
+                }
                 if (shot != null) {
                     val r = PpOcr.recognizeFile(ctx, shot, tier)
                     shot.delete()
