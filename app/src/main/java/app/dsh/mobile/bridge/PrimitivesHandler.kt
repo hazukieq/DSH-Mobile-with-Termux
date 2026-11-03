@@ -39,15 +39,19 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
     /** 滚动方向确认：执行一次滑动，然后用 frameDiff 判断画面是否真的动了。 */
     internal fun scrollProbe(body: String): Pair<Int, String> {
         val o = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
+        val dir = o.optString("direction", "down")
+        val (sy, ey) = if (dir == "up") Pair(1500.0, 700.0) else Pair(700.0, 1500.0)
         val steps = JSONObject().apply {
-            put("direction", o.optString("direction", "down"))
-            put("amount", o.optInt("amount", 1))
+            put("type", "swipe")
+            put("x1", 540.0); put("y1", sy); put("x2", 540.0); put("y2", ey)
+            put("durationMs", o.optLong("duration_ms", 260L))
         }.toString()
         val before = bridge.screen.frameDiff().second
         val r = bridge.action.gesture(steps)
+        val gestureOk = r.first == 200 && !r.second.contains("\"ok\":false")
         Thread.sleep(o.optLong("settle_ms", 260L).coerceIn(80L, 1200L))
         val after = bridge.screen.frameDiff().second
-        val moved = before != after
+        val moved = gestureOk && before != after
         return 200 to JSONObject()
             .put("ok", true)
             .put("direction", o.optString("direction", "down"))
@@ -64,8 +68,9 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         val x2 = o.getDouble("x2"); val y2 = o.getDouble("y2")
         val ms = o.optLong("duration_ms", 180L).coerceIn(60L, 600L)
         val g = JSONObject().apply {
+            put("type", "swipe")
             put("x1", x1); put("y1", y1); put("x2", x2); put("y2", y2)
-            put("duration", ms)
+            put("durationMs", ms)
         }.toString()
         val t0 = System.currentTimeMillis()
         val r = bridge.action.gesture(g)
@@ -86,7 +91,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         for (w in query.split("|")) {
             val w2 = w.trim(); if (w2.isEmpty()) continue
             val r = bridge.action.tap(JSONObject().apply { put("text", w2); put("exact", false) }.toString())
-            if (r.first == 200 && !r.second.contains("\"ok\":false")) hits.add(w2)
+            if (r.first == 200 && !r.second.contains("\"ok\":false")) { hits.add(w2); break }
         }
         return 200 to JSONObject()
             .put("ok", true)
