@@ -35,6 +35,15 @@
         android:orientation="horizontal"
         android:layout_gravity="center_horizontal"
         android:gravity="center_vertical">
+        <!-- 图标固定在这里（不放进 ScrollView），随卡片静止；topMargin 让它的中线落到首行文字的中线 -->
+        <View
+            android:id="@+id/overlayDot"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_gravity="top"
+            android:layout_marginTop="2dp"
+            android:background="@drawable/bg_overlay_dot" />
+
         <ScrollView
             android:id="@+id/overlayScroll"
             android:layout_width="wrap_content"
@@ -52,8 +61,6 @@
                 android:textSize="12sp"
                 android:includeFontPadding="false"
                 android:textColor="#E6EAF2"
-                android:drawableStart="@drawable/bg_overlay_dot"
-                android:drawablePadding="6dp"
                 android:maxWidth="216dp" />
         </ScrollView>
     </LinearLayout>

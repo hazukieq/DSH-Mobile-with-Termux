@@ -75,6 +75,8 @@ object StatusOverlay {
     @Volatile private var statusRow: LinearLayout? = null
     /** 球态专用圆点（折叠态唯一可见内容，居中由布局保证）。 */
     @Volatile private var ballDot: View? = null
+    /** 展开态固定图标（只在卡片静止区域，不随 ScrollView 滚动）。 */
+    @Volatile private var statusDot: View? = null
     /** v2.5.5：三段式展开的第三段 —— 会话标题 + 倒计时。 */
     @Volatile private var sessionText: TextView? = null
     @Volatile private var elapsedText: TextView? = null
@@ -221,6 +223,7 @@ object StatusOverlay {
                 //  ③ 在 post 里应用初始档位 —— 此时已完成首次测量，
                 //     子 View 才有真实边界可绑手柄（否则绑到 [0,0,0,0] 的控件上）
                 statusText = status
+                statusDot = view.findViewById(R.id.overlayDot)
                 statusRow = view.findViewById(R.id.overlayRow)
                 ballDot = view.findViewById(R.id.overlayBallDot)
                 ballDot?.background?.setTint(COLOR_IDLE)
@@ -698,7 +701,7 @@ object StatusOverlay {
                 wm?.removeView(r)
             }
             wm?.let { sweepLiveViews(it) }
-            root = null; params = null; statusText = null
+            root = null; params = null; statusText = null; statusDot = null
             statusScroll = null; a11yText = null
             hidden = userHidden
             Log.i(TAG, if (userHidden) "overlay hidden by user" else "overlay hidden (auto)")
@@ -1137,9 +1140,7 @@ object StatusOverlay {
         // 展开态图标是 TextView 的 drawableStart：给这份 drawable 也上色，否则圆点永远是默认灰
         runCatching {
             val tv = statusText ?: return@runCatching
-            val dr = tv.compoundDrawablesRelative.firstOrNull() ?: return@runCatching
-            dr.mutate().setTint(color)
-            tv.setCompoundDrawablesRelative(dr, null, null, null)
+            statusDot?.background?.mutate()?.setTint(color)
         }
     }
 
