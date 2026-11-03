@@ -73,7 +73,9 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
             x1 = o.getDouble("x1"); y1 = o.getDouble("y1")
             x2 = o.optDouble("x2", x1); y2 = o.optDouble("y2", y1)
         }
-        val ms = o.optLong("duration_ms", 180L).coerceIn(60L, 600L)
+        val msRaw = if (o.has("duration_ms")) o.optLong("duration_ms", 180L) else o.optLong("durationMs", 180L)
+        // 进度条/滑块这类「必须真拖」的控件：<400ms 会被系统当 fling，直接抬到 400ms。
+        val ms = msRaw.coerceIn(60L, 1200L).let { if (it < 400L) 400L else it }
         val g = JSONObject().apply {
             put("type", "swipe")
             put("x1", x1); put("y1", y1); put("x2", x2); put("y2", y2)
@@ -121,6 +123,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         // 1) 触发：点一下让控件出现
         val tapArr = o.optJSONArray("tap")
         val tapText = o.optString("tapText")
+        // 触发是可选的：控件已经可见时不要 tap（tap 视频画面会**切换**控制条显隐，反而把它藏起来）。
         if (tapArr != null && tapArr.length() >= 2) {
             svc.dispatchTap(tapArr.optDouble(0).toFloat(), tapArr.optDouble(1).toFloat())
         } else if (tapText.isNotBlank()) {
@@ -128,24 +131,32 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         }
         // 2) 在 appear_ms 内轮询无障碍树，等目标控件出现
         val expectObj = o.optJSONObject("expect")
-        val wantText = expectObj?.optString("text").orEmpty().ifBlank { o.optString("expect") }
+        val wantText = expectObj?.optString("text").orEmpty().ifBlank { if (expectObj == null) o.optString("expect") else "" }
         val wantDesc = expectObj?.optString("desc").orEmpty()
         val wantId = expectObj?.optString("id").orEmpty()
+        // 多候选 + 全字段（text/desc/id/label/hint）包含匹配，且大小写不敏感：
+        // 数值会变的控件（如「视频进度，已播放到32秒」）只给稳定片段即可命中。
+        val wants = ArrayList<String>()
+        listOf(wantText, wantDesc, wantId).forEach { if (it.isNotBlank()) wants.add(it) }
+        expectObj?.optJSONArray("any")?.let { a -> for (k in 0 until a.length()) a.optString(k).takeIf { it.isNotBlank() }?.let(wants::add) }
+        if (wants.isEmpty()) o.optString("expect").takeIf { it.isNotBlank() }?.let(wants::add)
         val appearMs = o.optLong("appear_ms", 600L).coerceIn(60L, 1900L)
         val deadline = System.currentTimeMillis() + appearMs
         var node: JSONObject? = null
+        var scanned = 0
+        val samples = ArrayList<String>()
         while (System.currentTimeMillis() < deadline) {
             val nodes = runCatching {
                 JSONObject(svc.dumpScreenJson("all", ocrFallback = false)).optJSONArray("nodes")
             }.getOrNull()
             if (nodes != null) {
+                scanned = nodes.length()
                 for (i in 0 until nodes.length()) {
                     val n = nodes.optJSONObject(i) ?: continue
-                    val t = n.optString("text"); val d = n.optString("desc"); val id = n.optString("id")
-                    val hit = (wantText.isNotBlank() && t.contains(wantText)) ||
-                              (wantDesc.isNotBlank() && d.contains(wantDesc)) ||
-                              (wantId.isNotBlank() && id.contains(wantId))
-                    if (hit) { node = n; break }
+                    val hay = (n.optString("text") + " " + n.optString("desc") + " " + n.optString("id") + " " +
+                               n.optString("label") + " " + n.optString("hint"))
+                    if (samples.size < 6) samples.add(hay.trim().take(24))
+                    if (wants.any { hay.contains(it, ignoreCase = true) }) { node = n; break }
                 }
             }
             if (node != null) break
@@ -154,7 +165,8 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         val foundMs = System.currentTimeMillis() - t0
         if (node == null) {
             return 200 to JSONObject().put("ok", false).put("error", "not_found")
-                .put("expect", wantText).put("appear_ms", appearMs).put("elapsed_ms", foundMs)
+                .put("expect", wants.joinToString("|")).put("appear_ms", appearMs).put("elapsed_ms", foundMs)
+                .put("scanned", scanned).put("sample", JSONArray(samples))
                 .put("hint", "\u63a7\u4ef6\u6ca1\u51fa\u73b0\uff1a\u53ef\u80fd\u89e6\u53d1\u70b9\u4e0d\u5bf9\uff0c\u6216\u5b83\u5728 a11y \u6811\u91cc\u6ca1\u6709\u6587\u5b57/\u63cf\u8ff0").toString()
         }
         val cx = node.optInt("x"); val cy = node.optInt("y")
@@ -174,12 +186,18 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         when (kind) {
             "tap" -> actionResult = if (svc.dispatchTap(cx.toFloat(), cy.toFloat())) "ok" else "fail"
             "swipe", "drag-to" -> {
-                val dur = act.optLong("duration_ms", 180L).coerceIn(60L, 800L)
-                val x2 = if (kind == "drag-to") act.optDouble("x", cx.toDouble()) else cx + act.optDouble("dx", 0.0)
-                val y2 = if (kind == "drag-to") act.optDouble("y", cy.toDouble()) else cy + act.optDouble("dy", 0.0)
+                // 滑块/进度条：手势必须从**手柄**起手，落点才被识别为拖动。
+                // from 显式给起点；不给则用命中节点的中心（对 seekbar 常常是整条的中点，会跳）。
+                val dur = if (act.has("duration_ms")) act.optLong("duration_ms", 400L).coerceIn(60L, 2000L)
+                          else act.optLong("durationMs", 400L).coerceIn(60L, 2000L)
+                val fromArr = act.optJSONArray("from")
+                val x1 = fromArr?.optDouble(0) ?: cx.toDouble()
+                val y1 = if (fromArr != null) fromArr.optDouble(1) else cy.toDouble()
+                val x2 = if (kind == "drag-to") act.optDouble("x", cx.toDouble()) else x1 + act.optDouble("dx", 0.0)
+                val y2 = if (kind == "drag-to") act.optDouble("y", y1) else y1 + act.optDouble("dy", 0.0)
                 val g = JSONObject().apply {
                     put("type", "swipe")
-                    put("x1", cx.toDouble()); put("y1", cy.toDouble())
+                    put("x1", x1); put("y1", y1)
                     put("x2", x2); put("y2", y2)
                     put("durationMs", dur)
                 }.toString()

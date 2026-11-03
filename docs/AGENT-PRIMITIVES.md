@@ -96,3 +96,34 @@
 
 返回：`{ok, expect, node:{x,y,text,id}, appear_ms, action, action_result, action_ms, spent_ms, budget_ms}`；
 控件没出现返回 `{ok:false, error:"not_found"}`，超时返回 `{ok:false, error:"budget_exceeded"}`。
+
+## /act steps 完整字段（2.9.6 起）
+
+一次请求里按顺序执行，`onFail` 默认 `stop`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `tap`: [x,y] / "文字" / {x,y} | 点击（坐标/文字） |
+| `tapText` / `tapDesc` / `tapId` | 按文字/描述/id 点 |
+| `tapXY`: [x,y] + `smart` | 带 smart 的坐标点击（避开容器误命中） |
+| `input`: "文本" + `append` | 无障碍 SET_TEXT 输入（中文可用） |
+| `key`: "back"/"home"/"recents"/"enter"… | 全局按键 |
+| `swipe`: {x1,y1,x2,y2,durationMs 或 duration_ms} / [x1,y1,x2,y2,(dur)] | 手势滑动；**时长会透传** |
+| `wait`: {text, timeout_ms 或 timeoutMs, gone} | 等文字出现/消失（等价 `waitText` + `timeout_ms`） |
+| `sleepMs`: 600 | 固定等待 |
+| `expect`: {anyText:[...], timeoutMs} | 本步执行后再校验画面文字 |
+
+### 关于滑动时长（seekbar / 进度条）
+
+- `durationMs` / `duration_ms` 都会透传到 `dispatchGesture`；**短于 ~400ms 且距离 >300px 会被系统当 fling**，滑块往往回到原位。
+- 进度条要**从手柄起手**拖：`{"op":"transient", "expect":{"desc":"视频进度"}, "action":{"kind":"drag-to","x":600,"y":673,"from":[372,673],"duration_ms":800}}`。
+- 起点不对（比如从整条的中点起手）会跳到别处 —— 这不是时长问题。
+- 兜底：`POST /gesture {"type":"swipe","x1":..,"durationMs":2000}` 是同一注入路径，可用于对照验证。
+
+### transient 的 expect 匹配（2.9.6 起）
+
+- 匹配范围是节点的 **text + desc + id + label + hint 拼接串**，**包含**即命中、大小写不敏感；
+- 支持多候选：`"expect": {"any": ["视频进度", "暂停"]}`；
+- 数值会变的控件给稳定片段即可（`视频进度` 能命中 `视频进度，已播放到2分38秒，共3分52秒`）；
+- 触发 `tap` 是**可选**的：控件已可见时不要 tap（视频画面上的 tap 会切换控制条显隐，反而把它藏起来）；
+- 失败回执带 `scanned` 与 `sample`（前 6 个节点文本），便于判断是「树里没有」还是「文案对不上」。

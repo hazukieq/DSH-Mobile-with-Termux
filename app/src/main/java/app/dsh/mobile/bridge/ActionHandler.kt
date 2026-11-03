@@ -411,7 +411,9 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 return 400 to """{"ok":false,"error":"missing text"}"""
             }
             val gone = obj.optBoolean("gone", false)
-            val timeout = obj.optLong("timeoutMs", 8000L).coerceIn(200L, 60000L)
+            // 两种命名都收：timeoutMs（驼峰）与 timeout_ms（snake，文档里用过）
+            val timeout = (if (obj.has("timeoutMs")) obj.optLong("timeoutMs", 8000L)
+                           else obj.optLong("timeout_ms", 8000L)).coerceIn(200L, 60000L)
             val deadline = System.currentTimeMillis() + timeout
             while (System.currentTimeMillis() < deadline) {
                 // 单次读取同样受超时约束：僵死时不再无限期阻塞轮询循环
@@ -481,6 +483,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
 
         for (i in 0 until steps.length()) {
             val st = steps.optJSONObject(i) ?: continue
+            var stepResult: String? = null
             val stepStart = System.currentTimeMillis()
             val r = JSONObject()
             var action = "?"
@@ -560,7 +563,8 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                     if (sw != null) {
                         x1 = sw.optDouble("x1").toFloat(); y1 = sw.optDouble("y1").toFloat()
                         x2 = sw.optDouble("x2").toFloat(); y2 = sw.optDouble("y2").toFloat()
-                        dur = sw.optLong("durationMs", 300L)
+                        dur = if (sw.has("durationMs")) sw.optLong("durationMs", 300L)
+                        else sw.optLong("duration_ms", 300L)
                         human = sw.optBoolean("human", false)
                     } else if (arr != null && arr.length() >= 4) {
                         x1 = arr.optDouble(0).toFloat(); y1 = arr.optDouble(1).toFloat()
@@ -589,6 +593,18 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                     action = "key"
                     actionOk = svc.performGlobalActionByName(st.getString("key"))
                 }
+                st.has("wait") || st.has("waitText") -> {
+                    action = "wait"
+                    val w = st.optJSONObject("wait")
+                    val body = w?.toString() ?: JSONObject().apply {
+                        put("text", st.optString("waitText").ifBlank { st.optJSONObject("wait")?.optString("text").orEmpty() })
+                        put("timeoutMs", if (st.has("timeoutMs")) st.optLong("timeoutMs", 4_000L) else st.optLong("timeout_ms", 4_000L))
+                        put("gone", st.optBoolean("gone", false))
+                    }.toString()
+                    val r = wait(body, "wait")
+                    actionOk = r.first == 200 && !r.second.contains("\"ok\":false")
+                    stepResult = r.second
+                }
                 st.has("sleepMs") -> {
                     action = "sleep"
                     runCatching { Thread.sleep(st.getLong("sleepMs").coerceIn(0L, 10_000L)) }
@@ -616,6 +632,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 }
             }
             val stepOk = actionOk && verified
+            stepResult?.let { r.put("result", it) }
             r.put("index", i)
             r.put("action", action)
             for (k in listOf("via", "sent", "dispatchedAt", "node", "window", "ownOverlay", "ownOverlayHint", "staleFullScreenNode")) {
