@@ -219,6 +219,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
             .put("expect", wantText).put("node", JSONObject().put("x", cx).put("y", cy)
                 .put("text", node.optString("text")).put("id", node.optString("id")))
             .put("appear_ms", foundMs).put("action", kind).put("action_result", actionResult)
+            .put("action_detail", actionDetail ?: JSONObject())
             .put("action_ms", System.currentTimeMillis() - a0)
             .put("total_ms", System.currentTimeMillis() - t0)
             .toString()

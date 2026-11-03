@@ -573,8 +573,23 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                         if (arr.length() >= 5) dur = arr.optLong(4, 300L)
                     } else actionOk = false
                     if (actionOk) {
+                        val h = kotlin.math.hypot((x2 - x1).toDouble(), (y2 - y1).toDouble())
+                        val t0 = System.currentTimeMillis()
                         actionOk = if (human) svc.dispatchSwipeHuman(x1, y1, x2, y2, dur)
                         else svc.dispatchSwipe(x1, y1, x2, y2, dur)
+                        // elapsedMs 只是「派发调用」的耗时（亚毫秒），手势真正跑 dur 毫秒；
+                        // 把**实际下发的参数**写进回执，调用方才能自证时长/起止是否透传。
+                        stepResult = JSONObject().apply {
+                            put("ok", actionOk)
+                            put("gesture", JSONObject().apply {
+                                put("from", JSONArray().put(x1.toDouble()).put(y1.toDouble()))
+                                put("to", JSONArray().put(x2.toDouble()).put(y2.toDouble()))
+                                put("distance_px", Math.round(h))
+                                put("duration_ms", dur)
+                                put("human", human)
+                            })
+                            put("dispatch_ms", System.currentTimeMillis() - t0)
+                        }.toString()
                     }
                 }
                 st.has("doubleTap") -> {
