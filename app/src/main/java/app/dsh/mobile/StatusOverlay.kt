@@ -199,7 +199,8 @@ object StatusOverlay {
                 val dot = view.findViewById<View>(R.id.overlayDot)
 
                 status.text = ctx.getString(R.string.overlay_idle)
-                dot.background.setTint(COLOR_IDLE)
+                // 占位 View（0dp、无 background）——图标已由 TextView.drawableStart 提供
+                dot.background?.setTint(COLOR_IDLE)
                 statusTextColor = 0xFFE6EAF2.toInt()   // 固定浅色：XML 里的是给浅底准备的深色字
 
 
