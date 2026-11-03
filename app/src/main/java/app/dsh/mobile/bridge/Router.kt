@@ -154,12 +154,6 @@ internal class Router(private val bridge: AgentBridge) {
             method == "POST" && path == "/scroll-center" -> action.scrollCenter(body)
             method == "GET" && path == "/diff" -> screen.diffScreen()
             method == "POST" && path == "/idle" -> action.idle(body)
-            // 自动化原语（可被 /chain 编排）
-            method == "POST" && path == "/probe/motion" -> bridge.prim.motion(body)
-            method == "POST" && path == "/probe/scroll" -> bridge.prim.scrollProbe(body)
-            method == "POST" && path == "/act/drag-fast" -> bridge.prim.dragFast(body)
-            method == "POST" && path == "/act/skip" -> bridge.prim.skip(body)
-            method == "POST" && path == "/chain" -> bridge.prim.chain(body)
             method == "POST" && path == "/batch" -> action.batch(body)
             method == "GET" && path == "/interference" -> action.interference(query)
             method == "POST" && path == "/overlay" -> action.overlay(ctx, body)

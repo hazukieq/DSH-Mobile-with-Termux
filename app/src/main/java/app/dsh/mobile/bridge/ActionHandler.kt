@@ -485,6 +485,24 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             val r = JSONObject()
             var action = "?"
             var actionOk = true
+            // 自动化原语：与 tap/gesture 同属一个 steps[] 数组，避免 agent 记两套编排格式。
+            val primOp = st.optString("op")
+            if (primOp.isNotEmpty()) {
+                val prim = bridge.prim
+                val res: Pair<Int, String> = when (primOp) {
+                    "motion" -> prim.motion(st.toString())
+                    "scroll-probe" -> prim.scrollProbe(st.toString())
+                    "drag-fast" -> prim.dragFast(st.toString())
+                    "skip" -> prim.skip(st.toString())
+                    else -> 400 to """{"ok":false,"error":"unknown op: $primOp"}"""
+                }
+                action = primOp
+                actionOk = res.first == 200 && !res.second.contains("\"ok\":false")
+                results.put(JSONObject().put("action", action).put("ok", actionOk)
+                    .put("result", res.second).put("elapsedMs", System.currentTimeMillis() - stepStart))
+                if (!actionOk && onFail == "stop") { failedAt = i; allOk = false; break }
+                continue
+            }
             when {
                 st.has("tap") -> {
                     action = "tap"

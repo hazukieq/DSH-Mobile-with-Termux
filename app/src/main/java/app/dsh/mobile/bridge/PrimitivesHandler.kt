@@ -95,32 +95,4 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
             .toString()
     }
 
-    /** 编排：把一个步骤数组顺序执行，任一步失败即停止并回报。 */
-    internal fun chain(body: String): Pair<Int, String> {
-        val o = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
-        val steps = o.optJSONArray("steps") ?: JSONArray()
-        val results = JSONArray()
-        var ok = true
-        for (i in 0 until steps.length()) {
-            if (!ok) break
-            val st = steps.optJSONObject(i) ?: continue
-            val op = st.optString("op")
-            val wait = st.optLong("wait_ms", 0L)
-            if (wait > 0) Thread.sleep(wait)
-            val r: Pair<Int, String> = when (op) {
-                "tap" -> bridge.action.tap(st.toString())
-                "gesture", "scroll" -> bridge.action.gesture(st.toString())
-                "skip" -> skip(st.toString())
-                "motion" -> motion(st.toString())
-                "wait" -> bridge.action.idle(st.toString())
-                else -> 404 to "{\"ok\":false,\"error\":\"unknown op: $op\"}"
-            }
-            ok = r.first == 200 && !r.second.contains("\"ok\":false")
-            results.put(JSONObject().put("op", op).put("code", r.first).put("result", r.second))
-        }
-        return 200 to JSONObject()
-            .put("ok", ok)
-            .put("steps", results)
-            .toString()
-    }
 }
