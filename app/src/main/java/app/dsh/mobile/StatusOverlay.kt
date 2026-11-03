@@ -572,6 +572,11 @@ object StatusOverlay {
             sc.visibility = if (collapsed) View.GONE else View.VISIBLE
         }
         // 空闲展开：文案用专用 TextView 显示（不用 ScrollView，避免被滚动区可见性连带隐藏）
+        (statusRow?.layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { rlp ->
+            val wantW = if (!collapsed && idleCompactNow) android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                        else android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            if (rlp.width != wantW) { rlp.width = wantW; statusRow?.layoutParams = rlp }
+        }
         idleLabel?.visibility = if (!collapsed) View.VISIBLE else View.GONE
         idleLabel?.text = idleText
         idleLabel?.setTextColor(0xFFE6EAF2.toInt())
@@ -607,11 +612,11 @@ object StatusOverlay {
         val w = when {
             collapsed -> side
             !idleCompactNow -> dp(ctx, 240)
-            else -> dp(ctx, 120)      // 空闲：只留 dot + 「空闲」，固定一小块
+            else -> WRAP              // 空闲：窗口 = dot + 「空闲」+ 内边距，宽度由内容决定
         }
         val h = when {
             collapsed -> side
-            idleCompactNow -> dp(ctx, 56)   // 容纳 dot+文案（44dp 会把文字裁掉）
+            idleCompactNow -> WRAP          // 空闲：高度也贴合内容（dot 顶对齐文字）
             else -> WRAP
         }
         view.layoutParams?.let { lp ->
