@@ -33,11 +33,10 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="top">
+        android:gravity="top|start">
 
         <View
             android:id="@+id/overlayDot"
-            android:layout_gravity="center_vertical"
             android:layout_width="14dp"
             android:layout_height="14dp"
             android:layout_marginEnd="7dp"
@@ -50,7 +49,7 @@
             android:id="@+id/overlayIdle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical"
+            android:layout_gravity="top"
             android:layout_marginStart="8dp"
             android:textSize="13sp"
             android:maxLines="1"
