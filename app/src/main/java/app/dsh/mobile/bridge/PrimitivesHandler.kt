@@ -32,7 +32,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
             .put("moving", moving)
             .put("samples", samples)
             .put("changed", movingCount)
-            .put("hint", if (moving) "画面在变，先别点固定坐标" else "画面静止，可以按坐标点")
+            .put("hint", if (moving) "\u753b\u9762\u5728\u53d8\uff0c\u5148\u522b\u70b9\u56fa\u5b9a\u5750\u6807" else "\u753b\u9762\u9759\u6b62\uff0c\u53ef\u4ee5\u6309\u5750\u6807\u70b9")
             .toString()
     }
 
@@ -53,7 +53,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
             .put("direction", o.optString("direction", "down"))
             .put("moved", moved)
             .put("gesture", r.second)
-            .put("hint", if (moved) "方向有效，画面已滚动" else "画面没动：可能已到边界或该区域不可滚")
+            .put("hint", if (moved) "\u65b9\u5411\u6709\u6548\uff0c\u753b\u9762\u5df2\u6eda\u52a8" else "\u753b\u9762\u6ca1\u52a8\uff1a\u53ef\u80fd\u5df2\u5230\u8fb9\u754c\u6216\u8be5\u533a\u57df\u4e0d\u53ef\u6eda")
             .toString()
     }
 
@@ -79,7 +79,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
     /** 开屏广告/弹窗的跳过：按常见文案在无障碍树里找「跳过」，找到就点，找不到直接返回。 */
     internal fun skip(body: String): Pair<Int, String> {
         val o = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
-        val words = listOf("跳过", "跳过广告", "关闭广告", "skip", "SKIP", "关闭", "×", "x")
+        val words = listOf("\u8df3\u8fc7", "\u8df3\u8fc7\u5e7f\u544a", "\u5173\u95ed\u5e7f\u544a", "skip", "SKIP", "\u5173\u95ed", "×", "x")
             .joinToString("|")
         val query = o.optString("words").ifBlank { words }
         val hits = mutableListOf<String>()
@@ -91,7 +91,7 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         return 200 to JSONObject()
             .put("ok", true)
             .put("clicked", JSONArray(hits))
-            .put("hint", if (hits.isEmpty()) "没有可点的跳过/关闭控件" else "已点：${hits.joinToString(",")}")
+            .put("hint", if (hits.isEmpty()) "\u6ca1\u6709\u53ef\u70b9\u7684\u8df3\u8fc7/\u5173\u95ed\u63a7\u4ef6" else "\u5df2\u70b9\uff1a${hits.joinToString(",")}")
             .toString()
     }
 

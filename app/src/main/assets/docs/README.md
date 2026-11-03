@@ -25,6 +25,7 @@ App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）
 - `NOTIFICATIONS.md` · `NOTIFICATIONS.en.md` —— 通知栏读写、shade 场景。
 - `PROGRESS_OVERLAY.md` —— 悬浮窗进度与折叠布局。
 - `OVERLAY.md` —— 悬浮窗（StatusOverlay）结构与解耦约束、三形态、回归清单。
+- `AGENT-PRIMITIVES.md` —— App Agent 自动化原语（/probe/motion、/probe/scroll、/act/drag-fast、/act/skip、/chain）。
 - `PAYMENT-LINKS.md` —— 支付宝/微信支付链接与 `intent://` 改写。
 
 ## 终端 / 引擎 / 网络
