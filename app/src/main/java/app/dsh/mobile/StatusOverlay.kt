@@ -76,7 +76,6 @@ object StatusOverlay {
     @Volatile private var statusRow: LinearLayout? = null
     /** 球态专用圆点（与状态行里的 statusDot 分开，居中由布局保证）。 */
     @Volatile private var ballDot: View? = null
-    @Volatile private var idleLabel: android.widget.TextView? = null
     /** v2.5.5：三段式展开的第三段 —— 会话标题 + 倒计时。 */
     @Volatile private var sessionText: TextView? = null
     @Volatile private var elapsedText: TextView? = null
@@ -227,7 +226,6 @@ object StatusOverlay {
                 statusText = status; statusDot = dot
                 statusRow = view.findViewById(R.id.overlayRow)
                 ballDot = view.findViewById(R.id.overlayBallDot)
-                idleLabel = view.findViewById(R.id.overlayIdle)
                 ballDot?.background?.setTint(COLOR_IDLE)
                 statusScroll = view.findViewById<android.widget.ScrollView>(R.id.overlayScroll)
                 sessionText = view.findViewById(R.id.overlaySession)
@@ -571,15 +569,13 @@ object StatusOverlay {
             // 状态文字永远可见：空闲时也要能看到「空闲」二字（之前把它 GONE 掉 → 面板空白的根源）
             sc.visibility = if (collapsed) View.GONE else View.VISIBLE
         }
-        // 空闲展开：文案用专用 TextView 显示（不用 ScrollView，避免被滚动区可见性连带隐藏）
+        // 状态行宽高一律 wrap_content（尺寸由 applyWindowSize 的窗口大小决定，行不再撑满）
         (statusRow?.layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { rlp ->
-            val wantW = if (!collapsed && idleCompactNow) android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                        else android.view.ViewGroup.LayoutParams.MATCH_PARENT
-            if (rlp.width != wantW) { rlp.width = wantW; statusRow?.layoutParams = rlp }
+            if (rlp.width != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
+                rlp.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                statusRow?.layoutParams = rlp
+            }
         }
-        idleLabel?.visibility = if (!collapsed) View.VISIBLE else View.GONE
-        idleLabel?.text = idleText
-        idleLabel?.setTextColor(0xFFE6EAF2.toInt())
         a11yText?.visibility = if (!collapsed && !idleCompactNow) View.VISIBLE else View.GONE
         footRow?.visibility = if (collapsed || idleCompactNow) View.GONE else View.VISIBLE
         refreshActionVisibility()

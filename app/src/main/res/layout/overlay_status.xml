@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  悬浮窗：折叠态是一枚正方悬浮球（里面只有一个状态点），展开态是圆角卡片。
-  尺寸由 StatusOverlay.applyWindowSize() 决定，XML 里的宽高只是展开态默认值。
+  悬浮窗布局（2026-11 重写版）：一个文件描述两种形态。
+  · 折叠态：只显示 overlayBallDot，窗口由 applyWindowSize() 固定成正方形。
+  · 展开态：overlayRow = [dot] + [可滚动文字]；空闲时滚动区贴合文字，工作时固定 92dp。
+  尺寸一律 wrap_content，窗口大小由 StatusOverlay.applyWindowSize() 决定，本文件不再写死宽度。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlayRoot"
-    android:layout_width="240dp"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/bg_overlay_panel"
     android:paddingStart="10dp"
-    android:paddingEnd="12dp"
-    android:paddingTop="8dp"
-    android:paddingBottom="8dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="6dp"
     android:minWidth="0dp"
     android:elevation="0dp">
 
-    <!-- 球态专用圆点：直接挂在根容器上，靠 layout_gravity=center 落在球心。
-         和下面状态行里的 overlayDot 是两个独立 View —— 折叠/展开各自用布局保证居中，
-         不再靠运行期 margin 计算（那是历史上反复偏心的根源）。 -->
+    <!-- 球态圆点：只挂在根上、layout_gravity=center，折叠时可见 -->
     <View
         android:id="@+id/overlayBallDot"
         android:layout_width="14dp"
@@ -27,10 +27,10 @@
         android:visibility="gone"
         android:background="@drawable/bg_overlay_dot" />
 
-    <!-- 状态行：圆点 + 可滚动内容（展开态使用） -->
+    <!-- 展开态一行：圆点 + 文字（文字包在 ScrollView 里，长内容在框内滚动） -->
     <LinearLayout
         android:id="@+id/overlayRow"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="top|start">
@@ -39,76 +39,49 @@
             android:id="@+id/overlayDot"
             android:layout_width="14dp"
             android:layout_height="14dp"
-            android:layout_marginEnd="7dp"
-            android:layout_marginTop="3dp"
             android:background="@drawable/bg_overlay_dot" />
-
-        <!-- 空闲文案：直接挂在这一行里，不经过 ScrollView —— 空闲时滚动区是 GONE，
-             文案若放在里面会被一起隐藏（历史 bug：卡片只剩一个圆点）。 -->
-        <TextView
-            android:id="@+id/overlayIdle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top"
-            android:layout_marginStart="4dp"
-            android:textSize="12sp"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-            android:visibility="gone" />
 
         <ScrollView
             android:id="@+id/overlayScroll"
-            android:layout_width="0dp"
-            android:layout_weight="1"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
             android:maxWidth="216dp"
-            android:maxHeight="132dp"
             android:scrollbars="vertical"
-            android:fadeScrollbars="false"
             android:overScrollMode="never">
 
             <TextView
                 android:id="@+id/overlayStatus"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:maxWidth="216dp"
-                android:textSize="13sp"
-                android:textStyle="bold"
-                android:letterSpacing="0.01"
-                android:lineSpacingExtra="2dp"
-                android:textColor="#FFE8EAED"
-                android:text="DSH" />
+                android:textSize="12sp"
+                android:includeFontPadding="false"
+                android:textColor="#E6EAF2"
+                android:maxWidth="216dp" />
         </ScrollView>
-
     </LinearLayout>
 
-    <!-- 无障碍 / 自动化 / 打开应用动作链（v2.5.6）：紧贴思考链下方。
-         只显示「无障碍服务真正做的事」——读屏点击/滑动/按键、启动或跳转别的 App。 -->
+    <!-- 无障碍分类行（仅工作态显示） -->
     <TextView
         android:id="@+id/overlayA11y"
         android:layout_width="match_parent"
-        android:layout_height="24dp"
-        android:layout_marginTop="3dp"
-        android:layout_marginStart="16dp"
-        android:maxWidth="216dp"
-        android:textSize="10.5sp"
-        android:textColor="#FF9AA0A6"
-        android:lineSpacingExtra="1dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="11sp"
+        android:includeFontPadding="false"
         android:maxLines="2"
         android:ellipsize="end"
-        android:visibility="gone"
-        android:text="" />
+        android:textColor="#8FA0B8"
+        android:visibility="gone" />
 
-    <!-- 会话标题 + 倒计时（v2.5.5）：展开时单独一行，标题被省略而不是被秒数挤掉 -->
+    <!-- 底部行：会话标题 + 耗时（仅工作态显示） -->
     <LinearLayout
         android:id="@+id/overlayFoot"
         android:layout_width="match_parent"
-        android:layout_height="16dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:layout_marginTop="6dp"
-        android:layout_marginStart="16dp"
-        android:maxWidth="216dp"
         android:visibility="gone">
 
         <TextView
@@ -116,21 +89,19 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:singleLine="true"
-            android:ellipsize="end"
             android:textSize="11sp"
-            android:textColor="#FF9AA0A6"
-            android:text="" />
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#8FA0B8" />
 
         <TextView
             android:id="@+id/overlayElapsed"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:singleLine="true"
             android:textSize="11sp"
-            android:textColor="#FF7DD3FC"
-            android:text="" />
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="#8FA0B8" />
     </LinearLayout>
-
 </LinearLayout>
