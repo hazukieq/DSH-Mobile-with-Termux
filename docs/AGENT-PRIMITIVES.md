@@ -154,3 +154,17 @@ POST /act
 4. 「点一下画面 → 300ms → 点左下播放键」必须放在**同一个 /act 事务**里，分两次调用会被控制条显隐节奏吃掉。
 
 回执里 `action_detail` 会带上 `{from:[x,y], to:[x,y], duration_ms}`，便于自查起止点与时长是否如预期。
+
+## 回执字段含义（用来「自证」，别用来猜）
+
+| 字段 | 出现在 | 含义 |
+| --- | --- | --- |
+| `elapsedMs` / `elapsed_ms` | 每个 `/act` step | **派发调用**的耗时（通常 0–3ms）。它**不是**手势时长——手势在后台按 `duration_ms` 跑完，这段时间不会记在这里。 |
+| `gesture.from` / `gesture.to` | `swipe` step 的 `result` | 实际下发的起止坐标（浮点，未取整），可直接和你的入参对账。 |
+| `gesture.distance_px` | 同上 | `hypot(to-from)` 取整，用来判断是不是被当成了点击/抖动的短距离。 |
+| `gesture.duration_ms` | 同上 | **实际下发**的手势时长；与入参 `duration_ms` 不一致就说明被夹紧到了允许区间（60–2000ms）。 |
+| `gesture.human` | 同上 | `true` = 拟人注入（弧线+变速，seekbar 必须走这条）；`false` = 精确直线。 |
+| `dispatch_ms` | 同上 | 发起注入这一下花的时间，与 `elapsedMs` 同量级，保留是为了和 `duration_ms` 区分。 |
+| `action_detail` | `op:"transient"` 成功回执 | `{from:[x,y], to:[x,y], duration_ms}`：对「命中控件后在预算内完成的那次动作」的参数留痕。 |
+
+判断「时长到底透传没透传」的正确姿势：看 `gesture.duration_ms`（或 `action_detail.duration_ms`），**不要**看 `elapsedMs`。
