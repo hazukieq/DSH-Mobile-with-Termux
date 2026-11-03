@@ -603,7 +603,7 @@ class DshAccessibilityService : AccessibilityService() {
             }
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
-        walk(rootInActiveWindow)
+        dumpRoots().forEach { walk(it) }
         // ---- v1.2.150 图标识别（用户需求：至少识别齿轮=设置、放大镜=搜索）----
         // 无标签的可点击小区域 → 截一帧做 NCC 模板匹配（36 个 Material 官方图标）。
         // 命中补 `=名称`（识别）；未命中的留给下面的 `~最近文本`（空间推断）兜底。
@@ -692,6 +692,18 @@ class DshAccessibilityService : AccessibilityService() {
      * 同一 UI 状态下稳定，可作点击定位的次优选择）；可选只输出可点击节点（省 token）。
      * @param clickableOnly true = 只输出可点击节点
      */
+
+    /**
+     * 取本帧可遍历的根节点：优先 rootInActiveWindow；为 null 时（服务刚重绑、无窗口事件、
+     * 或前台窗口属于无法取根的进程）退回到 windows[] 里逐个尝试，避免「树永远是空」。
+     */
+    private fun dumpRoots(): List<android.view.accessibility.AccessibilityNodeInfo> {
+        runCatching { rootInActiveWindow }.getOrNull()?.let { return listOf(it) }
+        return runCatching {
+            windows.mapNotNull { w -> runCatching { w.root }.getOrNull() }
+        }.getOrDefault(emptyList())
+    }
+
     fun dumpScreenJson(filter: String = "all", ocrFallback: Boolean = true): String {
         val arr = JSONArray()
         var count = 0
@@ -763,7 +775,7 @@ class DshAccessibilityService : AccessibilityService() {
             }
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
-        walk(rootInActiveWindow)
+        dumpRoots().forEach { walk(it) }
         // ---- v1.2.123 OCR 兜底（与 dumpScreenCompact 同判据）----
         // verify 的 anyText/checkedText 用本函数读屏；若只有 compact 版带 OCR，
         // 会出现「pick 能用 OCR 文本、verify 却永远匹配不到」——实测 canvas
@@ -2019,7 +2031,7 @@ class DshAccessibilityService : AccessibilityService() {
             }
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
-        walk(rootInActiveWindow)
+        dumpRoots().forEach { walk(it) }
         return sb.toString()
     }
 
@@ -2506,7 +2518,7 @@ class DshAccessibilityService : AccessibilityService() {
             }
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
-        walk(rootInActiveWindow)
+        dumpRoots().forEach { walk(it) }
         return out
     }
 
