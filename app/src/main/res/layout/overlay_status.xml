@@ -50,8 +50,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="top"
-            android:layout_marginStart="8dp"
-            android:textSize="13sp"
+            android:layout_marginStart="4dp"
+            android:textSize="12sp"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:visibility="gone" />
 

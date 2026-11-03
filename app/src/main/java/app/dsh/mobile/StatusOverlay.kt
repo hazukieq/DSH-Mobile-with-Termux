@@ -580,8 +580,8 @@ object StatusOverlay {
         idleLabel?.visibility = if (!collapsed) View.VISIBLE else View.GONE
         idleLabel?.text = idleText
         idleLabel?.setTextColor(0xFFE6EAF2.toInt())
-        a11yText?.visibility = if (!collapsed && !idleCompact) View.VISIBLE else View.GONE
-        footRow?.visibility = if (collapsed || idleCompact) View.GONE else View.VISIBLE
+        a11yText?.visibility = if (!collapsed && !idleCompactNow) View.VISIBLE else View.GONE
+        footRow?.visibility = if (collapsed || idleCompactNow) View.GONE else View.VISIBLE
         refreshActionVisibility()
 
         applyWindowSize(ctx, view, collapsed)
@@ -616,7 +616,7 @@ object StatusOverlay {
         }
         val h = when {
             collapsed -> side
-            idleCompactNow -> WRAP          // 空闲：高度也贴合内容（dot 顶对齐文字）
+            idleCompactNow -> dp(ctx, 34)  // 空闲：6dp+14dp dot+6dp，留 8dp 余量防裁切
             else -> WRAP
         }
         view.layoutParams?.let { lp ->
