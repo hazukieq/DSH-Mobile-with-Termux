@@ -19,6 +19,7 @@ import app.dsh.mobile.webview.ShareDelivery
 import app.dsh.mobile.webview.ShareHandler
 import app.dsh.mobile.webview.WebViewJs
 import app.dsh.mobile.webview.WebViewManager
+import app.dsh.mobile.webview.WebViewHolder
 import app.dsh.mobile.webview.SplashController
 import app.dsh.mobile.webview.WebViewGate
 import app.dsh.mobile.webview.WebViewHealth
@@ -161,7 +162,20 @@ class MainActivity : Activity() {
         chrome.bind()
         // 先赋值字段再配置：setupWebView 内部读取的是 this.webView，
         // 若写在 apply{} 里会在赋值完成前执行而触发 UninitializedPropertyAccessException。
-        webView = findViewById<WebView>(R.id.webView)
+        // 全局 WebView：XML 里只放一个占位，实际实例由 WebViewHolder 提供（Application 级生命周期，
+        // Activity 重建不销毁 WebView，外部能力才能稳定拿到「当前页面」）。
+        val placeholder = findViewById<WebView>(R.id.webView)
+        val globalWebView = WebViewHolder.obtain(this)
+        if (placeholder !== globalWebView) {
+            val host = placeholder.parent as? android.view.ViewGroup
+            val index = host?.indexOfChild(placeholder) ?: -1
+            val lp = placeholder.layoutParams
+            host?.removeView(placeholder)
+            runCatching { placeholder.destroy() }
+            globalWebView.id = R.id.webView
+            if (host != null && index >= 0) host.addView(globalWebView, index, lp)
+        }
+        webView = globalWebView
         setupWebView()
         // v1.3.44：冷启动时若由其它 App 分享拉起，处理分享内容
         runCatching { handleIncomingShare(intent) }
@@ -566,7 +580,12 @@ class MainActivity : Activity() {
         if (isFinishing && !isChangingConfigurations) {
             runCatching { StatusOverlay.hideAuto(this) }
         }
-        if (::webView.isInitialized) webView.destroy()
+        if (::webView.isInitialized && isFinishing && !isChangingConfigurations) {
+            WebViewHolder.destroy()
+        } else {
+            // 配置变更/返回栈回收：WebView 留着，只把 context 换回 Application
+            runCatching { WebViewHolder.detach() }
+        }
         super.onDestroy()
     }
 
