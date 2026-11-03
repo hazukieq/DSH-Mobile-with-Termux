@@ -299,6 +299,7 @@ object AgentBridge {
     internal val action by lazy { ActionHandler(this) }
     internal val appHandler by lazy { AppHandler(this) }
     internal val vision by lazy { VisionHandler(this) }
+    internal val prim by lazy { app.dsh.mobile.bridge.PrimitivesHandler(this) }
 
     internal fun handle(ctx: Context, client: Socket) {
         Thread({
