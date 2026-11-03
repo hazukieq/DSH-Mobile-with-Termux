@@ -494,6 +494,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                     "scroll-probe" -> prim.scrollProbe(st.toString())
                     "drag-fast" -> prim.dragFast(st.toString())
                     "skip" -> prim.skip(st.toString())
+                    "transient" -> prim.transient(ctx, st.toString())
                     else -> 400 to """{"ok":false,"error":"unknown op: $primOp"}"""
                 }
                 action = primOp

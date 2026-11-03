@@ -68,3 +68,30 @@
 3. 不确定能否滚动时先 `scroll-probe`，再决定要不要 `gesture`。
 4. 开屏/弹窗一律先 `skip`。
 5. 每步都带 `wait_ms` 可控制节奏；`onFail: "continue"` 适合「尽力而为」的探测链。
+
+## 语义封装：`op: "transient"` —— 点击 → 控件出现 → 动作（限时）
+
+「点一下 → 出现一个只活 1–2 秒的控件 → 立刻对它做动作」整条链路压成一步，避免多次往返把时间耗光。
+
+```json
+{"op": "transient",
+ "tap": [540, 1600],
+ "expect": {"text": "进度", "desc": "", "id": ""},
+ "appear_ms": 600,
+ "budget_ms": 2000,
+ "action": {"kind": "tap"}}
+```
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `tap` / `tapText` | — | 触发动作：点坐标或点文字 |
+| `expect` | — | 目标控件：`{text,desc,id}` 任一包含即命中 |
+| `appear_ms` | 600 | 等控件出现的最长窗口（60–1900ms） |
+| `budget_ms` | 2000 | **硬预算**：控件出现后必须在此时限内完成动作，超时即 `ok:false / budget_exceeded` |
+| `action.kind` | none | `tap` / `swipe` / `drag-to` / `none`（只定位不动作，用于探测） |
+| `action.dx,dy` | 0 | `swipe` 时相对控件中心的位移 |
+| `action.x,y` | — | `drag-to` 的目标坐标（进度条拖到最大值） |
+| `action.duration_ms` | 180 | 拖动时长 |
+
+返回：`{ok, expect, node:{x,y,text,id}, appear_ms, action, action_result, action_ms, spent_ms, budget_ms}`；
+控件没出现返回 `{ok:false, error:"not_found"}`，超时返回 `{ok:false, error:"budget_exceeded"}`。

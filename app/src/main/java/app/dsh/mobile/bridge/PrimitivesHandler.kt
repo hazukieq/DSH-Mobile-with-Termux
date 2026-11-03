@@ -100,4 +100,96 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
             .toString()
     }
 
+
+    /**
+     * 语义封装：点击 → 控件出现（默认 2s 内会消失）→ 立刻对它做动作。
+     * body: {tap:[x,y]|tapText, expect:"进度条"|{text,desc,id}, appear_ms=600,
+     *        action:{kind:"tap"|"swipe"|"drag-to"|"none", dx,dy,x,y,duration_ms}}
+     */
+    internal fun transient(ctx: android.content.Context, body: String): Pair<Int, String> {
+        val o = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
+        val svc = app.dsh.mobile.DshAccessibilityService.instance
+            ?: return 503 to """{"ok":false,"error":"a11y_off"}"""
+        val t0 = System.currentTimeMillis()
+        // 1) 触发：点一下让控件出现
+        val tapArr = o.optJSONArray("tap")
+        val tapText = o.optString("tapText")
+        if (tapArr != null && tapArr.length() >= 2) {
+            svc.dispatchTap(tapArr.optDouble(0).toFloat(), tapArr.optDouble(1).toFloat())
+        } else if (tapText.isNotBlank()) {
+            runCatching { svc.tapText(tapText) }
+        }
+        // 2) 在 appear_ms 内轮询无障碍树，等目标控件出现
+        val expectObj = o.optJSONObject("expect")
+        val wantText = expectObj?.optString("text").orEmpty().ifBlank { o.optString("expect") }
+        val wantDesc = expectObj?.optString("desc").orEmpty()
+        val wantId = expectObj?.optString("id").orEmpty()
+        val appearMs = o.optLong("appear_ms", 600L).coerceIn(60L, 1900L)
+        val deadline = System.currentTimeMillis() + appearMs
+        var node: JSONObject? = null
+        while (System.currentTimeMillis() < deadline) {
+            val nodes = runCatching {
+                JSONObject(svc.dumpScreenJson("all", ocrFallback = false)).optJSONArray("nodes")
+            }.getOrNull()
+            if (nodes != null) {
+                for (i in 0 until nodes.length()) {
+                    val n = nodes.optJSONObject(i) ?: continue
+                    val t = n.optString("text"); val d = n.optString("desc"); val id = n.optString("id")
+                    val hit = (wantText.isNotBlank() && t.contains(wantText)) ||
+                              (wantDesc.isNotBlank() && d.contains(wantDesc)) ||
+                              (wantId.isNotBlank() && id.contains(wantId))
+                    if (hit) { node = n; break }
+                }
+            }
+            if (node != null) break
+            Thread.sleep(40)
+        }
+        val foundMs = System.currentTimeMillis() - t0
+        if (node == null) {
+            return 200 to JSONObject().put("ok", false).put("error", "not_found")
+                .put("expect", wantText).put("appear_ms", appearMs).put("elapsed_ms", foundMs)
+                .put("hint", "控件没出现：可能触发点不对，或它在 a11y 树里没有文字/描述").toString()
+        }
+        val cx = node.optInt("x"); val cy = node.optInt("y")
+        val appearAt = System.currentTimeMillis()
+        // 硬预算：控件出现后必须在 budget_ms（默认 2000）内完成动作，否则判定失败
+        val budgetMs = o.optLong("budget_ms", 2000L).coerceIn(200L, 5000L)
+        if (appearAt - t0 >= budgetMs) {
+            return 200 to JSONObject().put("ok", false).put("error", "budget_exceeded")
+                .put("expect", wantText).put("budget_ms", budgetMs)
+                .put("elapsed_ms", appearAt - t0).toString()
+        }
+        // 3) 立刻对控件做动作（在它消失前）
+        val act = o.optJSONObject("action") ?: JSONObject().put("kind", "none")
+        val kind = act.optString("kind", "none")
+        val a0 = System.currentTimeMillis()
+        var actionResult = "none"
+        when (kind) {
+            "tap" -> actionResult = if (svc.dispatchTap(cx.toFloat(), cy.toFloat())) "ok" else "fail"
+            "swipe", "drag-to" -> {
+                val dur = act.optLong("duration_ms", 180L).coerceIn(60L, 800L)
+                val x2 = if (kind == "drag-to") act.optDouble("x", cx.toDouble()) else cx + act.optDouble("dx", 0.0)
+                val y2 = if (kind == "drag-to") act.optDouble("y", cy.toDouble()) else cy + act.optDouble("dy", 0.0)
+                val g = JSONObject().apply {
+                    put("type", "swipe")
+                    put("x1", cx.toDouble()); put("y1", cy.toDouble())
+                    put("x2", x2); put("y2", y2)
+                    put("durationMs", dur)
+                }.toString()
+                val r = bridge.action.gesture(g)
+                actionResult = if (r.first == 200 && !r.second.contains("\"ok\":false")) "ok" else r.second
+            }
+        }
+        val spent = System.currentTimeMillis() - appearAt
+        val withinBudget = spent <= budgetMs
+        return 200 to JSONObject().put("ok", withinBudget && actionResult != "fail")
+            .put("error", if (withinBudget) "" else "budget_exceeded")
+            .put("budget_ms", budgetMs).put("spent_ms", spent)
+            .put("expect", wantText).put("node", JSONObject().put("x", cx).put("y", cy)
+                .put("text", node.optString("text")).put("id", node.optString("id")))
+            .put("appear_ms", foundMs).put("action", kind).put("action_result", actionResult)
+            .put("action_ms", System.currentTimeMillis() - a0)
+            .put("total_ms", System.currentTimeMillis() - t0)
+            .toString()
+    }
 }
