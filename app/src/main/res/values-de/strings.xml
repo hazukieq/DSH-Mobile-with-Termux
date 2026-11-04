@@ -421,10 +421,4 @@ Engine: %6$s</string>
     <string name="progress_overlay_denied_title">Schwebefenster braucht Berechtigung – zum Erteilen tippen</string>
     <string name="settings_a11y_enabled_not_connected">Aktiviert (nicht verbunden)</string>
     <string name="settings_a11y_disabled_by_system">Erteilt, aber von Android deaktiviert (zum Reaktivieren tippen)</string>
-    <string name="setting_stock_ui">Mobile UI zurücksetzen</string>
-    <string name="setting_stock_ui_sub">Setzt die eingebaute Mobile-Oberfläche neu ein und startet die Engine neu. Hilft bei kaputter UI.</string>
-    <string name="setting_stock_ui_confirm">Eingebaute Mobile-UI neu einsetzen und Engine neu starten? Eigenes Layout-Tuning geht verloren, der Verlauf bleibt.</string>
-    <string name="setting_stock_ui_done">Mobile UI wiederhergestellt, Engine startet neu</string>
-    <string name="setting_stock_ui_none">UI war bereits die eingebaute Version, Engine startet neu</string>
-    <string name="mobile_ui_not_applied">Mobile-UI wurde nicht angewendet — Engine-CSS hat sich evtl. geändert</string>
 </resources>

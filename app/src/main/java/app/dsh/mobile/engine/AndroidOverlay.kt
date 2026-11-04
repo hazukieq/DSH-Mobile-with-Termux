@@ -154,9 +154,8 @@ internal object AndroidOverlay {
             |
             |# Narrow-screen UI: handled by the engine's own Web UI since dsh 0.2.2
             |# (sidebar collapses into a drawer, compact header, adaptive composer).
-            |# The old dsh-mobile-ui client plugin is no longer inserted: it duplicated
-            |# what the engine now does and fought the version-specific CSS hashes.
-            |# Its assets still ship under android-plugins/mobile-ui for manual trials.
+            |# The old dsh-mobile-ui client plugin has been removed from the app: it
+            |# duplicated what the engine now does and fought the version-specific CSS hashes.
             |
             |# v1.3.68 background progress: watch the current session DOM (thinking / step)
             |# and report it to native through DshNative for the notification / floating
@@ -208,8 +207,20 @@ internal object AndroidOverlay {
             // 新增插件的步骤：① 在 assets 建目录（含这三个文件）
             //               ② 在此列表追加目录名
             //               ③ 在 overlay 的 insert 段追加一条 entry（指向 index.js）
-            listOf("mobile-progress", "mobile-ui").forEach { pkg ->
-                // prefixes.json 是 mobile-ui 的语义族表（可缺省，缺了插件用内置表）
+            // 老版本部署过、现已从 App 移除的插件：升级安装不会自动删旧目录，
+            // 留着会让引擎继续加载那套过时样式（它和新版 Web UI 的 CSS 模块哈希冲突）。
+            runCatching {
+                val plugins = File(f.parentFile, "android-plugins")
+                listOf("mobile-ui", "mobile-ui.off", "android-fetch-auto.mjs", "android-fetch-auto.mjs.off").forEach { stale ->
+                    val d = File(plugins, stale)
+                    if (d.exists()) {
+                        val gone = d.deleteRecursively()
+                        Log.i(EngineConfig.TAG, "obsolete plugin removed: $stale gone=$gone")
+                    }
+                }
+            }.onFailure { Log.w(EngineConfig.TAG, "obsolete plugin cleanup failed: ${it.message}") }
+
+            listOf("mobile-progress").forEach { pkg ->
                 listOf("package.json", "index.js", "client.js", "prefixes.json").forEach { fileName ->
                     val bytes = runCatching {
                         ctx.assets.open("android-plugins/$pkg/$fileName").use { it.readBytes() }

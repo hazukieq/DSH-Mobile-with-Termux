@@ -74,5 +74,4 @@ object EngineConfig {
     fun healTermuxShebangs(ctx: android.content.Context) { EngineSelfHeal.healTermuxShebangs(ctx) }
     fun ensureAgentArtifacts(ctx: android.content.Context) { EngineSelfHeal.ensureAgentArtifacts(ctx) }
     fun ensureBundledPlugins(ctx: android.content.Context) { EngineSelfHeal.ensureBundledPlugins(ctx) }
-    fun repairMobileUi(ctx: android.content.Context): Boolean = EngineSelfHeal.repairMobileUi(ctx)
 }

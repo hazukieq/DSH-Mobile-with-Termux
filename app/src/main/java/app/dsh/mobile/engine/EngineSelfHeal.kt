@@ -128,23 +128,4 @@ internal object EngineSelfHeal {
         }
             .onFailure { Log.w(EngineConfig.TAG, "pnpm extract failed: ${it.message}") }
     }
-
-    /**
-     * 修复移动端界面（设置 → 一键还原 UI）。
-     *
-     * 语义：**不是**退回桌面版 WebUI，而是把被改坏的 mobile-ui 恢复成 App 内置的那一份。
-     * 做法：删掉 dsh-home/android-plugins/mobile-ui/ 下已部署的文件，重启引擎时按
-     * assets 重新部署；WebUI 侧的面板/抽屉状态由插件自己按默认值重建。
-     *
-     * 返回是否真的删到了东西（用于给用户一个诚实的回执）。
-     */
-    fun repairMobileUi(ctx: android.content.Context): Boolean = runCatching {
-        // 部署位置是 $PREFIX/android-plugins（见 AndroidOverlay 的 deployAssets），
-        // 不是 dsh-home/android-plugins —— 旧实现指错了目录，"还原 UI" 实际删不到东西。
-        val dir = java.io.File(EngineConfig.engineRoot(ctx), "android-plugins/mobile-ui")
-        val existed = dir.exists()
-        if (existed) dir.deleteRecursively()
-        Log.i(EngineConfig.TAG, "repairMobileUi: existed=$existed deleted=${!dir.exists()} path=${dir.path}")
-        existed && !dir.exists()
-    }.onFailure { Log.w(EngineConfig.TAG, "repairMobileUi failed: ${it.message}") }.getOrDefault(false)
 }

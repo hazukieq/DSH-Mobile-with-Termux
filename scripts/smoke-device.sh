@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DSH Mobile 真机冒烟：引擎 / 分享 / mobile-ui 部署 / 终端长按菜单 / 特权模式（NORMAL→ROOT→SHIZUKU）
+# DSH Mobile 真机冒烟：引擎 / 分享 / 原生窄屏（mobile-ui 已移除） / 终端长按菜单 / 特权模式（NORMAL→ROOT→SHIZUKU）/ Agent 原语
 #
 #   bash scripts/smoke-device.sh --device 5f08bc20 [--only priv] [--priv-cycle] [--no-restore]
 #
@@ -88,17 +88,19 @@ if [ -z "$ONLY" ] || [ "$ONLY" = "share" ]; then
   else skip "分享文件落盘（需要 root 读 inbox）"; fi
 fi
 
-# ---------- 3 mobile-ui ----------
+# ---------- 3 引擎原生窄屏（mobile-ui 已移除） ----------
 if [ -z "$ONLY" ] || [ "$ONLY" = "ui" ]; then
-  sec "3 mobile-ui"
-  for f in android-plugins/mobile-ui/client.js android-plugins/mobile-ui/package.json android-plugins/mobile-ui/prefixes.json android-overlay.yml; do
-    if [ "$ROOT_OK" = 1 ]; then
-      [ "$(S "test -f $PREFIX/$f && echo 1")" = "1" ] && ok "已部署 $f" || bad "缺 $f"
-    else skip "检查 $f（需要 root）"; fi
-  done
+  sec "3 引擎原生窄屏（mobile-ui 已移除）"
   if [ "$ROOT_OK" = 1 ]; then
-    S "grep -q 'mobile-ui' $PREFIX/android-overlay.yml && echo 1" | grep -q 1 && ok "overlay 注册 mobile-ui" || bad "overlay 未注册 mobile-ui"
-  fi
+    # 反向断言：插件资产与 overlay 注册项都必须不存在，防止构建回退时静默复活。
+    S "test -d $PREFIX/android-plugins/mobile-ui && echo 1" | grep -q 1 \
+      && bad "android-plugins/mobile-ui 仍存在（应已移除）" || ok "mobile-ui 插件已移除"
+    S "grep -q 'id: mobile-ui' $PREFIX/android-overlay.yml && echo 1" | grep -q 1 \
+      && bad "overlay 仍注册 mobile-ui" || ok "overlay 无 mobile-ui 注册项"
+    # 正向断言：引擎自身的窄屏 UI 在工作（侧栏/顶栏任一可见即可）
+    S "test -f $PREFIX/.dsh-engine-version && cat $PREFIX/.dsh-engine-version" | grep -qiE 'rc\.|alpha|^[0-9]' \
+      && ok "引擎版本戳存在" || bad "引擎版本戳缺失"
+  else skip "检查 mobile-ui 已移除（需要 root）"; fi
 fi
 
 # ---------- 4 终端长按菜单 ----------

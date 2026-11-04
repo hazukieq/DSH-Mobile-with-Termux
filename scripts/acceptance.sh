@@ -47,7 +47,7 @@ echo "== 3/4 APK 断言"
 if [ ! -f "$APK" ]; then FAIL+=("APK 存在"); echo "  FAIL $APK 不存在"; else
   run "包名/版本/ABI"   bash -c 'set -e; b=$('"$AAPT2"' dump badging '"$APK"'); echo "$b"|grep -q "name=.com.termux"; echo "$b"|grep -q "arm64-v8a"; echo "$b"|grep -q "versionName="'
   run "引擎层资产"      has assets/engine-dsh-aarch64.zip
-  run "mobile-ui 插件"  has assets/android-plugins/mobile-ui/client.js
+  run "mobile-ui 已移除"  nothas "assets/android-plugins/mobile-ui/"
   run "产物文档"        has assets/docs/SECURITY-AUDIT.md
   run "无开发文档"      nothas "assets/docs/(ANDROID-CLI|refactor_guide|code_review|AI_CONTEXT)"
 fi
@@ -61,7 +61,7 @@ run "引擎就绪(401)" bash -c 'adb -s'"$DEVICE"' shell am force-stop com.termu
 run "引擎版本文件" bash -c 'adb -s '"$DEVICE"' shell "su -c \"cat /data/user/0/com.termux/files/usr/.dsh-engine-version\""|grep -q "0\.2\."'
 run "冷启动打点" bash -c 'for i in $(seq 1 20); do adb -s '"$DEVICE"' logcat -d -s DshColdStart|grep -q engine.portReady && exit 0; sleep 2; done; exit 1'
 
-# 交互与特权的完整回归（分享 / mobile-ui 部署 / 长按菜单 / NORMAL→ROOT→SHIZUKU 模式切换）
+# 交互与特权的完整回归（分享 / 原生窄屏 / 长按菜单 / NORMAL→ROOT→SHIZUKU 模式切换 / Agent 原语）
 run "Shizuku 服务就绪" bash scripts/start-shizuku.sh --device "$DEVICE"
 run "真机交互+特权冒烟" bash scripts/smoke-device.sh --device "$DEVICE" --priv-cycle
 fi

@@ -239,27 +239,6 @@ class SettingsActivity : Activity() {
             Toast.makeText(this, getString(android.R.string.ok), Toast.LENGTH_SHORT).show()
         }
 
-        // —— 其他：一键还原 UI（v2.5.42）——
-        // 用户语义：把被改坏的 mobile-ui 恢复成 App 内置版本，**不是**切回桌面版 WebUI。
-        // 页面本身可能已经坏了（没有逃生口），所以入口放在原生设置，并先弹确认。
-        findViewById<LinearLayout>(R.id.rowStockUi).setOnClickListener {
-            android.app.AlertDialog.Builder(this)
-                .setTitle(R.string.setting_stock_ui)
-                .setMessage(R.string.setting_stock_ui_confirm)
-                .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    val deleted = EngineConfig.repairMobileUi(this)
-                    (application as DshApp).supervisor.restart()
-                    Toast.makeText(
-                        this,
-                        if (deleted) getString(R.string.setting_stock_ui_done)
-                        else getString(R.string.setting_stock_ui_none),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-                .show()
-        }
-
         // —— 其他：语言 Language（v1.2.120：en/de/zh 三选一，默认 en）——
         val langCodes = listOf("en", "de", "zh")
         fun langLabel(code: String): String = when (code) {

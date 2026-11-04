@@ -100,7 +100,7 @@ flock /tmp/dsh-gradle.lock ~/Projects/common/dsh-android-build/gradle-8.9/bin/gr
 | 引擎 home `$DSH_HOME` | `/data/user/0/com.termux/files/dsh-home` |
 | 引擎层版本文件 | `$PREFIX/.dsh-engine-version` |
 | 桥 token | `$PREFIX/.bridge-token`（0600，每次启动随机，只经环境变量给引擎） |
-| Android 插件 | `$PREFIX/android-plugins/`（mobile-ui、mobile-progress、fast-mode、priv-mode、bridge-token、plugin-health） |
+| Android 插件 | `$PREFIX/android-plugins/`（mobile-progress、fast-mode、priv-mode、bridge-token、plugin-health） |
 | overlay 配置 | `$PREFIX/android-overlay.yml`（引擎 `--patch` 用它注册插件） |
 | 门脚本 | `$PREFIX/bin/{docs,dsh-update,native,priv,scr,notify,shz,su}` |
 | 日志 | `$PREFIX/engine.log`（逐行 `[+Nms]`）+ logcat（`DshColdStart`、`DshShare`、`EngineConfig`） |
@@ -145,7 +145,7 @@ flock /tmp/dsh-gradle.lock ~/Projects/common/dsh-android-build/gradle-8.9/bin/gr
 | --- | --- | --- |
 | `bash scripts/acceptance.sh` | 静态门禁 → JVM 单测 → 构建 → APK 断言 | `--static` 只跑前两段，`--device <serial>` 追加真机 |
 | `gradle testDebugUnitTest` | 16 个 JVM 单测（ShareLogic / EngineEnvSpec / overlayDocument） | 纯逻辑，不需要设备 |
-| `bash scripts/smoke-device.sh --device <serial> [--priv-cycle]` | 引擎/分享/mobile-ui/长按菜单/特权三模式 | 21 项断言 |
+| `bash scripts/smoke-device.sh --device <serial> [--priv-cycle]` | 引擎/分享/长按菜单/特权三模式/Agent 原语 | 21 项断言 |
 | `bash scripts/start-shizuku.sh --device <serial>` | 拉起 Shizuku 服务 | uiautomator 定位按钮 |
 | `bash scripts/audit-apk.sh <apk>` | 签名指纹/权限/组件/载荷哈希/URL 扫描 | 对外审计用 |
 | `bash scripts/check-engine-deps.sh --root <nm>` | 缺依赖 + native addon 架构 + 运行时探针 | 三处构建内置硬门禁 |

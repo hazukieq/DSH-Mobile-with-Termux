@@ -411,10 +411,4 @@ engine: %6$s</string>
     <string name="progress_overlay_denied_title">Floating window needs permission — tap to grant</string>
     <string name="settings_a11y_enabled_not_connected">On (not connected)</string>
     <string name="settings_a11y_disabled_by_system">Granted but disabled by Android (tap to re-enable)</string>
-    <string name="setting_stock_ui">Reset mobile UI</string>
-    <string name="setting_stock_ui_sub">Re-deploy the built-in mobile skin and restart the engine. Use this when the mobile UI is broken.</string>
-    <string name="setting_stock_ui_confirm">Re-deploy the built-in mobile UI and restart the engine? Layout tweaks you made are lost; chat history is not affected.</string>
-    <string name="setting_stock_ui_done">Mobile UI restored; restarting the engine</string>
-    <string name="setting_stock_ui_none">Mobile UI was already the built-in copy; restarting the engine</string>
-    <string name="mobile_ui_not_applied">Mobile UI skin did not attach — engine CSS may have changed</string>
 </resources>

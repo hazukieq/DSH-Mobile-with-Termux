@@ -411,10 +411,4 @@ dsh：%2$s
     <string name="progress_overlay_denied_title">悬浮窗未授权 · 点此去授权</string>
     <string name="settings_a11y_enabled_not_connected">已开启（未连接）</string>
     <string name="settings_a11y_disabled_by_system">已授权但被系统停用（点此重开）</string>
-    <string name="setting_stock_ui">一键还原 UI</string>
-    <string name="setting_stock_ui_sub">把移动端界面恢复成 App 内置版本并重启引擎；界面被改坏时用这个。</string>
-    <string name="setting_stock_ui_confirm">将把移动端界面恢复成内置版本并重启引擎。你自己改过的布局设置会丢失，聊天记录不受影响。</string>
-    <string name="setting_stock_ui_done">已恢复内置界面，正在重启引擎</string>
-    <string name="setting_stock_ui_none">界面本来就是内置版本，正在重启引擎</string>
-    <string name="mobile_ui_not_applied">移动端界面未生效：可能是引擎样式改动，稍后会随版本适配</string>
 </resources>
