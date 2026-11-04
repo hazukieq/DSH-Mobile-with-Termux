@@ -152,24 +152,11 @@ internal object AndroidOverlay {
             |    - id: android-fast-mode
             |      name: ./android-plugins/fast-mode.mjs
             |
-            |# Narrow-screen UI fixes (v1.2.175 - v1.2.181). Each is a *client plugin
-            |# package* (directory form, e.g. mobile-ui/package.json): the package
-            |# declares dsh.client + exports["./client"], and the engine's client-modules
-            |# scanner discovers it from Loader entries and injects the browser bundle.
-            |# Why plugins instead of patching the engine source: the user asked for a
-            |# plugin form so it never conflicts with other UI plugins and survives
-            |# engine upgrades.
-            |#
-            |# dsh-mobile-ui (v0.1.17, by the user's earlier mobile-ui work): the Android
-            |# app-style layer over the shipped Web UI. One client plugin that turns the
-            |# sidebar into a popup drawer, collapses the conversation header behind an
-            |# info button, and adapts the composer. There is no in-page rollback any more:
-            |# if the skin breaks the UI, recover from the native settings screen
-            |# ("Stock UI"), which flips dsh_ui/stock_ui, skips this block and deletes the
-            |# deployed mobile-ui folder. Everything is gated on html[data-dsh-mobile].
-            |- insert:
-            |    - id: mobile-ui
-            |      name: ./android-plugins/mobile-ui/index.js
+            |# Narrow-screen UI: handled by the engine's own Web UI since dsh 0.2.2
+            |# (sidebar collapses into a drawer, compact header, adaptive composer).
+            |# The old dsh-mobile-ui client plugin is no longer inserted: it duplicated
+            |# what the engine now does and fought the version-specific CSS hashes.
+            |# Its assets still ship under android-plugins/mobile-ui for manual trials.
             |
             |# v1.3.68 background progress: watch the current session DOM (thinking / step)
             |# and report it to native through DshNative for the notification / floating
