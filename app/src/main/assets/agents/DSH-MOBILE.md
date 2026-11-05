@@ -84,7 +84,7 @@ as blocked because it is off:
   `POST /overlay` (progress overlay; SYSTEM_ALERT_WINDOW first, a11y window only as fallback);
 - app/engine control: `GET /status`, `GET /settings`, `GET /apps`, `GET /process`, `GET /diag`,
   `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`,
-  `native status|settings|set`, `dsh-update`;
+  `native status|settings|set`, `native alarm --hour H --minute M [--message T]
 - our own window: `GET /app-screenshot` (`appshot` — PixelCopy; no accessibility, no CDP);
 - memory bookkeeping: `GET /memory/list`, `GET /memory/stats`, `POST /memory/confirm`,
   `POST /memory/clear`;
@@ -106,7 +106,7 @@ route around it — user taps/reads, `/launch` + `wait-app com.termux` hand-off,
 own window, `notify`/`say` for output. Never retry a non-retryable a11y error and never re-probe
 before each action: one `GET /status` at the start of a UI task is enough.
 
-## Full native API: AgentBridge (80 paths, 82 method+path pairs)
+## Full native API: AgentBridge (81 paths, 83 method+path pairs)
 
 Everything the app can do natively is exposed over `127.0.0.1:3083`; use
 `dsh-mobile bridge <GET|POST> <path> [json]` so the token is handled for you, e.g.
@@ -121,6 +121,9 @@ Groups (see the actual handlers for params):
   `{"component":"pkg/cls"}` (plus optional `action`, `data`, `extras`); a missing component returns
   `{"ok":false,"error":"component not found: ..."}`, and a successful component start is flagged
   `backgroundLaunchMayBeBlocked` because Android may silently refuse background activity starts.
+- System: `POST /alarm/set` `{hour,minute,message?,days?,skip_ui?}` opens the system clock app
+  prefilled and (with a clock that honours `SET_ALARM`) creates the alarm; reply carries
+  `started` + `candidates[]` for the disambiguation it performed.
 - Vision: `POST /vision/crop`, `/vision/track`, `/vision/tap`, `/vision/drag`, `GET /vision/list`.
 - Memory: `GET /memory/list`, `/memory/stats`, `POST /memory/lookup`, `/memory/store`,
   `/memory/confirm`, `/memory/clear`.

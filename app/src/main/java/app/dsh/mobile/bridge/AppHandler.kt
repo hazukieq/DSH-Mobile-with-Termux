@@ -481,6 +481,72 @@ internal class AppHandler(private val bridge: AgentBridge) {
         }
     }
 
+    /**
+     * 设置系统闹钟（AlarmClock.ACTION_SET_ALARM）。
+     *
+     * 为什么不用 AlarmManager：那样只是本 App 自己的定时任务，不会出现在系统时钟 App 的
+     * 闹钟列表里。交给时钟 App 建，才「用户看得见、可编辑、关不关得掉都归用户」。
+     * SKIP_UI 默认 false：厂商时钟对静默设置支持不一（小米实测忽略 SKIP_UI，闹钟不落库），
+     * 默认走确认页最稳；调用方确实想要静默可显式传 skip_ui=true。
+     */
+    internal fun alarmSet(ctx: Context, body: String): Pair<Int, String> {
+        with(bridge) {
+        val obj = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val hour = obj.optInt("hour", -1)
+        val minute = obj.optInt("minute", -1)
+        if (hour !in 0..23) return 400 to """{"ok":false,"error":"hour must be 0..23"}"""
+        if (minute !in 0..59) return 400 to """{"ok":false,"error":"minute must be 0..59"}"""
+
+        val intent = android.content.Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+            putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+            putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+            obj.optString("message").takeIf { it.isNotBlank() }?.let {
+                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, it)
+            }
+            obj.optJSONArray("days")?.let { arr ->
+                val days = ArrayList<Int>()
+                for (i in 0 until arr.length()) days.add(arr.optInt(i))
+                if (days.isNotEmpty()) putExtra(android.provider.AlarmClock.EXTRA_DAYS, days)
+            }
+            if (obj.has("vibrate")) putExtra(android.provider.AlarmClock.EXTRA_VIBRATE, obj.optBoolean("vibrate", true))
+            // 默认 false：走时钟 App 的确认页（唯一能保证落库的路径）
+            putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, obj.optBoolean("skip_ui", false))
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        val pm = ctx.packageManager
+        val handlers = pm.queryIntentActivities(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        val out = JSONObject()
+            .put("ok", false)
+            .put("hour", hour)
+            .put("minute", minute)
+            .put("skip_ui", obj.optBoolean("skip_ui", false))
+        val candidates = JSONArray()
+        handlers.forEach { ri ->
+            candidates.put(JSONObject()
+                .put("package", ri.activityInfo.packageName)
+                .put("activity", ri.activityInfo.name)
+                .put("label", runCatching { ri.loadLabel(pm).toString() }.getOrDefault("")))
+        }
+        out.put("candidates", candidates)
+        if (handlers.isEmpty()) {
+            return 404 to out.put("error", "no app handles SET_ALARM").toString()
+        }
+        // 多时钟并存（小米时钟 + Google 时钟）时会弹「选择要使用的应用」：这里直接定到默认时钟，
+        // 优先小米/AOSP 的 com.android.deskclock，其次 Google 的，再退第一个。
+        val preferred = listOf("com.android.deskclock", "com.google.android.deskclock")
+            .firstNotNullOfOrNull { pkg -> handlers.firstOrNull { it.activityInfo.packageName == pkg } }
+            ?: handlers.first()
+        intent.setClassName(preferred.activityInfo.packageName, preferred.activityInfo.name)
+        runCatching { ctx.startActivity(intent) }
+            .onFailure { return 500 to out.put("error", "startActivity failed: ${it.message}").toString() }
+        return 200 to out.put("ok", true)
+            .put("started", "${preferred.activityInfo.packageName}/${preferred.activityInfo.name}")
+            .toString()
+        }
+    }
+
     internal fun openPath(ctx: Context, body: String, kind: String): Pair<Int, String> {
         with(bridge) {
         val obj = runCatching { JSONObject(body) }.getOrNull()
