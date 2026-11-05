@@ -193,6 +193,9 @@ flock /tmp/dsh-gradle.lock ~/Projects/common/dsh-android-build/gradle-8.9/bin/gr
 | `built for ?` / addon 架构误报 | 中文 locale 下 readelf 输出被本地化 → `LC_ALL=C` |
 | `npm` 在设备上必挂 | 0.2.2 引擎无 corepack；用 curl 拉 tarball + clang 直编 |
 | `/tmp` 在 Android 只读 | 一律用 `$PREFIX/tmp` |
+| 装了新 APK 后 `/act` 回 `a11y_off` | **每次覆盖安装/强杀，Android 都会关掉无障碍服务**；回执自带 `how_to_fix` 与 `action:"open_a11y_settings"`。恢复：`settings put secure enabled_accessibility_services com.termux/app.dsh.mobile.DshAccessibilityService` + `settings put secure accessibility_enabled 1`，等 2–4s 到 `dumpsys accessibility` 出现 `Bound services:{…}` 再复测 |
+| adb 注入 shell 命令被改坏（路径多字母/空格变异） | 中文 IME（vivo/百度/Simeji）会做联想替换：先 `ime list -s` 再逐个 `ime disable`，然后 `input text`；恢复时 `ime enable`。实测把 `/sdcard/Download/so.sh` 打成 `/sdcard/Downloads/so.sh` |
+| 悬浮窗吞掉手势且回执看不出原因 | `/gesture` 回执现在带 `window` 与 `ownOverlay`（按 `TYPE_ACCESSIBILITY_OVERLAY` 判定，不是包名）；批量动作传 `hideOverlay:true`。判据错用包名会把整屏都算成悬浮窗 |
 | `adb shell input text` 打不进 WebView | 用 CDP `Input.insertText`；`input text` 的空格要写 `%s` |
 | 分享大文件卡主线程 | 已修：后台线程 + 512 MB/1 GB/20 文件上限 |
 | 引擎层只在首装解包 | 升级 APK 不会换 `lib/`；用 `dsh-update apply` 双换（闭包 + 原生库） |
