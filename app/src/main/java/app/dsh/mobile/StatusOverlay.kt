@@ -256,7 +256,7 @@ object StatusOverlay {
                     p.x = (ctx.resources.displayMetrics.widthPixels - vw - margin)
                         .coerceAtLeast(margin)
                     p.y = clampY(view, p, ctx)
-                    runCatching { w.updateViewLayout(view, p) }
+                    runCatching { safeUpdateLayout(w, view, p) }
                     Log.i(TAG, "overlay shown at ${p.x},${p.y} (${view.width}x${view.height})")
                 }
             } catch (e: Exception) {
@@ -362,7 +362,7 @@ object StatusOverlay {
                     if (moved) {
                         p.x = startX + dx.toInt()
                         p.y = startY + dy.toInt()
-                        runCatching { wm?.updateViewLayout(root ?: target, p) }
+                        runCatching { safeUpdateLayout(wm, root ?: target, p) }
                     }
                     true
                 }
@@ -432,7 +432,7 @@ object StatusOverlay {
         runCatching {
             prm.x = dockX(v, prm, ctx)
             prm.y = clampY(v, prm, ctx)
-            wm?.updateViewLayout(v, prm)
+            safeUpdateLayout(wm, v, prm)
         }
     }
 
@@ -447,7 +447,7 @@ object StatusOverlay {
         val target = if (dockRight) screenW - vw - margin else margin
         p.y = clampY(view, p, ctx)
         p.x = target
-        runCatching { wm?.updateViewLayout(view, p) }
+        runCatching { safeUpdateLayout(wm, view, p) }
     }
 
     /**
@@ -594,7 +594,7 @@ object StatusOverlay {
         p.width = w
         p.height = h
         Log.i(TAG, "[win] level=$expandLevel collapsed=$collapsed ${w}x$h")
-        runCatching { wm?.updateViewLayout(view, p) }
+        runCatching { safeUpdateLayout(wm, view, p) }
         // 档位变化时重挂窗口：只改 LayoutParams 时部分 ROM 会保留旧 frame（透明区域挡住下层）
         if (lastAppliedLevel != expandLevel) {
             lastAppliedLevel = expandLevel
@@ -605,7 +605,7 @@ object StatusOverlay {
             view.post {
                 runCatching {
                     p.x = dockX(view, p, ctx)
-                    wm?.updateViewLayout(view, p)
+                    safeUpdateLayout(wm, view, p)
                 }
             }
         }
@@ -659,7 +659,7 @@ object StatusOverlay {
             val v = root ?: return@main
             val p = params ?: return@main
             runCatching {
-                wm?.updateViewLayout(v, p)
+                safeUpdateLayout(wm, v, p)
                 v.visibility = View.VISIBLE
                 v.requestLayout()
             }
@@ -770,7 +770,7 @@ object StatusOverlay {
             val next = if (opsAvoid) (p.flags or notTouchable) else (p.flags and notTouchable.inv())
             if (next == p.flags) return@main
             p.flags = next
-            runCatching { if (r.isAttachedToWindow) w.updateViewLayout(r, p) }
+            runCatching { if (r.isAttachedToWindow) safeUpdateLayout(w, r, p) }
         }
     }
 
@@ -858,7 +858,7 @@ object StatusOverlay {
             sc.layoutParams = lp
             sc.requestLayout()
             root?.requestLayout()
-            root?.let { r -> params?.let { wm?.updateViewLayout(r, it) } }
+            root?.let { r -> params?.let { safeUpdateLayout(wm, r, it) } }
         }
     }
 
@@ -877,7 +877,7 @@ object StatusOverlay {
             a11yText?.text = a11yLines.joinToString("\n") { "› " + it }
             refreshActionVisibility()
             root?.requestLayout()
-            root?.let { rv -> params?.let { pr -> wm?.updateViewLayout(rv, pr) } }
+            root?.let { rv -> params?.let { pr -> safeUpdateLayout(wm, rv, pr) } }
         }
     }
 
@@ -1131,6 +1131,27 @@ object StatusOverlay {
 
     private fun main(block: () -> Unit) {
         runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post(block) }
+    }
+
+
+    /**
+     * 窗口布局的安全写法：视图可能被临时摘除（截图/读屏期间 beginCaptureAvoid 会
+     * removeViewImmediate），此时 updateViewLayout 会抛
+     * IllegalArgumentException: View ... not attached to window manager，未捕获就让进程崩。
+     * 所以统一走这里：没挂上就跳过（等 endCaptureAvoid 重新 addView 后自然生效）。
+     */
+    private fun safeUpdateLayout(
+        w: android.view.WindowManager?,
+        v: android.view.View?,
+        p: android.view.WindowManager.LayoutParams?
+    ) {
+        if (w == null || v == null || p == null) return
+        if (!runCatching { v.isAttachedToWindow }.getOrDefault(false)) {
+            Log.i(TAG, "updateViewLayout skipped: overlay detached")
+            return
+        }
+        runCatching { safeUpdateLayout(w, v, p) }
+            .onFailure { Log.w(TAG, "updateViewLayout failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
     /** 状态色同时作用到两枚圆点（球态那枚 + 卡片态那枚）。 */

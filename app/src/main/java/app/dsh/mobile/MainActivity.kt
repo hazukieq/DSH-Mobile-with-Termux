@@ -173,7 +173,15 @@ class MainActivity : Activity() {
             host?.removeView(placeholder)
             runCatching { placeholder.destroy() }
             globalWebView.id = R.id.webView
-            if (host != null && index >= 0) host.addView(globalWebView, index, lp)
+            // Activity 重建时全局 WebView 可能还挂在旧窗口层级里：先摘再挂，
+            // 否则 addView 抛 IllegalStateException: The specified child already has a parent。
+            (globalWebView.parent as? android.view.ViewGroup)?.let { old ->
+                if (old !== host) runCatching { old.removeView(globalWebView) }
+            }
+            if (host != null && index >= 0) {
+                runCatching { host.addView(globalWebView, index, lp) }
+                    .onFailure { Log.w("DshWebView", "re-attach failed: ${it.message}") }
+            }
         }
         webView = globalWebView
         setupWebView()
