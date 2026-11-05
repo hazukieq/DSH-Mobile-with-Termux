@@ -131,6 +131,19 @@ object StatusOverlay {
     private const val COLOR_DONE = 0xFFFF5A5F.toInt()      // 完成/结束：红
 
     /** 诊断用：一句话描述当前窗口状态（给截图链路打日志，便于定位「到底摘掉的是不是它」）。 */
+    /** 当前悬浮窗在屏幕上的矩形（无窗口时 null）。prefetch 用它在 OCR 结果里排除悬浮窗自身文字。 */
+    fun currentFrameRect(): android.graphics.Rect? {
+        val ctx = appCtx ?: return null
+        if (!liveViews.contains(root ?: return null)) return null
+        val r = root ?: return null
+        val loc = IntArray(2)
+        runCatching { r.getLocationOnScreen(loc) }
+        val w = r.width
+        val h = r.height
+        if (w <= 0 || h <= 0) return null
+        return android.graphics.Rect(loc[0], loc[1], loc[0] + w, loc[1] + h)
+    }
+
     fun debugState(): String {
         val r = root
         val p = params
@@ -818,7 +831,16 @@ object StatusOverlay {
         }
     }
 
+    @Volatile private var lastOpsAvoidToggleAt = 0L
+    private const val OPS_AVOID_MIN_GAP_MS = 400L
+
     fun beginOpsAvoid() {
+        val now = System.currentTimeMillis()
+        if (now - lastOpsAvoidToggleAt < OPS_AVOID_MIN_GAP_MS) {
+            Log.i(TAG, "opsAvoid on debounced (gap=${now - lastOpsAvoidToggleAt}ms)")
+            return
+        }
+        lastOpsAvoidToggleAt = now
         if (opsAvoid) return
         opsAvoid = true
         applyOpsAvoid()
@@ -828,6 +850,12 @@ object StatusOverlay {
     }
 
     fun endOpsAvoid() {
+        val now = System.currentTimeMillis()
+        if (now - lastOpsAvoidToggleAt < OPS_AVOID_MIN_GAP_MS) {
+            Log.i(TAG, "opsAvoid off debounced (gap=${now - lastOpsAvoidToggleAt}ms)")
+            return
+        }
+        lastOpsAvoidToggleAt = now
         mainHandler.removeCallbacks(opsAvoidWatchdog)
         if (!opsAvoid) return
         opsAvoid = false

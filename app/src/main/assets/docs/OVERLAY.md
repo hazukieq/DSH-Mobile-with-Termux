@@ -132,3 +132,14 @@
 - [ ] 空闲 ↔ 工作切换时只看得到内容变化，**没有窗口重挂/闪白**（可通过 `[win] level=... 尺寸` 日志确认没有尺寸跳变或重挂）。
 - [ ] 展开态点卡片上任意位置（含空白、动作行、正文）都能收起；正文区可以正常滚动。
 - [ ] `logcat -s StatusOverlay` 里没有 `cleared stale NOT_TOUCHABLE`、`opsAvoid watchdog fired` 之外的告警。
+
+补充规则（issue-overlay-flicker 之后定的）：
+
+- **只有显式截图才摘窗口**：`screenshotBase64(avoidOverlay=true)` 用于 `/screenshot`、`shot` 门、agent 取图。
+- **后台 OCR prefetch 必须 `avoidOverlay=false`**：它每 3–5 秒抓一帧，摘/挂窗口会让悬浮窗肉眼可见地闪
+  （现象：静置时约 4 秒消失一次）。prefetch 的画面里如果带着悬浮窗，用
+  `StatusOverlay.currentFrameRect()` 把落在该矩形内的 OCR block 丢掉（日志 `ocr ready n=… dropped=…`）。
+- **双缓冲要丢两帧**：切 App / 展开动画刚结束的第一张仍可能拿到旧帧，所以 warmup 做两次
+  （`warmup1`/`warmup2` 各打一行日志），再取真图。
+- **opsAvoid 去抖**：`beginOpsAvoid/endOpsAvoid` 400ms 内重复切换直接忽略（`opsAvoid on/off debounced`），
+  避免每 250ms 翻一次导致状态栏/窗口抖动。

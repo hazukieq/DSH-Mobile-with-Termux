@@ -50,20 +50,24 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         Thread {
             try {
                 val t0 = System.currentTimeMillis()
-                val shot = svc.screenshotBase64(2500L) ?: return@Thread
+                val shot = svc.screenshotBase64(2500L, avoidOverlay = false) ?: return@Thread
                 val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
                 val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@Thread
                 val r = PpOcr.recognize(svc, bmp, tier, useCache = true, regionOnly = false)
                 bmp.recycle()
+                // prefetch 不再摘悬浮窗（否则每 3–5 秒闪一次），改成把落在悬浮窗矩形里的 OCR 结果剔掉
+                val overlayRect = app.dsh.mobile.StatusOverlay.currentFrameRect()
+                var dropped = 0
                 val arr = JSONArray()
                 r.blocks.forEach { b ->
+                    if (overlayRect != null && overlayRect.contains(b.cx, b.cy)) { dropped++; return@forEach }
                     arr.put(JSONObject().put("text", b.text)
                         .put("bounds", JSONArray(listOf(b.left, b.top, b.right, b.bottom)))
                         .put("center", JSONArray(listOf(b.cx, b.cy)))
                         .put("source", "ocr").put("role", "text"))
                 }
                 ocrPrefetch = OcrPrefetch(System.currentTimeMillis(), shot.first, shot.second, arr)
-                app.dsh.mobile.DshLog.d("prefetch", "ocr ready n=${arr.length()} ms=${System.currentTimeMillis() - t0}")
+                app.dsh.mobile.DshLog.d("prefetch", "ocr ready n=${arr.length()} dropped=$dropped ms=${System.currentTimeMillis() - t0}")
             } catch (e: Throwable) {
                 app.dsh.mobile.DshLog.e("prefetch", "ocr prefetch failed: ${e.message}", e)
             } finally { ocrPrefetching = false }

@@ -1012,18 +1012,38 @@ class DshAccessibilityService : AccessibilityService() {
      *     之后立刻截，图里还有悬浮窗。已知现象与对策（先取一帧丢掉、再取真图）：
      *     https://community.amazondeveloper.com/t/vega-sdk-0-24-vvd-automation-toolkit-crashes-on-every-takescreenshot-econnreset-then-dies-after-3-calls-until-reboot/29134/12
      */
-    fun screenshotBase64(timeoutMs: Long = 3000L): Triple<Int, Int, String>? {
+    /**
+     * @param avoidOverlay 是否在拍照前摘掉自己的悬浮窗。
+     *   显式截图（/screenshot、shot 门、agent 取图）必须 true —— 用户要的是「所见即所得」；
+     *   后台 OCR prefetch 必须 **false** —— 它每 3–5 秒抓一帧，摘/挂窗口会让悬浮窗肉眼可见地闪
+     *   （issue-overlay-flicker）。prefetch 的画面里如果有悬浮窗，由 [ScreenHandler] 按 overlay
+     *   矩形把 OCR block 过滤掉，不用摘窗口。
+     */
+    fun screenshotBase64(timeoutMs: Long = 3000L, avoidOverlay: Boolean = true): Triple<Int, Int, String>? {
         if (Build.VERSION.SDK_INT < 30) return null
         val svcForAvoid = instance
-        Log.i("DshA11y", "screenshot: begin svc=${svcForAvoid != null} overlays=${StatusOverlay.debugState()}")
+        Log.i("DshA11y", "screenshot: begin avoid=$avoidOverlay svc=${svcForAvoid != null} overlays=${StatusOverlay.debugState()}")
+        if (!avoidOverlay) {
+            awaitCaptureSlot()
+            repeat(2) { attempt ->
+                val r = screenshotBase64Inner(timeoutMs)
+                Log.i("DshA11y", "screenshot(no-avoid): attempt=${attempt + 1} ok=${r != null}")
+                r?.let { return it }
+                Thread.sleep(350L)
+            }
+            return null
+        }
         StatusOverlay.beginCaptureAvoid(svcForAvoid)
         try {
             Log.i("DshA11y", "screenshot: avoid done, overlays=${StatusOverlay.debugState()}")
             // 等一帧 + 丢掉一次采集：把双缓冲里「摘窗口前」的那一帧消耗掉
             Thread.sleep(120L)
-            awaitCaptureSlot()
-            val warm = screenshotBase64Inner(timeoutMs)
-            Log.i("DshA11y", "screenshot: warmup=${warm != null} (discard) overlays=${StatusOverlay.debugState()}")
+            // 双缓冲要丢两帧：切 App / 展开动画刚结束时的第一张仍可能拿到「摘窗口前」的帧
+            repeat(2) { w ->
+                awaitCaptureSlot()
+                val warm = screenshotBase64Inner(timeoutMs)
+                Log.i("DshA11y", "screenshot: warmup${w + 1}=${warm != null} (discard) overlays=${StatusOverlay.debugState()}")
+            }
             // 真正的图
             repeat(3) { attempt ->
                 awaitCaptureSlot()
