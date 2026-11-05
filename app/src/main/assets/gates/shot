@@ -6,7 +6,7 @@ if [ -z "$_DSH_REEXEC" ]; then
   exec "@DSH_BASH@" "$0" "$@"
 fi
 # [dsh-android] shot: system screenshot via the accessibility service.
-# usage: shot [--max N] [--out /path/file.png]
+# usage: shot [--max N] [--out /path/file.png] [--delay SECONDS]
 #   Prints the JSON from the bridge ({"ok":true,"path":"..."}), or copies to --out.
 # Requires the accessibility service (DSH 屏幕点击) to be enabled.
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -14,16 +14,21 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 
 MAX=1280
 OUT=""
+DELAY=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --max) shift; MAX="${1:-1280}" ;;
     --out) shift; OUT="${1:-}" ;;
-    -h|--help) echo "usage: shot [--max N] [--out /path.png]"; exit 0 ;;
+    --delay) shift; DELAY="${1:-0}" ;;
+    -h|--help) echo "usage: shot [--max N] [--out /path.png] [--delay SECONDS]"; exit 0 ;;
     *) echo "shot: unknown argument '$1'" >&2; exit 2 ;;
   esac
   shift
 done
 
+# --delay：先等 N 秒再截。用来「切到别的 App 再拍」——
+# 否则前台还是本 App 的终端，拍到的就是终端自己。
+if [ "$DELAY" -gt 0 ] 2>/dev/null; then sleep "$DELAY"; fi
 out=$(dsh_http GET "/screenshot?save=1&max=$MAX")
 rc=$?
 [ "$rc" = 0 ] || { echo "shot: bridge failed (rc=$rc)${out:+ — $out}" >&2; exit 1; }

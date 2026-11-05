@@ -990,75 +990,51 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
 
+    // ── takeScreenshot 平台节流：AOSP 的间隔下限是 333ms ────────────────────────
+    // 依据：AccessibilityService 对 takeScreenshot 有
+    // `ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS = 333` 的硬限制，
+    // 低于它就回 errorCode=3(INTERVAL_TIME_SHORT)。参考实现里也统一按这个下限做合并：
+    // https://github.com/kaeawc/auto-mobile/pull/4995
+    @Volatile private var lastCaptureStamp = 0L
+    private fun awaitCaptureSlot() {
+        val since = System.currentTimeMillis() - lastCaptureStamp
+        if (since in 0 until 350L) Thread.sleep(350L - since)
+        lastCaptureStamp = System.currentTimeMillis()
+    }
+
     /**
-     * 只截**应用窗口**（API 34+ `takeScreenshotOfWindow`），从根上排除我们自己的悬浮窗。
+     * 截图（整体截图 + 截图前摘掉自己的悬浮窗）。
      *
-     * 为什么不用「整屏截图 + 截图前隐藏悬浮窗」：
-     *  - `visibility=GONE` / `alpha=0` / 移出屏幕，在这几台机器上都会被 `takeScreenshot`
-     *    拍到（它给的是已合成帧，改属性后短期内仍是旧帧）；
-     *  - `removeView` 虽然把窗口摘了，但恢复时容易撞上布局/权重问题（历史上「展开态文字消失」）。
-     * 只截目标窗口既不需要隐藏，也不会有恢复失败的窗口，浮窗自然不在结果里。
+     * 两个平台坑（都不是靠猜，是查到的）：
+     *  1. **节流**：同一服务相邻两次 takeScreenshot 必须 ≥333ms，否则 errorCode=3；
+     *     所以这里用 [awaitCaptureSlot] 统一排队，不再靠固定 sleep 撞运气。
+     *  2. **陈旧帧**：SurfaceFlinger 双缓冲，取到的可能是**上一帧**——于是「摘掉悬浮窗」
+     *     之后立刻截，图里还有悬浮窗。已知现象与对策（先取一帧丢掉、再取真图）：
+     *     https://community.amazondeveloper.com/t/vega-sdk-0-24-vvd-automation-toolkit-crashes-on-every-takescreenshot-econnreset-then-dies-after-3-calls-until-reboot/29134/12
      */
-    private fun appWindowForCapture(): android.view.accessibility.AccessibilityWindowInfo? {
-        val ws = runCatching { windows }.getOrDefault(emptyList())
-        val apps = ws.filter { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION }
-        return apps.firstOrNull { it.isActive || it.isFocused } ?: apps.firstOrNull()
-    }
-
-    private fun screenshotAppWindowBase64Inner(timeoutMs: Long): Triple<Int, Int, String>? {
-        if (Build.VERSION.SDK_INT < 34) return null
-        val win = appWindowForCapture() ?: return null
-        val latch = CountDownLatch(1)
-        var bmp: Bitmap? = null
-        val callback = object : TakeScreenshotCallback {
-            override fun onSuccess(screenshot: ScreenshotResult) {
-                runCatching {
-                    val hw = Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                    bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
-                    hw?.recycle()
-                }
-                screenshot.hardwareBuffer.close()
-                latch.countDown()
-            }
-            override fun onFailure(errorCode: Int) {
-                Log.w("DshA11y", "screenshotOfWindow failed: errorCode=$errorCode win=${win.id}")
-                latch.countDown()
-            }
-        }
-        runCatching { takeScreenshotOfWindow(win.id, { it.run() }, callback) }
-            .onFailure { Log.w("DshA11y", "takeScreenshotOfWindow threw: ${it.message}") }
-        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
-        val bitmap = bmp ?: return null
-        val baos = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos)
-        return Triple(bitmap.width, bitmap.height, Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP))
-    }
-
     fun screenshotBase64(timeoutMs: Long = 3000L): Triple<Int, Int, String>? {
         if (Build.VERSION.SDK_INT < 30) return null
-        // v2.2.0：与 screenshotArgb 一样，截图前临时隐藏自家悬浮窗，避免它混进
-        // OCR/无障碍识别结果；try/finally 保证任何路径都恢复，绝不吞掉用户的悬浮窗。
-        // 先走「只截目标窗口」：不需要隐藏浮窗，也没有恢复风险。
-        // 系统对截图有节流（errorCode=3 INTERVAL_TIME_SHORT），前一步刚截过帧时
-        // 第一次调用会被拒，这里短退避重试，别急着退回整屏。
-        repeat(3) { attempt ->
-            screenshotAppWindowBase64Inner(timeoutMs)?.let { return it }
-            if (attempt < 2) Thread.sleep(550L)
-        }
         val svcForAvoid = instance
+        Log.i("DshA11y", "screenshot: begin svc=${svcForAvoid != null} overlays=${StatusOverlay.debugState()}")
         StatusOverlay.beginCaptureAvoid(svcForAvoid)
         try {
-            // 系统对 takeScreenshot 有节流（ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT）：
-            // 一次读屏里 OCR / 图标识别 / agent 取图会连续要帧，实测 vivo 上刚截完立刻再截
-            // 直接返回 null（用户看到的就是「截图失败/超时」）。这里与 screenshotArgb 一致做
-            // 短退避重试，把「偶发被拒」和「真的不可用」分开。
+            Log.i("DshA11y", "screenshot: avoid done, overlays=${StatusOverlay.debugState()}")
+            // 等一帧 + 丢掉一次采集：把双缓冲里「摘窗口前」的那一帧消耗掉
+            Thread.sleep(120L)
+            awaitCaptureSlot()
+            val warm = screenshotBase64Inner(timeoutMs)
+            Log.i("DshA11y", "screenshot: warmup=${warm != null} (discard) overlays=${StatusOverlay.debugState()}")
+            // 真正的图
             repeat(3) { attempt ->
-                screenshotBase64Inner(timeoutMs)?.let { return it }
-                if (attempt < 2) Thread.sleep(450L)
+                awaitCaptureSlot()
+                val r = screenshotBase64Inner(timeoutMs)
+                Log.i("DshA11y", "screenshot: attempt=${attempt + 1} ok=${r != null} size=${r?.let { "${it.first}x${it.second}" }}")
+                r?.let { return it }
             }
             return null
         } finally {
             StatusOverlay.endCaptureAvoid(svcForAvoid)
+            Log.i("DshA11y", "screenshot: restore done, overlays=${StatusOverlay.debugState()}")
         }
     }
 
@@ -1079,6 +1055,7 @@ class DshAccessibilityService : AccessibilityService() {
                 latch.countDown()
             }
         }
+        awaitCaptureSlot()
         takeScreenshot(android.view.Display.DEFAULT_DISPLAY, { it.run() }, callback)
         latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         val bitmap = bmp ?: return null

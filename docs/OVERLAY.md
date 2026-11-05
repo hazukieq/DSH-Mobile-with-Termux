@@ -77,28 +77,34 @@
 
 
 
-### 3.y 截图 / 读屏时如何让悬浮窗不出现（2026-11 定论）
+### 3.y 截图 / 读屏时如何让悬浮窗不出现（现行实现：整体截图 + 摘掉悬浮窗）
 
-**唯一正确做法：只截目标窗口，不去隐藏悬浮窗。**
+流程（`DshAccessibilityService.screenshotBase64` + `StatusOverlay.begin/endCaptureAvoid`）：
 
-- API 34+ 用 `AccessibilityService.takeScreenshotOfWindow(appWindow.id, …)`：
-  悬浮窗是独立 window（`TYPE_APPLICATION_OVERLAY`），天然不在结果里。
-  第一次调用常被系统节流拒绝（`errorCode=3` `INTERVAL_TIME_SHORT`），要短退避重试
-  （实现：`DshAccessibilityService.screenshotAppWindowBase64Inner` + `repeat(3){…Thread.sleep(550)}`）。
-- API < 34 才退回整屏截图，那时**必须** `removeViewImmediate` → 拍完 `addView` 挂回；
-  挂回后 `applyExpandLevel` 重放档位 + `requestLayout`。
+1. `beginCaptureAvoid()`：`mainSync { removeViewImmediate(root) }`，日志 `capture avoid: removed=true attached=false parent=null`；
+2. 等 120ms（合成器吃掉这一帧）；
+3. 先取**一帧丢掉**（`warmup`），再取真图；
+4. `endCaptureAvoid()`：`mainSync { addView(root, params); visibility=VISIBLE; applyExpandLevel(); requestLayout() }`。
 
-**已验证无效、不要再试的手段（alioth Android 16 / vivo Android 37 实测均失败）：**
+两个必须照做的平台事实（查资料确认，不是猜的）：
 
-| 手段 | 现象 |
-|---|---|
-| `visibility = GONE` | 截图里仍在（`takeScreenshot` 给的是已合成帧） |
-| `params.alpha = 0f`（+`INVISIBLE`） | 日志 `capture avoid: alpha=0.0 applied=true`，截图里仍有卡片 |
-| `params.x = -10000` 移出屏幕 | 截图里仍在原位 |
+- **节流**：相邻两次 `takeScreenshot` 必须 ≥ **333ms**（AOSP `ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS`），
+  否则回 `errorCode=3 INTERVAL_TIME_SHORT`。日志里表现为 `attempt=1 ok=false`。
+  实现里用 `awaitCaptureSlot()` 统一排队（350ms），`screenshotArgb` 与 `screenshotBase64` 共用同一个时间戳。
+  参考实现：https://github.com/kaeawc/auto-mobile/pull/4995
+- **陈旧帧**：SurfaceFlinger 双缓冲，摘掉窗口后**第一张**很可能仍是「摘之前」的那一帧，
+  所以必须「先取一帧丢掉、再取真图」。日志里 `warmup=true (丢弃)` 后 `attempt=2 ok=true` 才是干净图。
+  同类现象：https://community.amazondeveloper.com/t/vega-sdk-0-24-vvd-automation-toolkit-crashes-on-every-takescreenshot-econnreset-then-dies-after-3-calls-until-reboot/29134/12
 
-**连带教训：摘窗口/改窗口后必须整套重放布局**，否则会出现「展开态文字不显示」——
-真因是 `applyExpandLevel` 曾把 `overlayScroll` 的 `weight` 清零（`width=0dp` + weight 是撑宽唯一手段），
-weight 归零 → 文字宽度 0。**绝不允许改 `overlayScroll` 的 weight。**
+已证伪、不要再试：`visibility=GONE`、`params.alpha=0`、`params.x=-10000`（都被 `takeScreenshot` 拍到）；
+`takeScreenshotOfWindow` 在部分 ROM 上频繁 `errorCode=3`，不如整体截图稳。
+
+**连带教训**：摘窗口后必须整套重放布局，否则出现「展开态文字不显示」——
+真因是 `applyExpandLevel` 曾把 `overlayScroll` 的 `weight` 清零（`width=0dp` + weight 是撑宽唯一手段）。
+**绝不允许改 `overlayScroll` 的 weight。**
+
+排障日志（每一步都打，别靠猜）：`DshA11y: screenshot: begin/avoid done/warmup=…/attempt=N ok=…/restore done … overlays=<debugState()>`，
+`StatusOverlay: capture avoid: removed=… beforeAttached=… afterAttached=…`、`capture restore: add=… attached=…`。
 
 ## 4. 状态机速查
 

@@ -130,6 +130,18 @@ object StatusOverlay {
     private const val COLOR_WORKING = 0xFF7DD3FC.toInt()   // 强调蓝
     private const val COLOR_DONE = 0xFFFF5A5F.toInt()      // 完成/结束：红
 
+    /** 诊断用：一句话描述当前窗口状态（给截图链路打日志，便于定位「到底摘掉的是不是它」）。 */
+    fun debugState(): String {
+        val r = root
+        val p = params
+        return "root=${r?.let { System.identityHashCode(it) } ?: "null"}" +
+            " attached=${r?.isAttachedToWindow}" +
+            " live=${liveViews.size}" +
+            " level=$expandLevel" +
+            " pos=${p?.x},${p?.y} size=${p?.width}x${p?.height}" +
+            " type=$windowTypeUsed"
+    }
+
     fun isAvailable(): Boolean = DshAccessibilityService.instance != null
 
     /**
@@ -723,36 +735,68 @@ object StatusOverlay {
      *    所以现在可以放心摘窗口，并在挂回时整套重放档位。
      */
     fun beginCaptureAvoid(svc: AccessibilityService?) {
-        if (hiddenForCapture) return
-        hiddenForCapture = true
-        mainSync {
-            val r = root ?: return@mainSync
-            val w = wm ?: return@mainSync
-            val p = params ?: return@mainSync
-            prevXForCapture = p.x
-            // 移出屏幕：窗口仍在、不重排、不触发任何布局，但这一帧的位置已经在显示区外。
-            val okRemove = runCatching { w.removeViewImmediate(r) }.isSuccess
-            detachedForCapture = okRemove
-            Log.i(TAG, "capture avoid: root=${System.identityHashCode(r)} wm=${System.identityHashCode(w)} type=$windowTypeUsed remove=$okRemove attached=${r.isAttachedToWindow} x=${p.x}")
+        if (hiddenForCapture) {
+            Log.i(TAG, "capture avoid: already hidden, skip (${debugState()})")
+            return
         }
-        Thread.sleep(40L)
+        hiddenForCapture = true
+        Log.i(TAG, "capture avoid: before (${debugState()})")
+        mainSync {
+            val r = root
+            val w = wm
+            val p = params
+            if (r == null || w == null || p == null) {
+                Log.w(TAG, "capture avoid: nothing to remove (root=$r wm=$w params=$p)")
+                return@mainSync
+            }
+            prevXForCapture = p.x
+            val before = r.isAttachedToWindow
+            val ok = try {
+                w.removeViewImmediate(r)
+                true
+            } catch (e: Throwable) {
+                Log.w(TAG, "capture avoid: removeViewImmediate threw ${e.javaClass.simpleName}: ${e.message}")
+                false
+            }
+            detachedForCapture = ok
+            Log.i(TAG, "capture avoid: removed=$ok beforeAttached=$before afterAttached=${r.isAttachedToWindow} parent=${r.parent} (${debugState()})")
+        }
+        // 给合成器一帧：这一帧里窗口已经不在合成树里
+        Thread.sleep(400L)
+        Log.i(TAG, "capture avoid: done (${debugState()})")
     }
 
     fun endCaptureAvoid(svc: AccessibilityService?) {
         if (!hiddenForCapture) return
         hiddenForCapture = false
+        Log.i(TAG, "capture restore: before (${debugState()})")
         mainSync {
-            val r = root ?: return@mainSync
-            val w = wm ?: return@mainSync
-            val p = params ?: return@mainSync
-            if (detachedForCapture || !r.isAttachedToWindow) {
-                detachedForCapture = false
-                val okAdd = runCatching { w.addView(r, p) }.isSuccess
-                Log.i(TAG, "capture restore: add=$okAdd attached=${r.isAttachedToWindow} root=${System.identityHashCode(r)}")
+            val r = root
+            val w = wm
+            val p = params
+            if (r == null || w == null || p == null) {
+                Log.w(TAG, "capture restore: missing state (root=$r wm=$w params=$p)")
+                return@mainSync
             }
+            if (detachedForCapture || !r.isAttachedToWindow) {
+                val ok = try {
+                    w.addView(r, p)
+                    true
+                } catch (e: Throwable) {
+                    Log.w(TAG, "capture restore: addView threw ${e.javaClass.simpleName}: ${e.message}")
+                    false
+                }
+                detachedForCapture = false
+                Log.i(TAG, "capture restore: add=$ok attached=${r.isAttachedToWindow} parent=${r.parent}")
+            } else {
+                Log.i(TAG, "capture restore: window was never detached, nothing to add")
+            }
+            r.visibility = View.VISIBLE
             applyExpandLevel(r)
             runCatching { r.requestLayout() }
+            Log.i(TAG, "capture restore: after level replay (${debugState()})")
         }
+        Log.i(TAG, "capture restore: done (${debugState()})")
     }
 
     /**
