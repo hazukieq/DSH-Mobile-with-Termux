@@ -152,6 +152,9 @@ object StatusOverlay {
             " live=${liveViews.size}" +
             " level=$expandLevel" +
             " pos=${p?.x},${p?.y} size=${p?.width}x${p?.height}" +
+            " flags=0x${p?.flags?.toString(16) ?: "?"}" +
+            " touchable=${p?.let { (it.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) == 0 } ?: "?"}" +
+            " opsAvoid=$opsAvoid hiddenForCapture=$hiddenForCapture" +
             " type=$windowTypeUsed"
     }
 
@@ -805,6 +808,16 @@ object StatusOverlay {
                 Log.i(TAG, "capture restore: window was never detached, nothing to add")
             }
             r.visibility = View.VISIBLE
+            // 重建窗口时按「当前」opsAvoid 状态重算 flags：如果 opsAvoid 期间被摘掉又挂回，
+            // params 里可能还留着 FLAG_NOT_TOUCHABLE → 表现为「重建后点不动、滚不动、拖不动」。
+            if (p != null) {
+                val notTouch = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                val want = if (opsAvoid) (p.flags or notTouch) else (p.flags and notTouch.inv())
+                if (want != p.flags) {
+                    p.flags = want
+                    Log.i(TAG, "capture restore: flags fixed -> want=0x${want.toString(16)}")
+                }
+            }
             applyExpandLevel(r)
             runCatching { r.requestLayout() }
             Log.i(TAG, "capture restore: after level replay (${debugState()})")
