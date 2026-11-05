@@ -77,13 +77,28 @@
 
 
 
-### 3.y 截图避让的正确姿势：窗口 alpha=0（不是 GONE / 不是摘窗口）
+### 3.y 截图 / 读屏时如何让悬浮窗不出现（2026-11 定论）
 
-- `beginCaptureAvoid()`：`params.alpha = 0f` + 临时 `FLAG_NOT_TOUCHABLE` → `updateViewLayout`；`endCaptureAvoid()` 原样恢复。
-- 为什么不用 `visibility=GONE`：`takeScreenshot` 抓的是**已合成缓冲**，GONE 只是「下一帧不画」，上一帧的悬浮窗还会被拍进去。
-- 为什么不用 `removeView/addView`：摘窗口会触发重排/重测，历史上引发过「展开态文字被裁成 0 宽、卡片空框、漏挂回」一连串问题。
-- 截图前顺手 `sweep` 掉 `liveViews` 里的重复窗口：只对 root 设 alpha 时，历史副本仍会被拍到。
-- 现场自检：logcat 应有 `capture avoid: alpha=0.0 ... applied=true`。
+**唯一正确做法：只截目标窗口，不去隐藏悬浮窗。**
+
+- API 34+ 用 `AccessibilityService.takeScreenshotOfWindow(appWindow.id, …)`：
+  悬浮窗是独立 window（`TYPE_APPLICATION_OVERLAY`），天然不在结果里。
+  第一次调用常被系统节流拒绝（`errorCode=3` `INTERVAL_TIME_SHORT`），要短退避重试
+  （实现：`DshAccessibilityService.screenshotAppWindowBase64Inner` + `repeat(3){…Thread.sleep(550)}`）。
+- API < 34 才退回整屏截图，那时**必须** `removeViewImmediate` → 拍完 `addView` 挂回；
+  挂回后 `applyExpandLevel` 重放档位 + `requestLayout`。
+
+**已验证无效、不要再试的手段（alioth Android 16 / vivo Android 37 实测均失败）：**
+
+| 手段 | 现象 |
+|---|---|
+| `visibility = GONE` | 截图里仍在（`takeScreenshot` 给的是已合成帧） |
+| `params.alpha = 0f`（+`INVISIBLE`） | 日志 `capture avoid: alpha=0.0 applied=true`，截图里仍有卡片 |
+| `params.x = -10000` 移出屏幕 | 截图里仍在原位 |
+
+**连带教训：摘窗口/改窗口后必须整套重放布局**，否则会出现「展开态文字不显示」——
+真因是 `applyExpandLevel` 曾把 `overlayScroll` 的 `weight` 清零（`width=0dp` + weight 是撑宽唯一手段），
+weight 归零 → 文字宽度 0。**绝不允许改 `overlayScroll` 的 weight。**
 
 ## 4. 状态机速查
 

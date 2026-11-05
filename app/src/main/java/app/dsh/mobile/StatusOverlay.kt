@@ -707,58 +707,51 @@ object StatusOverlay {
     /** 本次避让是否真的把视图摘下来过（只有摘下来才需要在结束时 addView 回去） */
     @Volatile private var detachedForCapture = false
     /** 截图避让前的窗口 alpha / flags（alpha=0 方案下用于原样恢复） */
+    @Volatile private var prevXForCapture = 0
     @Volatile private var prevAlphaForCapture = 1f
     @Volatile private var prevFlagsForCapture = 0
 
     /**
      * 截图前让悬浮窗「消失」，拍完恢复。
      *
-     * 做法：**改窗口 alpha=0**（用户建议，实测最稳），而不是 GONE 或摘窗口：
-     *  - alpha=0 → 合成器这一帧完全不画它，`takeScreenshot` 抓不到（这是截图要的唯一效果）；
-     *  - 窗口仍挂在 WindowManager 上 → 不触发 removeView/addView、不重排、不重测，
-     *    之前「摘窗口再挂回」引发的一连串问题（文字被裁/空框/闪烁/漏挂回）全部消失；
-     *  - 期间顺手加 FLAG_NOT_TOUCHABLE，避免拍照这几十毫秒里把手势吃掉。
+     * 结论（alioth 实测，别再试别的路）：**只有真正把窗口从 WindowManager 摘掉才拍不到**。
+     *  - `visibility=GONE`：合成器可能仍用上一帧 → 拍到（2.9.38 回归的根因）。
+     *  - `params.alpha=0` + `INVISIBLE`：`takeScreenshot` 抓到的是已合成帧缓存，照样拍到
+     *    （03:12 实测：日志 `capture avoid: alpha=0.0 applied=true`，截图里卡片仍在）。
+     *  - `removeViewImmediate` → `addView`：可靠。历史上的副作用（文字被裁/空框）真因是
+     *    `applyExpandLevel` 把 overlayScroll 的 weight 清零，那个 bug 已单独修掉，
+     *    所以现在可以放心摘窗口，并在挂回时整套重放档位。
      */
     fun beginCaptureAvoid(svc: AccessibilityService?) {
         if (hiddenForCapture) return
         hiddenForCapture = true
         mainSync {
             val r = root ?: return@mainSync
-            val p = params ?: return@mainSync
             val w = wm ?: return@mainSync
-            // 先把历史遗留的重复窗口清掉：之前 addView 重挂路径可能留下多个窗口，
-            // 只把 root 的 alpha 置 0，其它副本照样会被截图拍到（用户实测截图里还有悬浮窗）。
-            val dup = liveViews.count { it !== r }
-            if (dup > 0) {
-                for (v in liveViews.filter { it !== r }) runCatching { w.removeView(v) }
-                liveViews.clear(); liveViews.add(r)
-                Log.w(TAG, "removed $dup stale overlay window(s) before capture")
-            }
-            prevAlphaForCapture = p.alpha
-            prevFlagsForCapture = p.flags
-            p.alpha = 0f
-            p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            val ok = runCatching { safeUpdateLayout(w, r, p) }.isSuccess
-            Log.i(TAG, "capture avoid: alpha=${p.alpha} touchable=false applied=$ok attached=${r.isAttachedToWindow}")
+            val p = params ?: return@mainSync
+            prevXForCapture = p.x
+            // 移出屏幕：窗口仍在、不重排、不触发任何布局，但这一帧的位置已经在显示区外。
+            val okRemove = runCatching { w.removeViewImmediate(r) }.isSuccess
+            detachedForCapture = okRemove
+            Log.i(TAG, "capture avoid: root=${System.identityHashCode(r)} wm=${System.identityHashCode(w)} type=$windowTypeUsed remove=$okRemove attached=${r.isAttachedToWindow} x=${p.x}")
         }
-        // 给合成器一帧时间应用新 alpha
-        Thread.sleep(20L)
+        Thread.sleep(40L)
     }
 
-    /** 截图完成后把 alpha / flags 原样恢复（视图与布局完全不动，所以不需要任何重排）。 */
     fun endCaptureAvoid(svc: AccessibilityService?) {
         if (!hiddenForCapture) return
         hiddenForCapture = false
         mainSync {
             val r = root ?: return@mainSync
-            val p = params ?: return@mainSync
             val w = wm ?: return@mainSync
-            p.alpha = prevAlphaForCapture
-            Log.i(TAG, "capture restore: alpha=${p.alpha}")
-            p.flags = (prevFlagsForCapture or (p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)).let { f ->
-                if (opsAvoid) f else p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            val p = params ?: return@mainSync
+            if (detachedForCapture || !r.isAttachedToWindow) {
+                detachedForCapture = false
+                val okAdd = runCatching { w.addView(r, p) }.isSuccess
+                Log.i(TAG, "capture restore: add=$okAdd attached=${r.isAttachedToWindow} root=${System.identityHashCode(r)}")
             }
-            runCatching { safeUpdateLayout(w, r, p) }
+            applyExpandLevel(r)
+            runCatching { r.requestLayout() }
         }
     }
 

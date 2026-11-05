@@ -989,10 +989,62 @@ class DshAccessibilityService : AccessibilityService() {
         return Triple(pixels, w, h)
     }
 
+
+    /**
+     * 只截**应用窗口**（API 34+ `takeScreenshotOfWindow`），从根上排除我们自己的悬浮窗。
+     *
+     * 为什么不用「整屏截图 + 截图前隐藏悬浮窗」：
+     *  - `visibility=GONE` / `alpha=0` / 移出屏幕，在这几台机器上都会被 `takeScreenshot`
+     *    拍到（它给的是已合成帧，改属性后短期内仍是旧帧）；
+     *  - `removeView` 虽然把窗口摘了，但恢复时容易撞上布局/权重问题（历史上「展开态文字消失」）。
+     * 只截目标窗口既不需要隐藏，也不会有恢复失败的窗口，浮窗自然不在结果里。
+     */
+    private fun appWindowForCapture(): android.view.accessibility.AccessibilityWindowInfo? {
+        val ws = runCatching { windows }.getOrDefault(emptyList())
+        val apps = ws.filter { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION }
+        return apps.firstOrNull { it.isActive || it.isFocused } ?: apps.firstOrNull()
+    }
+
+    private fun screenshotAppWindowBase64Inner(timeoutMs: Long): Triple<Int, Int, String>? {
+        if (Build.VERSION.SDK_INT < 34) return null
+        val win = appWindowForCapture() ?: return null
+        val latch = CountDownLatch(1)
+        var bmp: Bitmap? = null
+        val callback = object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
+                runCatching {
+                    val hw = Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                    bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                    hw?.recycle()
+                }
+                screenshot.hardwareBuffer.close()
+                latch.countDown()
+            }
+            override fun onFailure(errorCode: Int) {
+                Log.w("DshA11y", "screenshotOfWindow failed: errorCode=$errorCode win=${win.id}")
+                latch.countDown()
+            }
+        }
+        runCatching { takeScreenshotOfWindow(win.id, { it.run() }, callback) }
+            .onFailure { Log.w("DshA11y", "takeScreenshotOfWindow threw: ${it.message}") }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        val bitmap = bmp ?: return null
+        val baos = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        return Triple(bitmap.width, bitmap.height, Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP))
+    }
+
     fun screenshotBase64(timeoutMs: Long = 3000L): Triple<Int, Int, String>? {
         if (Build.VERSION.SDK_INT < 30) return null
         // v2.2.0：与 screenshotArgb 一样，截图前临时隐藏自家悬浮窗，避免它混进
         // OCR/无障碍识别结果；try/finally 保证任何路径都恢复，绝不吞掉用户的悬浮窗。
+        // 先走「只截目标窗口」：不需要隐藏浮窗，也没有恢复风险。
+        // 系统对截图有节流（errorCode=3 INTERVAL_TIME_SHORT），前一步刚截过帧时
+        // 第一次调用会被拒，这里短退避重试，别急着退回整屏。
+        repeat(3) { attempt ->
+            screenshotAppWindowBase64Inner(timeoutMs)?.let { return it }
+            if (attempt < 2) Thread.sleep(550L)
+        }
         val svcForAvoid = instance
         StatusOverlay.beginCaptureAvoid(svcForAvoid)
         try {
