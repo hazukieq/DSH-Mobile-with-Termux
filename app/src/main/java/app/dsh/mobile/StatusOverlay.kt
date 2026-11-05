@@ -599,7 +599,21 @@ object StatusOverlay {
         }
     }
 
-    /** 窗口尺寸的唯一真源：折叠=正方球；展开空闲=240dp x 64dp；展开运行=240dp x WRAP。 */
+    /**
+     * 窗口尺寸的唯一真源。**三种形态互不相同，禁止为了「统一」把它们合并**（详见 docs/OVERLAY.md §2.0）：
+     *
+     * | 形态 | 宽 | 高 |
+     * | --- | --- | --- |
+     * | 折叠球 `collapsed` | `COLLAPSED_BALL_DP`（正方形） | 同宽 |
+     * | 展开·空闲 `idleCompactNow` | `WRAP_CONTENT`（贴着 图标+「空闲」，自适应） | `WRAP_CONTENT` |
+     * | 展开·工作 | `dp(240)` 固定 | `WRAP_CONTENT`（内部正文区固定 92dp，窗口高度稳定） |
+     *
+     * 历史踩坑（别重犯）：
+     *  - 把空闲也写死 240dp → 右边一大片空白，用户报「空闲又不自适应了」；
+     *  - 把空闲压成 34dp 细条 → 看起来像「展开后自己折叠」；
+     *  - 用 removeView/addView 换尺寸 → 每次切换/截图都闪一下。
+     * 档位切换只走 updateViewLayout + requestLayout；可见性切换只改 visibility。
+     */
     private fun applyWindowSize(ctx: Context, view: View, collapsed: Boolean) {
         val side = dp(ctx, COLLAPSED_BALL_DP)
         val WRAP = android.view.ViewGroup.LayoutParams.WRAP_CONTENT

@@ -50,6 +50,25 @@
 
 红点不会改写正文，任何新状态或用户操作都会清红。
 
+### 2.0 🔴 不可违背：展开态「空闲」与「工作」是两种**完全不同**的布局
+
+这是本组件最容易被后续修复改坏的一点——历史上两次「顺手统一尺寸」都把它改错了，用户直接看到「空闲不自适应」/「展开后自己缩回小球」。**任何改窗口尺寸、改可见性、改点击范围的修复，都必须先确认下面这张表仍然成立：**
+
+| 维度 | 展开·空闲（`idleCompactNow = true`） | 展开·工作（`idleCompactNow = false`） |
+| --- | --- | --- |
+| 判定条件 | 正文文案 == `R.string.overlay_idle`（**只看文案，不看 `working` 标志**） | 正文文案不是「空闲」 |
+| 宽度 | `wrap_content`（贴着 图标 +「空闲」走，自适应；**不许写死 240dp**） | **固定 240dp**（`dp(ctx, 240)`） |
+| 高度 | `wrap_content`（内容一行，卡片自然高度；**不许缩成 34dp 细条**） | `wrap_content`，但正文区**固定 92dp** → 窗口高度稳定、不随正文长短跳动 |
+| 正文滚动区 | 高度 wrap，内容就一行，不滚动 | 高 92dp，`fullScroll` 自动跟到底部 |
+| 附加行 `overlayA11y` / `overlayFoot` | GONE | VISIBLE |
+| 用户观感 | 一张贴着字的小卡片 | 一张固定宽、正文在框内滚动的卡片 |
+
+「空闲缩成 34dp 细条」与「空闲也固定 240dp」**都是错的**：
+- 34dp 细条 → 看起来像「展开后自己折叠了」，用户会当成状态机 bug（实际只是尺寸变了）；
+- 固定 240dp → 空闲时右边一大片空白，用户会说「空闲状态又不自适应了」。
+
+改这里之前先问自己：**我改的是尺寸规则，还是状态机？** 状态机（`expandLevel` / `autoExpanded`）不允许因为「省空间」「统一视觉」被顺手改掉。
+
 ## 3. 解耦原则（改这里必须遵守）
 
 1. **图标与滚动解耦**：`overlayDot` 是 ScrollView 的兄弟节点、不是子节点。正文滚动时图标必须静止。曾把图标做成 `TextView.drawableStart`，结果图标跟着正文一起滚动消失。
@@ -58,6 +77,12 @@
 4. **可见性由档位决定**：`applyExpandLevel()` 统一设置 `statusRow / statusScroll / a11yText / footRow / ballDot` 的可见性，别在别处 set。
 5. **颜色只走 `tintDots()`**：球态点、展开态图标都由它上色，避免两处颜色不一致。
 6. **不要用 margin 魔数做居中**：球态靠 `layout_gravity=center`，展开态靠行内 `layout_gravity` 与固定 `layout_marginTop`（图标对齐首行）。
+7. **绝不 removeView/addView 来「改外观」**：摘挂窗口会重建 surface，用户看到的就是「一闪一闪」。
+   - 截图/读屏避让：改成 `root.visibility = GONE`（不参与绘制、命中测试、无障碍树，窗口不动），结束后 VISIBLE。
+   - 档位切换：只 `safeUpdateLayout(wm, view, params)` + `requestLayout()`。
+   - 例外只有一种：窗口首次创建（`show()`）时 `addView` 一次。
+8. **窗口初值必须是「折叠球尺寸」**：用 `WRAP_CONTENT` 初始化时，首帧会按 XML 自然尺寸（实测 178×79 横条）画出来再变成 99×99 → 每次显示都闪一下。
+9. **展开态整张卡片可点，但正文滚动优先**：`root / statusRow / statusTv / statusScroll / footRow / a11yText / ballDot / elapsedText` 都挂 `collapseToBall()`；ScrollView 仍负责滚动（不滚动的点击视为「收起」）。不要为了「只让图标可点」而把其它子 View 的 clickable 关掉——用户会点空白处然后说「点不动」。
 
 ## 4. 状态机速查
 
@@ -80,3 +105,8 @@
 - [ ] 一轮对话结束，圆点变红；再次发消息变蓝。
 - [ ] 旋转屏幕 / 分屏后贴边仍然正确。
 - [ ] 长按能隐藏，隐藏后没有残留的常驻通知。
+- [ ] **空闲态是自适应的**（宽度贴着「图标 + 空闲」，右边没有 240dp 空白；也不是 34dp 细条）。
+- [ ] **工作态是 240dp 定宽 + 92dp 固定滚动区**，正文长短不改变窗口高度。
+- [ ] 空闲 ↔ 工作切换时只看得到内容变化，**没有窗口重挂/闪白**（可通过 `[win] level=... 尺寸` 日志确认没有尺寸跳变或重挂）。
+- [ ] 展开态点卡片上任意位置（含空白、动作行、正文）都能收起；正文区可以正常滚动。
+- [ ] `logcat -s StatusOverlay` 里没有 `cleared stale NOT_TOUCHABLE`、`opsAvoid watchdog fired` 之外的告警。
