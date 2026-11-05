@@ -179,3 +179,18 @@
   把事件交给 ScrollView（日志 `handle touch: pass through to scroll area at (x,y)`）；
   不在滚动区（或内容不够滚）才走拖动/点击逻辑。
 - 判据：日志里应看到 `pass through to scroll area` 而不是只有 `handle touch: action=0`。
+
+### 3.v 悬浮窗「看得见但点不动/拖不动」的两个真凶
+
+1. **`opsAvoid` 去抖吞掉了 `endOpsAvoid`**：曾经给 begin/end 都加了 400ms 去抖，
+   自动化里 `begin` 之后紧接着的 `end` 被判定为「太近」直接 return →
+   `FLAG_NOT_TOUCHABLE` 永久留在窗口上，悬浮窗从此完全不可点。
+   **定论：只允许对「重复的 begin」做抑制，`end` 必须立刻生效，不许去抖。**
+2. **截图恢复路径没有纠正 flags**：2.9.68 把截图避让改成 `visibility=INVISIBLE` 时，
+   重写 `endCaptureAvoid` 顺手丢了「按当前 opsAvoid 重算 flags」那一步 →
+   opsAvoid 期间截过图就会留下 `FLAG_NOT_TOUCHABLE`。
+   **定论：任何恢复/重建窗口的路径，收尾都要 `want = opsAvoid ? flags|NOT_TOUCHABLE : flags&~NOT_TOUCHABLE`，
+   并 `safeUpdateLayout` 让它真正生效，同时打日志 `capture restore: flags fixed -> 0x… touchable=…`。**
+
+排查口诀：悬浮窗可见但无响应 → 先看 `debugState()` 里的 `flags/touchable/opsAvoid`；
+`touchable=false` 就是上面两条之一。

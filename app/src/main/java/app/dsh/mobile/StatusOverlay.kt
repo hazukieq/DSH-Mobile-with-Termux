@@ -805,6 +805,20 @@ object StatusOverlay {
         mainSync {
             val r = root ?: return@mainSync
             r.visibility = View.VISIBLE
+            // 关键：按「当前」opsAvoid 状态重算窗口 flags。
+            // 历史 bug：opsAvoid 期间（自动化进行中）发生过一次截图，endOpsAvoid 只改了 params 而
+            // 没生效到窗口/或时序错开，于是 FLAG_NOT_TOUCHABLE 残留在窗口上 —— 表现就是
+            // 「悬浮窗看得见但完全点不动、拖不动」。这里每次恢复都纠正一次。
+            val p = params
+            if (p != null) {
+                val notTouch = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                val want = if (opsAvoid) (p.flags or notTouch) else (p.flags and notTouch.inv())
+                if (want != p.flags) {
+                    p.flags = want
+                    Log.i(TAG, "capture restore: flags fixed -> 0x${want.toString(16)} touchable=${(want and notTouch) == 0}")
+                }
+                runCatching { safeUpdateLayout(wm, r, p) }
+            }
             // 重建/重放都按当前 opsAvoid 走一次，避免 flags 状态漂移
             applyExpandLevel(r)
             runCatching { r.requestLayout() }
@@ -832,36 +846,25 @@ object StatusOverlay {
         }
     }
 
-    @Volatile private var lastOpsAvoidToggleAt = 0L
-    private const val OPS_AVOID_MIN_GAP_MS = 400L
+    // 注意：这里**不能**做时间窗去抖。曾经的 400ms 去抖会把紧随其后的 endOpsAvoid 一起吞掉，
+    // 于是 FLAG_NOT_TOUCHABLE 永久留在窗口上 —— 用户看到的就是「悬浮窗看得见但点不动/拖不动」。
+    // 要去抖的只是「重复的 begin」，end 必须立刻生效。
 
     fun beginOpsAvoid() {
-        val now = System.currentTimeMillis()
-        if (now - lastOpsAvoidToggleAt < OPS_AVOID_MIN_GAP_MS) {
-            Log.i(TAG, "opsAvoid on debounced (gap=${now - lastOpsAvoidToggleAt}ms)")
-            return
-        }
-        lastOpsAvoidToggleAt = now
         if (opsAvoid) return
         opsAvoid = true
         applyOpsAvoid()
         mainHandler.removeCallbacks(opsAvoidWatchdog)
         mainHandler.postDelayed(opsAvoidWatchdog, 90_000L)
-        Log.i(TAG, "opsAvoid on")
+        Log.i(TAG, "opsAvoid on (${debugState()})")
     }
 
     fun endOpsAvoid() {
-        val now = System.currentTimeMillis()
-        if (now - lastOpsAvoidToggleAt < OPS_AVOID_MIN_GAP_MS) {
-            Log.i(TAG, "opsAvoid off debounced (gap=${now - lastOpsAvoidToggleAt}ms)")
-            return
-        }
-        lastOpsAvoidToggleAt = now
         mainHandler.removeCallbacks(opsAvoidWatchdog)
         if (!opsAvoid) return
         opsAvoid = false
         applyOpsAvoid()
-        Log.i(TAG, "opsAvoid off")
+        Log.i(TAG, "opsAvoid off (${debugState()})")
     }
 
     private fun applyOpsAvoid() {
