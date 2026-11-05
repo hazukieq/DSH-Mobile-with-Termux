@@ -233,6 +233,21 @@ object StatusOverlay {
                     applyExpandLevel(view)
                 }
 
+                // 显示尺寸真变了（旋转 / 视频全屏 / 分屏）就重新贴边。
+                // ComponentCallbacks 只在本进程收到 configuration change 时触发，前台是别的
+                // App（如视频全屏）时收不到；DisplayListener 由系统直接回调，覆盖该场景。
+                runCatching {
+                    val dm = ctx.getSystemService(android.content.Context.DISPLAY_SERVICE)
+                        as? android.hardware.display.DisplayManager
+                    dm?.registerDisplayListener(object : android.hardware.display.DisplayManager.DisplayListener {
+                        override fun onDisplayAdded(displayId: Int) {}
+                        override fun onDisplayRemoved(displayId: Int) {}
+                        override fun onDisplayChanged(displayId: Int) {
+                            main { params?.let { prm -> runCatching { snapToEdge(prm, appCtx ?: ctx) } } }
+                        }
+                    }, null)
+                }
+
                 // 旋转（横屏看视频等）后重新贴边：宽高变了而 p.x/p.y 还是旧值。
                 runCatching {
                     (ctx.applicationContext as? android.app.Application)?.registerComponentCallbacks(
@@ -362,7 +377,10 @@ object StatusOverlay {
                     if (moved) {
                         p.x = startX + dx.toInt()
                         p.y = startY + dy.toInt()
-                        runCatching { safeUpdateLayout(wm, root ?: target, p) }
+                        // 用被触摸的 view：root 字段可能指向已被替换/摘除的旧实例，
+                        // 那样 safeUpdateLayout 会以「detached」跳过 → 表现为拖不动（实测回归）。
+                        val live = if (target.isAttachedToWindow) target else (root ?: target)
+                        runCatching { safeUpdateLayout(wm, live, p) }
                     }
                     true
                 }
@@ -439,7 +457,9 @@ object StatusOverlay {
     /** 松手后吸附到最近的水平边缘（避免长期悬在屏幕中央挡内容） */
     private fun snapToEdge(p: WindowManager.LayoutParams, ctx: Context) {
         val view = root ?: return
-        val screenW = ctx.resources.displayMetrics.widthPixels
+        // ⚠️ 不能读 resources.displayMetrics：视频全屏/横屏切换时它还是旧值，
+        // 于是 x 按竖屏宽度算，观感就是「横屏了还按竖屏左右贴边」。
+        val screenW = screenRect(ctx).width()
         val margin = dp(ctx, 8)
         // 宽度兜底：测量未完成时 view.width 会是 0，直接用会把窗口推到屏外
         val vw = if (view.width > 0) view.width else dp(ctx, 120)
@@ -1150,7 +1170,10 @@ object StatusOverlay {
             Log.i(TAG, "updateViewLayout skipped: overlay detached")
             return
         }
-        runCatching { safeUpdateLayout(w, v, p) }
+        // ⚠️ 这里必须是真正的 WindowManager.updateViewLayout —— 早前批量替换把内部调用也
+        // 改成了 safeUpdateLayout，导致无限递归（StackOverflowError 被 runCatching 吞掉，
+        // 外在表现就是「拖动完全没反应」）。
+        runCatching { w.updateViewLayout(v, p) }
             .onFailure { Log.w(TAG, "updateViewLayout failed: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
