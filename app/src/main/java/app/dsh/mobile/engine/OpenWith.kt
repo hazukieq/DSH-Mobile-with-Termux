@@ -49,7 +49,36 @@ object OpenWith {
      * DocumentsUI。不要写死某一个 activity：不同 ROM 的类名不同，且用户要的是自己手机上的文件
      * 管理器，不是开发用的 DocumentsUI。
      */
-    /** 系统里能「打开文件夹」的候选（包名 → 显示名），用于设置页/桥给用户挑选。 */
+    /**
+     * 允许出现在「文件管理器」候选里的包：只收 **OEM 自带文件管理器** 与 **AOSP/Google DocumentsUI**。
+     * 第三方文件管理器（Solid/MT/RS/ZArchiver 等）一律过滤 —— 用户只要这两个来源（m07162）。
+     */
+    private val FILE_MANAGER_ALLOWED = setOf(
+        // AOSP / Google DocumentsUI
+        "com.android.documentsui",
+        "com.google.android.documentsui",
+        // 小米 MIUI/HyperOS
+        "com.miui.fileexplorer", "com.android.fileexplorer",
+        // 通用 AOSP 系 OEM
+        "com.android.filemanager", "com.android.filebrowser",
+        // 三星
+        "com.samsung.android.app.myfiles",
+        // OPPO / 一加 / realme（ColorOS / OxygenOS）
+        "com.coloros.filemanager", "com.oplus.filemanager", "com.oneplus.filemanager",
+        // vivo / iQOO
+        "com.vivo.filemanager", "com.bbk.filemanager",
+        // 华为 / 荣耀
+        "com.huawei.hidisk", "com.huawei.filemanager", "com.hihonor.filemanager",
+        // 魅族 / 华硕 / 摩托 / 传音
+        "com.meizu.filemanager", "com.asus.filemanager",
+        "com.motorola.filemanager", "com.transsion.filemanager",
+    )
+
+    /** 判断某个包是否属于「OEM 文件管理器 / DocumentsUI」这一档（白名单 + documentsui 兜底）。 */
+    private fun isOemFileManager(pkg: String): Boolean =
+        pkg in FILE_MANAGER_ALLOWED || pkg.contains("documentsui", ignoreCase = true)
+
+    /** 系统里能「打开文件夹」的候选（包名 → 显示名），只保留 OEM / DocumentsUI，用于设置页/桥给用户挑选。 */
     fun fileManagerCandidates(ctx: Context): List<Pair<String, String>> {
         val probe = Intent(Intent.ACTION_VIEW).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -63,6 +92,7 @@ object OpenWith {
             pm.queryIntentActivities(probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
                 .map { it.activityInfo.packageName }
                 .distinct()
+                .filter { isOemFileManager(it) }   // 只留 OEM + DocumentsUI，第三方不动
                 .map { pkg ->
                     val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }
                         .getOrDefault(pkg)

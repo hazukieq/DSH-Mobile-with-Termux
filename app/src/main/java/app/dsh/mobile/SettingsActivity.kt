@@ -690,7 +690,7 @@ class SettingsActivity : Activity() {
             val labels = ArrayList<String>()
             labels.add(getString(R.string.setting_file_manager_ask))
             candidates.forEach { labels.add(it.second) }
-            androidx.appcompat.app.AlertDialog.Builder(this)
+            AlertDialog.Builder(this)
                 .setTitle(R.string.setting_file_manager)
                 .setItems(labels.toTypedArray()) { _, which ->
                     val pkg = if (which == 0) null else candidates[which - 1].first
@@ -698,7 +698,7 @@ class SettingsActivity : Activity() {
                     refresh()
                 }
                 .setNegativeButton(android.R.string.cancel, null)
-                .show()
+                .showStyled()
         }
     }
 
