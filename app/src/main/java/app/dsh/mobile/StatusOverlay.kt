@@ -750,6 +750,16 @@ object StatusOverlay {
      *    `applyExpandLevel` 把 overlayScroll 的 weight 清零，那个 bug 已单独修掉，
      *    所以现在可以放心摘窗口，并在挂回时整套重放档位。
      */
+    /**
+     * 截图前让悬浮窗不出现——**只隐藏，不摘窗口**。
+     *
+     * 演进史与结论（都在 alioth/vivo 上实测过）：
+     *  - `removeViewImmediate` + `addView`：图像最干净，但代价大——重建窗口会带走触摸状态，
+     *    用户「自动化刚跑完想点一下悬浮窗看输出」时点不动；而且是真实窗口增删，可见地闪。
+     *  - `params.alpha=0` / 移出屏幕：`takeScreenshot` 仍会拍到（合成缓存里还有这一层）。
+     *  - `visibility=INVISIBLE`：视图不画、不进命中测试，但窗口不动 → **触摸状态不丢**；
+     *    配合「先丢两帧」处理双缓冲陈旧帧后，实测截图里不再出现悬浮窗。
+     */
     fun beginCaptureAvoid(svc: AccessibilityService?) {
         if (hiddenForCapture) {
             Log.i(TAG, "capture avoid: already hidden, skip (${debugState()})")
@@ -759,26 +769,15 @@ object StatusOverlay {
         Log.i(TAG, "capture avoid: before (${debugState()})")
         mainSync {
             val r = root
-            val w = wm
-            val p = params
-            if (r == null || w == null || p == null) {
-                Log.w(TAG, "capture avoid: nothing to remove (root=$r wm=$w params=$p)")
+            if (r == null) {
+                Log.w(TAG, "capture avoid: nothing to hide")
                 return@mainSync
             }
-            prevXForCapture = p.x
-            val before = r.isAttachedToWindow
-            val ok = try {
-                w.removeViewImmediate(r)
-                true
-            } catch (e: Throwable) {
-                Log.w(TAG, "capture avoid: removeViewImmediate threw ${e.javaClass.simpleName}: ${e.message}")
-                false
-            }
-            detachedForCapture = ok
-            Log.i(TAG, "capture avoid: removed=$ok beforeAttached=$before afterAttached=${r.isAttachedToWindow} parent=${r.parent} (${debugState()})")
+            r.visibility = View.INVISIBLE
+            Log.i(TAG, "capture avoid: hidden=$r visibility=${r.visibility} (${debugState()})")
         }
-        // 给合成器一帧：这一帧里窗口已经不在合成树里
-        Thread.sleep(400L)
+        // 给合成器一帧：这一帧里这个视图已经不再绘制
+        Thread.sleep(120L)
         Log.i(TAG, "capture avoid: done (${debugState()})")
     }
 
@@ -787,40 +786,12 @@ object StatusOverlay {
         hiddenForCapture = false
         Log.i(TAG, "capture restore: before (${debugState()})")
         mainSync {
-            val r = root
-            val w = wm
-            val p = params
-            if (r == null || w == null || p == null) {
-                Log.w(TAG, "capture restore: missing state (root=$r wm=$w params=$p)")
-                return@mainSync
-            }
-            if (detachedForCapture || !r.isAttachedToWindow) {
-                val ok = try {
-                    w.addView(r, p)
-                    true
-                } catch (e: Throwable) {
-                    Log.w(TAG, "capture restore: addView threw ${e.javaClass.simpleName}: ${e.message}")
-                    false
-                }
-                detachedForCapture = false
-                Log.i(TAG, "capture restore: add=$ok attached=${r.isAttachedToWindow} parent=${r.parent}")
-            } else {
-                Log.i(TAG, "capture restore: window was never detached, nothing to add")
-            }
+            val r = root ?: return@mainSync
             r.visibility = View.VISIBLE
-            // 重建窗口时按「当前」opsAvoid 状态重算 flags：如果 opsAvoid 期间被摘掉又挂回，
-            // params 里可能还留着 FLAG_NOT_TOUCHABLE → 表现为「重建后点不动、滚不动、拖不动」。
-            if (p != null) {
-                val notTouch = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                val want = if (opsAvoid) (p.flags or notTouch) else (p.flags and notTouch.inv())
-                if (want != p.flags) {
-                    p.flags = want
-                    Log.i(TAG, "capture restore: flags fixed -> want=0x${want.toString(16)}")
-                }
-            }
+            // 重建/重放都按当前 opsAvoid 走一次，避免 flags 状态漂移
             applyExpandLevel(r)
             runCatching { r.requestLayout() }
-            Log.i(TAG, "capture restore: after level replay (${debugState()})")
+            Log.i(TAG, "capture restore: shown visibility=${r.visibility} (${debugState()})")
         }
         Log.i(TAG, "capture restore: done (${debugState()})")
     }

@@ -77,34 +77,41 @@
 
 
 
-### 3.y 截图 / 读屏时如何让悬浮窗不出现（现行实现：整体截图 + 摘掉悬浮窗）
+### 3.y 截图 / 读屏时怎么让悬浮窗不出现在图里（现行实现：**只隐藏，不摘窗口**）
 
 流程（`DshAccessibilityService.screenshotBase64` + `StatusOverlay.begin/endCaptureAvoid`）：
 
-1. `beginCaptureAvoid()`：`mainSync { removeViewImmediate(root) }`，日志 `capture avoid: removed=true attached=false parent=null`；
-2. 等 120ms（合成器吃掉这一帧）；
-3. 先取**一帧丢掉**（`warmup`），再取真图；
-4. `endCaptureAvoid()`：`mainSync { addView(root, params); visibility=VISIBLE; applyExpandLevel(); requestLayout() }`。
+1. `beginCaptureAvoid()`：`mainSync { root.visibility = INVISIBLE }` —— 视图不绘制、不进命中测试，
+   **窗口不摘不挂**（`capture avoid: hidden=0 …`）；
+2. 等 120ms；
+3. **先丢两帧**（`warmup1`/`warmup2`），再取真图；
+4. `endCaptureAvoid()`：`mainSync { root.visibility = VISIBLE; applyExpandLevel(); requestLayout() }`。
 
-两个必须照做的平台事实（查资料确认，不是猜的）：
+为什么不是「摘窗口」：`removeViewImmediate` + `addView` 图像最干净，但代价大 —— 真实窗口增删会
+①肉眼可见地闪；②**带走触摸状态**，用户「自动化刚跑完想点一下悬浮窗看输出」时点不动。
+用户定调：能隐藏就别移除。
+
+为什么 `INVISIBLE` 现在够用了（2.9.64 之前不够，是因为缺了下面两条，不是 INVISIBLE 本身不行）：
 
 - **节流**：相邻两次 `takeScreenshot` 必须 ≥ **333ms**（AOSP `ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS`），
-  否则回 `errorCode=3 INTERVAL_TIME_SHORT`。日志里表现为 `attempt=1 ok=false`。
-  实现里用 `awaitCaptureSlot()` 统一排队（350ms），`screenshotArgb` 与 `screenshotBase64` 共用同一个时间戳。
-  参考实现：https://github.com/kaeawc/auto-mobile/pull/4995
-- **陈旧帧**：SurfaceFlinger 双缓冲，摘掉窗口后**第一张**很可能仍是「摘之前」的那一帧，
-  所以必须「先取一帧丢掉、再取真图」。日志里 `warmup=true (丢弃)` 后 `attempt=2 ok=true` 才是干净图。
+  否则回 `errorCode=3 INTERVAL_TIME_SHORT`；实现里 `awaitCaptureSlot()`（350ms）统一排队，
+  `screenshotArgb` 与 `screenshotBase64` 共用同一时间戳。
+  参考：https://github.com/kaeawc/auto-mobile/pull/4995
+- **陈旧帧**：SurfaceFlinger 双缓冲，隐藏后的**第一张**很可能还是「隐藏前」那一帧；
+  所以必须丢两帧再取（日志 `warmup1=` / `warmup2=`）。
   同类现象：https://community.amazondeveloper.com/t/vega-sdk-0-24-vvd-automation-toolkit-crashes-on-every-takescreenshot-econnreset-then-dies-after-3-calls-until-reboot/29134/12
 
-已证伪、不要再试：`visibility=GONE`、`params.alpha=0`、`params.x=-10000`（都被 `takeScreenshot` 拍到）；
-`takeScreenshotOfWindow` 在部分 ROM 上频繁 `errorCode=3`，不如整体截图稳。
+已证伪、别再用：`params.alpha=0`、`params.x=-10000`（合成缓存里仍有这一层，会被拍到）；
+`removeViewImmediate`（能干净，但重建窗口丢触摸状态，见上）。
 
-**连带教训**：摘窗口后必须整套重放布局，否则出现「展开态文字不显示」——
-真因是 `applyExpandLevel` 曾把 `overlayScroll` 的 `weight` 清零（`width=0dp` + weight 是撑宽唯一手段）。
-**绝不允许改 `overlayScroll` 的 weight。**
+**连带教训**：任何「重建窗口」的路径（摘挂、重放布局）都必须
+①按当前 `opsAvoid` 重算 `params.flags`（否则残留 `FLAG_NOT_TOUCHABLE` → 重建后点不动/拖不动/滚不动）；
+②绝不改 `overlayScroll` 的 `weight`（`width=0dp` + weight 是撑宽唯一手段，清零会让文字宽度变 0，
+表现「展开态文字不显示」）；③空闲态与工作态同宽同高。
 
-排障日志（每一步都打，别靠猜）：`DshA11y: screenshot: begin/avoid done/warmup=…/attempt=N ok=…/restore done … overlays=<debugState()>`，
-`StatusOverlay: capture avoid: removed=… beforeAttached=… afterAttached=…`、`capture restore: add=… attached=…`。
+排障日志：`DshA11y: screenshot: begin avoid=… / warmup1=… / warmup2=… / attempt=N ok=…` 与
+`StatusOverlay: capture avoid: hidden=… ` / `capture restore: shown …`，`debugState()` 里带
+`root/attached/live/level/pos/size/flags/touchable/opsAvoid/hiddenForCapture/type`。
 
 ## 4. 状态机速查
 
