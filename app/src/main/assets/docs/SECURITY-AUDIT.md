@@ -145,6 +145,8 @@ native storage          # GET /storage
 回执里 `workspaces_real` 是解析软链后的真实目录，`workspaces_is_symlink` 说明是否外置，`public_root` 为 `null` 表示当前没外置（只在 App 私有目录，卸载会删），`survives_uninstall` 直接给结论。
 
 > 已知差异（2026-11-05 反馈）：WebUI「添加工作区」走系统目录选择器，选择器起始页是 Documents，但注册表里记录的是 `dsh-home/workspaces/<name>` 这个**软链路径**（真实文件在 `dshdata/` 下）。用 `native storage` 看 `workspaces_real` 即可确认，不要用注册表里的原始字符串判断在不在共享存储。
+>
+> ⚠️ **会话归属判断必须以 realpath 规范后的路径比较**（2026-11-05 第二次反馈）：引擎给会话 header 的 `cwd` 做了 `fs.realpath`，而 `workspace.json` 里的 `path` 若仍是软链字符串，`candidateMatches()` 的**字符串相等**比较会全部失败 → 侧栏「工作区为空 + 所有会话掉进未分组」（数据没丢，但极像被清空）。App 从 2.9.41 起在引擎启动前自动把 `workspace.json` 的 `path` 重写为规范真实路径（幂等，日志 `workspacePathsCanonicalized=N`）；第三方工具/脚本自己判断归属时也不要直接用原始字符串。
 
 ---
 

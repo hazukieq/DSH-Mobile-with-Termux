@@ -358,9 +358,52 @@ internal object EnginePaths {
             val b = externaliseSubdir(ctx, "workspaces")
             // v2.3.0：工作区/回收站加 .nomedia，避免内部产物被系统相册扫描
             MediaHygiene.ensureAll(ctx)
-            Log.i(EngineConfig.TAG, "user data external: sessions=$a workspaces=$b")
+            // ⚠️ 迁移后必须把 storages/workspace.json 里的 path 改成**规范真实路径**。
+            // 原因（issue-workspace-migration-canonical-path）：引擎给会话 cwd 做 fs.realpath
+            // 规范化，而 workspace 记录仍是软链字符串 → `candidateMatches` 字符串比较永远失败
+            // → 侧栏「工作区为空、全部会话掉进未分组」。数据没丢，但用户会以为被清空。
+            val fixed = canonicalizeWorkspacePaths(ctx)
+            Log.i(EngineConfig.TAG, "user data external: sessions=$a workspaces=$b workspacePathsCanonicalized=$fixed")
         }.onFailure { Log.w(EngineConfig.TAG, "externalise failed: ${it.message}") }
     }
+
+    /**
+     * 把 `storages/workspace.json` 里指向 `dsh-home/workspaces/<name>` 的 path 改写成
+     * 其**规范真实路径**（realpath），让引擎的 workspace↔session 字符串匹配重新成立。
+     *
+     * 背景见 `docs/OVERLAY` 之外的 issue：`@deepseek-ai/dsh-workspace` 对会话 cwd 做了
+     * `fs.realpath` 规范化，而 `WorkspaceEntity.sessionIds` 用 `candidateMatches()` 做
+     * **字符串相等**比较；只要工作区路径经过 symlink（共享存储迁移就是），43 个会话会
+     * 全部被过滤 → 侧栏显示「工作区为空 + 全部未分组」。
+     *
+     * 幂等：只有「解析出的真实路径与记录不同」时才写回；解析失败（目录不存在）保持原样。
+     * @return 被改写的记录数（0 = 无需改动）
+     */
+    fun canonicalizeWorkspacePaths(ctx: android.content.Context): Int = runCatching {
+        val home = dshHome(ctx)
+        val reg = File(home, "storages/workspace.json")
+        if (!reg.isFile || reg.length() > (2L shl 20)) return@runCatching 0
+        val text = reg.readText()
+        val re = Regex("\"path\"\\s*:\\s*\"([^\"]+)\"")
+        var changed = 0
+        val out = re.replace(text) { m ->
+            val raw = m.groupValues[1]
+            val f = File(raw)
+            // 只处理工作区目录（其它 path 字段不是我们该动的）
+            if (!raw.contains("/dsh-home/workspaces/") && !raw.contains("/workspaces/")) {
+                return@replace m.value
+            }
+            val real = runCatching { f.canonicalPath }.getOrNull() ?: return@replace m.value
+            if (real == raw || !File(real).isDirectory) return@replace m.value
+            changed++
+            m.value.replace(raw, real)
+        }
+        if (changed > 0) {
+            reg.writeText(out)
+            Log.w(EngineConfig.TAG, "canonicalized $changed workspace path(s) in workspace.json (symlink vs realpath mismatch would hide all sessions)")
+        }
+        changed
+    }.getOrDefault(0)
 
     /** $DSH_HOME（凭证、会话、配置）—— 保持私有；sessions/ 由 ensureUserDataExternal 外置 */
     fun dshHome(ctx: android.content.Context): File =
