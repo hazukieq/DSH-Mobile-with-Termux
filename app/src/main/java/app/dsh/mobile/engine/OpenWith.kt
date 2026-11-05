@@ -44,15 +44,38 @@ object OpenWith {
      * DocumentsUI 的 FilesActivity（避免弹「用哪个应用打开」选择器）；机型没有
      * DocumentsUI 时再退回不带 component 的 VIEW。
      */
-    private fun documentsUiComponent(ctx: Context): android.content.ComponentName? {
-        val candidates = listOf(
+    /**
+     * 选「打开文件夹」的 App：优先**系统内置文件管理器**（各 ROM 自带那个），最后才退回 AOSP
+     * DocumentsUI。不要写死某一个 activity：不同 ROM 的类名不同，且用户要的是自己手机上的文件
+     * 管理器，不是开发用的 DocumentsUI。
+     */
+    private fun documentsUiComponent(ctx: Context, probe: android.content.Intent? = null): android.content.ComponentName? {
+        val prefer = listOf(
+            "com.google.android.apps.nbu.files",   // Files by Google（多数 GMS 机器的「文件」）
+            "com.miui.fileexplorer",
+            "com.android.fileexplorer",
+            "com.android.filemanager",
+            "com.android.documentsui",             // AOSP DocumentsUI
+            "com.google.android.documentsui",
+        )
+        val base = probe ?: android.content.Intent(android.content.Intent.ACTION_VIEW)
+        val handlers = runCatching {
+            ctx.packageManager.queryIntentActivities(base, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        }.getOrDefault(emptyList())
+        for (pkg in prefer) {
+            val hit = handlers.firstOrNull { it.activityInfo.packageName == pkg }
+            if (hit != null) {
+                return android.content.ComponentName(hit.activityInfo.packageName, hit.activityInfo.name)
+            }
+        }
+        // 没有任何偏好项命中：退回硬编码 DocumentsUI（老行为，保证至少能开）
+        val fallback = listOf(
             "com.android.documentsui" to "com.android.documentsui.files.FilesActivity",
             "com.google.android.documentsui" to "com.google.android.documentsui.files.FilesActivity",
         )
-        for ((pkg, cls) in candidates) {
+        for ((pkg, cls) in fallback) {
             val cn = android.content.ComponentName(pkg, cls)
-            val ok = runCatching { ctx.packageManager.getActivityInfo(cn, 0) }.isSuccess
-            if (ok) return cn
+            if (runCatching { ctx.packageManager.getActivityInfo(cn, 0) }.isSuccess) return cn
         }
         return null
     }
@@ -266,7 +289,7 @@ object OpenWith {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (!documentFolder) addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (effectiveKind == "folder" && (externalDoc != null || homeDoc != null)) {
-                documentsUiComponent(ctx)?.let { component = it }
+                documentsUiComponent(ctx, probe = this)?.let { component = it }
             }
             if (effectiveKind == "share") {
                 this.type = type

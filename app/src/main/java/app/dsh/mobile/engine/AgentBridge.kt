@@ -8,6 +8,7 @@ import app.dsh.mobile.bridge.BridgeSupport
 import app.dsh.mobile.bridge.ScreenHandler
 import app.dsh.mobile.bridge.ActionHandler
 import app.dsh.mobile.bridge.AppHandler
+import app.dsh.mobile.bridge.ShortcutHandler
 import app.dsh.mobile.bridge.VisionHandler
 import app.dsh.mobile.ProgressHub
 import app.dsh.mobile.Calib
@@ -298,6 +299,7 @@ object AgentBridge {
     internal val screen by lazy { ScreenHandler(this) }
     internal val action by lazy { ActionHandler(this) }
     internal val appHandler by lazy { AppHandler(this) }
+    internal val shortcutHandler by lazy { ShortcutHandler(this) }
     internal val promptHandler by lazy { app.dsh.mobile.bridge.AgentPromptHandler(this) }
     internal val vision by lazy { VisionHandler(this) }
     internal val prim by lazy { app.dsh.mobile.bridge.PrimitivesHandler(this) }

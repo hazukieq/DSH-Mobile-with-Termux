@@ -106,7 +106,7 @@ route around it — user taps/reads, `/launch` + `wait-app com.termux` hand-off,
 own window, `notify`/`say` for output. Never retry a non-retryable a11y error and never re-probe
 before each action: one `GET /status` at the start of a UI task is enough.
 
-## Full native API: AgentBridge (81 paths, 83 method+path pairs)
+## Full native API: AgentBridge (83 paths, 85 method+path pairs)
 
 Everything the app can do natively is exposed over `127.0.0.1:3083`; use
 `dsh-mobile bridge <GET|POST> <path> [json]` so the token is handled for you, e.g.
@@ -121,6 +121,12 @@ Groups (see the actual handlers for params):
   `{"component":"pkg/cls"}` (plus optional `action`, `data`, `extras`); a missing component returns
   `{"ok":false,"error":"component not found: ..."}`, and a successful component start is flagged
   `backgroundLaunchMayBeBlocked` because Android may silently refuse background activity starts.
+- Folders: `POST /open/folder` opens the directory in the **device's own file manager** (preference
+  list: Files by Google → MIUI/AOSP file managers → DocumentsUI), not hard-wired to DocumentsUI;
+  reply `target_package` tells you which one handled it.
+- Shortcuts: `GET /shortcuts?package=pkg` lists launcher shortcuts (manifest/dynamic/pinned) with
+  `id`/labels/`enabled`/`intent`; `POST /shortcut/launch` `{package,id}` starts one. `native shortcuts
+  --package pkg` / `native shortcut --package pkg --id id` wrap them.
 - System: `POST /alarm/set` `{hour,minute,message?,days?,skip_ui?}` opens the system clock app
   prefilled and (with a clock that honours `SET_ALARM`) creates the alarm; reply carries
   `started` + `candidates[]` for the disambiguation it performed.

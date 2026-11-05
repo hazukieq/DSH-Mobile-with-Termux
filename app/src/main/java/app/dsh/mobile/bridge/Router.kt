@@ -168,6 +168,8 @@ internal class Router(private val bridge: AgentBridge) {
             method == "POST" && path == "/share/text" -> appHandler.shareText(ctx, body)
             method == "POST" && path == "/agent/prompt" -> promptHandler.prompt(ctx, body)
             method == "GET" && path == "/apps" -> appHandler.appsFor(query)
+            method == "GET" && path == "/shortcuts" -> shortcutHandler.list(ctx, query)
+            method == "POST" && path == "/shortcut/launch" -> shortcutHandler.launch(ctx, body)
             method == "POST" && path == "/gesture" -> action.gesture(body)
             method == "POST" && path == "/key" -> action.key(body)
             method == "POST" && path == "/wait" -> action.wait(body)
