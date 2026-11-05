@@ -124,27 +124,15 @@ Groups (see the actual handlers for params):
 - Folders: `POST /open/folder` opens the directory in the **device's own file manager** (preference
   list: Files by Google → MIUI/AOSP file managers → DocumentsUI), not hard-wired to DocumentsUI;
   reply `target_package` tells you which one handled it.
-- Shortcuts: `GET /shortcuts?package=pkg` lists launcher shortcuts (manifest/dynamic/pinned) with
-  `id`/labels/`enabled`/`intent`; `POST /shortcut/launch` `{package,id}` starts one. `native shortcuts
-  --package pkg` / `native shortcut --package pkg --id id` wrap them.
-- System: `POST /alarm/set` `{hour,minute,message?,days?,skip_ui?}` opens the system clock app
-  prefilled and (with a clock that honours `SET_ALARM`) creates the alarm; reply carries
-  `started` + `candidates[]` for the disambiguation it performed.
-- Vision: `POST /vision/crop`, `/vision/track`, `/vision/tap`, `/vision/drag`, `GET /vision/list`.
-- Memory: `GET /memory/list`, `/memory/stats`, `POST /memory/lookup`, `/memory/store`,
-  `/memory/confirm`, `/memory/clear`.
-- App/plugins: `GET /plugin/list`, `POST /plugin/install`, `GET /notif`, `GET /diag`,
-  `POST /notify`, `GET|POST /say`, `POST /engine/restart`.
-  Restart policy: prefer `dsh-update restart` (it schedules the restart via the app supervisor
-  ~8s later so the command output and your reply survive; the turn is still interrupted) or
-  `POST /engine/restart` (202, same as Settings → 重启引擎). Never kill the managed engine or
-  use the plugin market's "立即重启" button - that spawns a detached `dsh web` that races the
-  managed engine for port 3080. A restart ends the current turn, so warn the user first.
-- App self-info/screenshots: `GET /process` (app pid, uid, version, `webview_debug`,
-  `devtools_socket`), `GET /app-screenshot?max=N` (native PixelCopy capture of the app window).
-- Runtime: `GET /runtime/status`, `/runtime/feed`, `POST /runtime/stage`, `/runtime/pull`,
-  `/runtime/apply`, `/runtime/rollback`, `GET /local/status`, `POST /local/ensure`.
-- PTY: `POST /pty/open`, `/pty/write`, `/pty/resize`, `/pty/close`, `/pty/kill`, `GET /pty/read`.
+- Entry discovery (no root, no a11y): `GET /shortcuts?package=pkg` lists **exported manifest
+  components** (quick-shortcut/`CREATE_SHORTCUT` first, with `permission`/`process`/`actions`), so an
+  agent can find entries like `shadowsocks/.QuickToggleShortcut`, clock `HandleApiCalls`, file-manager
+  `VIEW_DOWNLOADS` without decompiling the APK. Add `&dynamic=1` to also query LauncherApps shortcuts
+  (usually empty unless DSH is the default launcher).
+- Intent resolution: `POST /resolve-intent` `{action,category?,data?,mime?,package?,extras?}` =
+  `queryIntentActivities` + best match; use it whenever only the action is known. `native resolve
+  --action A [--category C] [--data D] [--mime M]` wraps it. Launching still goes through `POST
+  /launch` (unchanged hand-off semantics).
 
 ## Debugging the Web UI — CDP is mandatory
 

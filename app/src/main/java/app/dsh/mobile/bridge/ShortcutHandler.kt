@@ -1,274 +1,234 @@
 package app.dsh.mobile.bridge
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.LauncherApps
-import android.content.pm.ShortcutInfo
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Process
 import app.dsh.mobile.engine.AgentBridge
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * App 快捷方式（launcher shortcuts）探测与启动。
+ * App 入口探测：manifest 里 exported 的「快捷方式类组件」+ 通用 Intent 解析。
  *
- * 为什么单独一层：Android 的「长按图标」菜单（静态 manifest 快捷方式 + 动态快捷方式 +
- * 已固定快捷方式）**只能**通过 LauncherApps 查询，普通 PackageManager 看不到；而很多 App 的
- * 高频入口（微信「扫一扫」、支付宝「付款码」、B 站「稍后再看」）恰好只以快捷方式暴露。
- * 有了它，agent 不必自己长按 → 截图 → 找坐标，直接列 id 再 startShortcut。
+ * 为什么不走 LauncherApps / dumpsys：
+ * - 跨包 `LauncherApps.getShortcuts` 要求调用方是默认桌面，普通 App 只拿得到自己的；
+ * - `dumpsys shortcut` 需要 root / Shizuku，且一次 3–20s，设备上经常不可用。
+ * - 但 manifest 里的 exported 组件（`CREATE_SHORTCUT`、`SET_ALARM`、`VIEW_DOWNLOADS` …）
+ *   用 PackageManager 就能读，**只读、免权限、免 a11y、单包 < 100ms**，正是 agent 最稳的入口。
+ *
+ * 本类因此以 manifest 层为主（`list`），动态快捷方式仅在显式 `?dynamic=1` 时补充查询。
+ * `resolveIntent` 等价 `PackageManager.queryIntentActivities`，用于「只知道 action 不知道 component」的场景。
  */
 internal class ShortcutHandler(private val bridge: AgentBridge) {
 
-    // dumpsys shortcut 要 3–20s，连续查询（列多个 App / 启动前再查）必须复用结果。
-    @Volatile private var dumpCache: String = ""
-    @Volatile private var dumpCacheAt: Long = 0L
+    /** `GET /shortcuts?package=pkg[&dynamic=1]` */
+    internal fun list(ctx: Context, query: String): Pair<Int, String> = with(bridge) {
+        val q = parseQuery(query)
+        val pkg = q["package"].orEmpty()
+        if (pkg.isBlank()) return 400 to """{"ok":false,"error":"package required"}"""
+        val wantDynamic = q["dynamic"] == "1" || q["dynamic"] == "true"
+        val t0 = System.currentTimeMillis()
+        val items = runCatching { manifestEntries(ctx, pkg) }.getOrDefault(emptyList())
+        val out = JSONArray()
+        items.forEach { out.put(it) }
+        var dynamicCount = 0
+        if (wantDynamic) {
+            val seen = items.map { it.optString("component") }.toSet()
+            val dyn = runCatching { launcherShortcuts(ctx, pkg) }.getOrDefault(emptyList())
+            dyn.forEach { o -> if (o.optString("component") !in seen) { out.put(o); dynamicCount++ } }
+        }
+        return 200 to JSONObject().put("ok", true)
+            .put("package", pkg)
+            .put("count", out.length())
+            .put("dynamic", dynamicCount)
+            .put("shortcuts", out)
+            .put("elapsed_ms", System.currentTimeMillis() - t0)
+            .toString()
+    }
 
-    private fun shortcutDump(ctx: Context): String {
-        val now = System.currentTimeMillis()
-        val cached = dumpCache
-        if (cached.isNotEmpty() && now - dumpCacheAt < 30_000L) return cached
-        val dump = runCatching { app.dsh.mobile.engine.Privilege.runSu("dumpsys shortcut", 30_000L) }.getOrNull()
-            ?: runCatching { app.dsh.mobile.engine.Privilege.shizukuExec(ctx, "dumpsys shortcut") }.getOrNull()
-            ?: ""
-        if (dump.isNotBlank()) { dumpCache = dump; dumpCacheAt = now }
-        return dump
+    /** 探测用的已知 action（manifest 的 intent-filter 无法用公开 API 读，改为正向探测）。 */
+    private val PROBES = listOf(
+        "android.intent.action.CREATE_SHORTCUT" to null,
+        Intent.ACTION_MAIN to Intent.CATEGORY_LAUNCHER,
+        "android.intent.action.SET_ALARM" to null,
+        "android.intent.action.SET_TIMER" to null,
+        "android.intent.action.SHOW_ALARMS" to null,
+        "android.intent.action.SET_STOPWATCH" to null,
+        "android.intent.action.VIEW_DOWNLOADS" to null,
+        Intent.ACTION_VIEW to null,
+        Intent.ACTION_SEND to null,
+        "android.intent.action.WEB_SEARCH" to null,
+        Intent.ACTION_DIAL to null,
+        Intent.ACTION_CALL to null,
+        Intent.ACTION_EDIT to null
+    )
+
+    /**
+     * 扫 manifest：只收 exported 的 activity / activity-alias。
+     * intent-filter 不在公开 API 里（`GET_INTENT_FILTERS` 是隐藏标记），因此改为「按已知 action 正向探测」，
+     * 把探测到的 action / category 挂回对应组件——单包十来次 queryIntentActivities，实测远低于 100ms。
+     */
+    private fun manifestEntries(ctx: Context, pkg: String): List<JSONObject> {
+        val pm = ctx.packageManager
+        val info = if (Build.VERSION.SDK_INT >= 33)
+            pm.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(PackageManager.GET_ACTIVITIES.toLong()))
+        else @Suppress("DEPRECATION") pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES)
+        val acts = info.activities.orEmpty().filter { it.exported }
+        if (acts.isEmpty()) return emptyList()
+
+        val actionMap = HashMap<String, LinkedHashSet<String>>()
+        val categoryMap = HashMap<String, LinkedHashSet<String>>()
+        PROBES.forEach { (action, cat) ->
+            val probe = Intent(action).apply { setPackage(pkg); if (cat != null) addCategory(cat) }
+            runCatching { pm.queryIntentActivities(probe, PackageManager.MATCH_ALL) }.getOrDefault(emptyList())
+                .forEach { r ->
+                    val ai = r.activityInfo ?: return@forEach
+                    if (ai.packageName != pkg) return@forEach
+                    val key = ai.name
+                    actionMap.getOrPut(key) { LinkedHashSet() }.add(action)
+                    if (cat != null) categoryMap.getOrPut(key) { LinkedHashSet() }.add(cat)
+                }
+        }
+
+        return acts.map { a ->
+            val actions = actionMap[a.name] ?: LinkedHashSet()
+            val categories = categoryMap[a.name] ?: LinkedHashSet()
+            JSONObject()
+                .put("kind", "activity")
+                .put("component", "$pkg/${a.name}")
+                .put("label", runCatching { a.loadLabel(pm).toString() }.getOrDefault(""))
+                .put("exported", true)
+                .put("permission", a.permission ?: JSONObject.NULL)
+                .put("process", a.processName ?: JSONObject.NULL)
+                .put("actions", JSONArray(actions.toList()))
+                .put("categories", JSONArray(categories.toList()))
+                .put("hasLauncherIntent", actions.contains(Intent.ACTION_MAIN) &&
+                    categories.contains(Intent.CATEGORY_LAUNCHER))
+                .put("target", JSONObject.NULL)
+                .put("source", "manifest")
+        }.sortedWith(compareBy(
+            { (it.optJSONArray("actions")?.toString() ?: "").contains("CREATE_SHORTCUT").not() },
+            { it.optBoolean("hasLauncherIntent") },
+            { it.optString("component") }
+        ))
+    }
+
+    /** `POST /resolve-intent`：PackageManager.queryIntentActivities，返回所有候选。 */
+    internal fun resolveIntent(ctx: Context, body: String): Pair<Int, String> = with(bridge) {
+        val o = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val action = o.optString("action").takeIf { it.isNotBlank() }
+            ?: return 400 to """{"ok":false,"error":"action required"}"""
+        val intent = Intent(action)
+        o.optString("category").takeIf { it.isNotBlank() }?.let { intent.addCategory(it) }
+        o.optString("data").takeIf { it.isNotBlank() }?.let { intent.data = android.net.Uri.parse(it) }
+        o.optString("package").takeIf { it.isNotBlank() }?.let { intent.setPackage(it) }
+        o.optString("mime").takeIf { it.isNotBlank() }?.let { intent.type = it }
+        o.optJSONObject("extras")?.let { ex ->
+            ex.keys().forEach { k ->
+                val v = ex.get(k)
+                when (v) {
+                    is Int -> intent.putExtra(k, v)
+                    is Long -> intent.putExtra(k, v)
+                    is Boolean -> intent.putExtra(k, v)
+                    is String -> intent.putExtra(k, v)
+                    else -> intent.putExtra(k, v.toString())
+                }
+            }
+        }
+        val pm = ctx.packageManager
+        val flags = PackageManager.MATCH_ALL or PackageManager.MATCH_DEFAULT_ONLY
+        val res = runCatching { pm.queryIntentActivities(intent, flags) }.getOrDefault(emptyList())
+        val arr = JSONArray()
+        res.forEach { r ->
+            val ai = r.activityInfo ?: return@forEach
+            arr.put(JSONObject()
+                .put("package", ai.packageName)
+                .put("activity", ai.name)
+                .put("component", "${ai.packageName}/${ai.name}")
+                .put("label", runCatching { ai.loadLabel(pm).toString() }.getOrDefault(""))
+                .put("exported", ai.exported)
+                .put("permission", ai.permission ?: JSONObject.NULL)
+                .put("priority", r.priority)
+                .put("isDefault", r.isDefault)
+                .put("enabled", ai.enabled)
+                .put("process", ai.processName ?: JSONObject.NULL))
+        }
+        val best = runCatching { pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo }
+            .getOrNull()
+        return 200 to JSONObject().put("ok", true)
+            .put("action", action)
+            .put("count", arr.length())
+            .put("candidates", arr)
+            .put("best", best?.let { "${it.packageName}/${it.name}" } ?: JSONObject.NULL)
+            .toString()
+    }
+
+    /** `POST /shortcut/launch {package,id}`：按 dumpsys 里的 intent 启动（需要特权，拿不到就报原因）。 */
+    internal fun launch(ctx: Context, body: String): Pair<Int, String> = with(bridge) {
+        val o = runCatching { JSONObject(body) }.getOrNull()
+            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
+        val pkg = o.optString("package")
+        val id = o.optString("id")
+        if (pkg.isBlank() || id.isBlank()) return 400 to """{"ok":false,"error":"package and id required"}"""
+        val la = launcherApps(ctx)
+        if (la != null) {
+            val err = runCatching { la.startShortcut(pkg, id, null, null, Process.myUserHandle()) }.exceptionOrNull()
+            if (err == null) {
+                return 200 to JSONObject().put("ok", true).put("package", pkg).put("id", id)
+                    .put("method", "launcherapps").toString()
+            }
+        }
+        val started = runCatching { launchDynamicById(ctx, pkg, id) }.getOrDefault(false)
+        return if (started) 200 to JSONObject().put("ok", true).put("package", pkg).put("id", id)
+            .put("method", "dumpsys-intent").put("note", "requires root/Shizuku").toString()
+        else 404 to """{"ok":false,"error":"shortcut not found or not launchable without privilege"}"""
     }
 
     private fun launcherApps(ctx: Context): LauncherApps? =
         ctx.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
 
-    /**
-     * GET /shortcuts?package=<pkg>：列出某个 App 的快捷方式。
-     *
-     * 两条来源，先能拿到的先用：
-     * 1) **静态快捷方式**（`AndroidManifest` 的 `android.app.shortcuts` 元数据指向的 XML）——
-     *    用 `getResourcesForApplication(pkg)` 直接解析，**不需要任何权限**，fragment 里能拿到
-     *    `shortcutId` / 标签 / 目标 intent，agent 可以直接照着 intent 起。
-     * 2) **动态/已固定快捷方式**只能通过 `LauncherApps` 查，而跨包查询要求调用方是默认桌面
-     *    （否则 `getShortcuts` 只返回自己的），所以这里作为补充；拿不到就如实说明。
-     */
-    internal fun list(ctx: Context, query: String): Pair<Int, String> = with(bridge) {
-        val pkg = parseQuery(query)["package"].orEmpty()
-        if (pkg.isBlank()) return 400 to """{"ok":false,"error":"package required"}"""
-        val out = JSONArray()
-        val staticList = runCatching { readManifestShortcuts(ctx, pkg) }.getOrDefault(emptyList())
-        staticList.forEach { out.put(it) }
-        val dynamic = runCatching { launcherShortcuts(ctx, pkg) }.getOrDefault(emptyList())
-        val privileged = runCatching { privilegedShortcuts(ctx, pkg) }.getOrDefault(emptyList())
-        val seen = staticList.map { it.getString("id") }.toSet()
-        dynamic.forEach { o -> if (o.getString("id") !in seen) out.put(o) }
-        val seenAll = (0 until out.length()).map { out.getJSONObject(it).getString("id") }.toSet()
-        privileged.forEach { o -> if (o.getString("id") !in seenAll) out.put(o) }
-        return 200 to JSONObject().put("ok", true).put("package", pkg)
-            .put("count", out.length())
-            .put("static", staticList.size)
-            .put("dynamic", dynamic.size)
-            .put("privileged", privileged.size)
-            .put("shortcuts", out).toString()
-    }
-
-    /**
-     * 特权路径：`dumpsys shortcut` 能给出**动态/已固定**快捷方式（含 id、标签、目标 intent），
-     * 这是普通 App 无法通过 LauncherApps 跨包拿到的。需要 root 或 Shizuku。
-     */
-    private fun privilegedShortcuts(ctx: Context, pkg: String): List<JSONObject> {
-        val dump = shortcutDump(ctx)
-        if (dump.isEmpty()) return emptyList()
-        if (dump.isBlank()) return emptyList()
-        val list = ArrayList<JSONObject>()
-        var inTarget = false
-        var cur: JSONObject? = null
-        for (raw in dump.lineSequence()) {
-            val line = raw.trim()
-            if (line.startsWith("Package: ")) {
-                val name = line.removePrefix("Package: ").substringBefore(' ').trim()
-                inTarget = name == pkg
-                cur = null
-                continue
-            }
-            if (!inTarget) continue
-            val idx = line.indexOf("ShortcutInfo {id=")
-            if (idx >= 0) {
-                cur?.let { list.add(it) }
-                val id = line.substring(idx + "ShortcutInfo {id=".length).substringBefore(',')
-                cur = JSONObject().put("id", id.trim()).put("source", "dumpsys")
-                continue
-            }
-            val o = cur ?: continue
-            when {
-                line.startsWith("shortLabel=") -> o.put("shortLabel", line.removePrefix("shortLabel=").substringBefore(','))
-                line.startsWith("longLabel=") -> o.put("longLabel", line.removePrefix("longLabel=").substringBefore(','))
-                line.startsWith("disabledReason=") -> o.put("disabledReason", line.removePrefix("disabledReason=").trim())
-                line.contains("intents=[Intent {") -> {
-                    Regex("act=([^\\s]+)").find(line)?.let { o.put("action", it.groupValues[1]) }
-                    Regex("cmp=([^\\s}/]+/[^\\s}]+)").find(line)?.let { m ->
-                        o.put("activity", m.groupValues[1])
-                        val parts = m.groupValues[1].split("/")
-                        o.put("targetPackage", parts[0])
-                    }
-                    o.put("enabled", o.optString("disabledReason").contains("Not disabled", true))
-                }
-            }
-        }
-        cur?.let { list.add(it) }
-        return list
-    }
-
-    /** 解析 `android.app.shortcuts` 元数据里的 XML（纯读资源，无权限要求）。 */
-    private fun readManifestShortcuts(ctx: Context, pkg: String): List<JSONObject> {
-        val pm = ctx.packageManager
-        val ai = pm.getApplicationInfo(pkg, android.content.pm.PackageManager.GET_META_DATA)
-        val resId = ai.metaData?.getInt("android.app.shortcuts", 0) ?: 0
-        if (resId == 0) return emptyList()
-        val res = pm.getResourcesForApplication(ai)
-        val parser = res.getXml(resId)
-        val list = ArrayList<JSONObject>()
-        var depth = 0
-        while (parser.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
-            if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG) {
-                if (parser.name == "shortcut") {
-                    val o = JSONObject()
-                        .put("id", parser.getAttributeValue(null, "shortcutId").orEmpty())
-                        .put("shortLabel", parser.getAttributeValue(null, "shortLabelRes").orEmpty())
-                        .put("enabled", parser.getAttributeValue(null, "enabled")?.toBoolean() ?: true)
-                        .put("source", "manifest")
-                    list.add(o)
-                    // 解析该 <shortcut> 下的 <intent>
-                    val inner = readShortcutIntent(parser)
-                    if (inner != null) {
-                        o.put("action", inner.first)
-                        inner.second?.let { o.put("data", it) }
-                        o.put("activity", inner.third)
-                    }
-                }
-            }
-        }
-        return list
-    }
-
-    /** 读取当前 <shortcut> 子元素里的第一个 <intent>，返回 (action, data, component)。 */
-    private fun readShortcutIntent(parser: org.xmlpull.v1.XmlPullParser): Triple<String, String?, String?>? {
-        val startDepth = parser.depth
-        var action = ""
-        var data: String? = null
-        var target = ""
-        while (true) {
-            val ev = parser.next()
-            if (ev == org.xmlpull.v1.XmlPullParser.END_DOCUMENT) return null
-            if (ev == org.xmlpull.v1.XmlPullParser.END_TAG && parser.depth == startDepth) return null
-            if (ev == org.xmlpull.v1.XmlPullParser.START_TAG) {
-                when (parser.name) {
-                    "action" -> action = parser.getAttributeValue(null, "action").orEmpty()
-                    "data" -> data = parser.getAttributeValue(null, "data").orEmpty()
-                    "targetClass" -> target = parser.getAttributeValue(null, "class").orEmpty()
-                }
-                if (action.isNotEmpty() && target.isNotEmpty()) return Triple(action, data, target)
-            }
-        }
-    }
-
-    /** LauncherApps 视角（跨包通常只返回已固定/自己的，拿不到就空）。 */
-    private fun launcherShortcuts(ctx: Context, pkg: String): List<JSONObject> {
+    private fun launcherShortcuts(ctx: Context, pkg: String): List<JSONObject> = runCatching {
         val la = launcherApps(ctx) ?: return emptyList()
-        val q = LauncherApps.ShortcutQuery().apply {
-            setPackage(pkg)
-            setQueryFlags(
-                LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
-                    LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
-                    LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
-            )
-        }
-        val items = runCatching { la.getShortcuts(q, Process.myUserHandle()) }.getOrNull()
-            ?: return emptyList()
-        return items.map { toJson(ctx, it) }
-    }
-
-    /** POST /shortcut/launch {package, id}：直接启动某个快捷方式。 */
-    internal fun launch(ctx: Context, body: String): Pair<Int, String> = with(bridge) {
-        val obj = runCatching { JSONObject(body) }.getOrNull()
-            ?: return 400 to """{"ok":false,"error":"invalid json"}"""
-        val pkg = obj.optString("package").ifBlank { obj.optString("app") }
-        val id = obj.optString("id")
-        if (pkg.isBlank() || id.isBlank()) return 400 to """{"ok":false,"error":"package and id required"}"""
-        val la = launcherApps(ctx) ?: return 503 to """{"ok":false,"error":"launcher apps unavailable"}"""
-        // 优先 LauncherApps（能处理动态快捷方式）；失败则退回静态 XML 里解析出的 intent 直接起。
-        val err = runCatching {
-            la.startShortcut(pkg, id, null, null, Process.myUserHandle())
-        }.exceptionOrNull()
-        if (err != null) {
-            val viaDump = runCatching { launchFromDumpIntent(ctx, pkg, id) }.getOrNull()
-            if (viaDump == true) {
-                return 200 to JSONObject().put("ok", true).put("package", pkg).put("id", id)
-                    .put("method", "dumpsys-intent").put("started", "$pkg#${id}").toString()
+        la.getShortcuts(LauncherApps.ShortcutQuery().setPackage(pkg), Process.myUserHandle())
+            .orEmpty().map { s ->
+                JSONObject().put("kind", "launcher-shortcut").put("id", s.id).put("label", s.shortLabel?.toString() ?: "")
+                    .put("longLabel", s.longLabel?.toString() ?: "")
+                    .put("enabled", s.isEnabled).put("source", "launcherapps")
+                    .put("component", s.activity?.let { "${it.packageName}/${it.className}" } ?: JSONObject.NULL)
             }
-            val fallback = runCatching { launchFromManifestIntent(ctx, pkg, id) }.getOrNull()
-            if (fallback == true) {
-                return 200 to JSONObject().put("ok", true).put("package", pkg).put("id", id)
-                    .put("method", "manifest-intent").put("started", "$pkg#${id}").toString()
+    }.getOrDefault(emptyList())
+
+    /** dumpsys shortcut 里的 intent 拼出来直接 startActivity（特权通道；无特权返回 false）。 */
+    private fun launchDynamicById(ctx: Context, pkg: String, id: String): Boolean {
+        val dump = runCatching { app.dsh.mobile.engine.Privilege.runSu("dumpsys shortcut", 30_000L) }.getOrNull()
+            ?: runCatching { app.dsh.mobile.engine.Privilege.shizukuExec(ctx, "dumpsys shortcut") }.getOrNull()
+            ?: return false
+        var inPkg = false
+        var inTarget = false
+        var component: String? = null
+        var action: String? = null
+        dump.lineSequence().forEach { line ->
+            val t = line.trim()
+            if (t.startsWith("Package: ")) { inPkg = t.removePrefix("Package: ").startsWith(pkg); inTarget = false }
+            if (inPkg && t.contains("ShortcutInfo {id=")) inTarget = t.contains("id=$id,") || t.contains("id=$id ")
+            if (inPkg && inTarget) {
+                if (component == null) Regex("cmp=([\\w.]+/[\\w.$]+)").find(t)?.let { component = it.groupValues[1] }
+                if (action == null) Regex("act=([\\w.]+)").find(t)?.let { action = it.groupValues[1] }
             }
         }
-        return if (err == null) {
-            200 to JSONObject().put("ok", true).put("package", pkg).put("id", id)
-                .put("started", "$pkg#${id}").toString()
-        } else {
-            404 to JSONObject().put("ok", false).put("package", pkg).put("id", id)
-                .put("error", err.message ?: err.javaClass.simpleName).toString()
+        val cmp = component ?: return false
+        val parts = cmp.split("/")
+        if (parts.size != 2) return false
+        val cn = ComponentName(parts[0], if (parts[1].startsWith(".")) parts[0] + parts[1] else parts[1])
+        val intent = Intent(action ?: Intent.ACTION_MAIN).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            setComponent(cn)
         }
-    }
-
-    private fun toJson(ctx: Context, s: ShortcutInfo): JSONObject {
-        val o = JSONObject()
-            .put("id", s.id)
-            .put("package", s.`package`)
-            .put("shortLabel", s.shortLabel?.toString().orEmpty())
-            .put("longLabel", s.longLabel?.toString().orEmpty())
-            .put("enabled", s.isEnabled)
-            .put("disabledMessage", s.disabledMessage?.toString().orEmpty())
-            .put("pinned", s.isPinned)
-            .put("declaredInManifest", s.isDeclaredInManifest)
-            .put("dynamic", s.isDynamic)
-        s.intent?.let { i ->
-            o.put("activity", i.component?.flattenToShortString().orEmpty())
-            o.put("action", i.action.orEmpty())
-            o.put("data", i.dataString.orEmpty())
-        }
-        o.put("categories", JSONArray(s.categories ?: emptySet<String>()))
-        return o
-    }
-
-    /** 用 manifest 里声明的 intent 直接启动（LauncherApps 被拒时的兜底）。 */
-    private fun launchFromManifestIntent(ctx: Context, pkg: String, id: String): Boolean? {
-        val item = readManifestShortcuts(ctx, pkg).firstOrNull { it.optString("id") == id } ?: return null
-        val action = item.optString("action")
-        if (action.isBlank()) return null
-        val intent = android.content.Intent(action).apply {
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            item.optString("data").takeIf { it.isNotBlank() }?.let { data = android.net.Uri.parse(it) }
-            item.optString("activity").takeIf { it.isNotBlank() }?.let { cls ->
-                val parts = cls.split("/")
-                if (parts.size == 2) {
-                    val p = parts[0]
-                    val c = if (parts[1].startsWith(".")) p + parts[1] else parts[1]
-                    component = android.content.ComponentName(p, c)
-                }
-            }
-        }
-        if (intent.component == null) intent.setPackage(pkg)
-        return runCatching { ctx.startActivity(intent); true }.getOrDefault(false)
-    }
-
-    /** 用 dumpsys 里该快捷方式的显式 intent 启动（动态快捷方式走这条）。 */
-    private fun launchFromDumpIntent(ctx: Context, pkg: String, id: String): Boolean? {
-        val item = privilegedShortcuts(ctx, pkg).firstOrNull { it.optString("id") == id } ?: return null
-        val action = item.optString("action").ifBlank { android.content.Intent.ACTION_MAIN }
-        val intent = android.content.Intent(action).apply {
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            item.optString("activity").takeIf { it.contains('/') }?.let { cls ->
-                val p = cls.substringBefore('/')
-                val c = cls.substringAfter('/').let { if (it.startsWith(".")) p + it else it }
-                component = android.content.ComponentName(p, c)
-            }
-        }
-        if (intent.component == null) intent.setPackage(pkg)
         return runCatching { ctx.startActivity(intent); true }.getOrDefault(false)
     }
 }

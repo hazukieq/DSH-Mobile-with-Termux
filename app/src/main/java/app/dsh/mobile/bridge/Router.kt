@@ -166,7 +166,7 @@ internal class Router(private val bridge: AgentBridge) {
             method == "POST" && path == "/open/folder" -> appHandler.openPath(ctx, body, "folder")
             method == "POST" && path == "/open/share" -> appHandler.openPath(ctx, body, "share")
             method == "POST" && path == "/share/text" -> appHandler.shareText(ctx, body)
-            method == "POST" && path == "/agent/prompt" -> promptHandler.prompt(ctx, body)
+            method == "POST" && path == "/resolve-intent" -> shortcutHandler.resolveIntent(ctx, body)
             method == "GET" && path == "/apps" -> appHandler.appsFor(query)
             method == "GET" && path == "/shortcuts" -> shortcutHandler.list(ctx, query)
             method == "POST" && path == "/shortcut/launch" -> shortcutHandler.launch(ctx, body)

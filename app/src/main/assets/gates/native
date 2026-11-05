@@ -62,6 +62,23 @@ case "${1:-}" in
     [ -n "$page" ] || usage
     json_or_die POST /activity "{\"name\":\"$(printf '%s' "$page" | sed 's/"/\\"/g')\"$([ "$notify" = true ] && printf ',')$( [ "$notify" = true ] && printf '\"notifyIfBlocked\":true' )}"
     ;;
+  resolve)
+    shift
+    act=""; cat=""; data=""; mime=""; pkg=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --action|-a) act="${2:-}"; shift 2 ;;
+        --category|-c) cat="${2:-}"; shift 2 ;;
+        --data|-d) data="${2:-}"; shift 2 ;;
+        --mime|-m) mime="${2:-}"; shift 2 ;;
+        --package|-p) pkg="${2:-}"; shift 2 ;;
+        -*) echo "native resolve: unknown flag '$1'" >&2; exit 2 ;;
+        *) act="$1"; shift ;;
+      esac
+    done
+    [ -n "$act" ] || { echo "native resolve: --action <action> required" >&2; exit 2; }
+    json_or_die POST /resolve-intent "{\"action\":\"$act\"$( [ -n "$cat" ] && printf ',"category":"%s"' "$cat" )$( [ -n "$data" ] && printf ',"data":"%s"' "$data" )$( [ -n "$mime" ] && printf ',"mime":"%s"' "$mime" )$( [ -n "$pkg" ] && printf ',"package":"%s"' "$pkg" )}"
+    ;;
   shortcuts)
     shift
     pkg=""
