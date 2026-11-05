@@ -421,4 +421,7 @@ Engine: %6$s</string>
     <string name="progress_overlay_denied_title">Schwebefenster braucht Berechtigung – zum Erteilen tippen</string>
     <string name="settings_a11y_enabled_not_connected">Aktiviert (nicht verbunden)</string>
     <string name="settings_a11y_disabled_by_system">Erteilt, aber von Android deaktiviert (zum Reaktivieren tippen)</string>
+    <string name="setting_file_manager">Dateimanager</string>
+    <string name="setting_file_manager_sub">Welche App Ordner öffnet</string>
+    <string name="setting_file_manager_ask">Jedes Mal fragen</string>
 </resources>

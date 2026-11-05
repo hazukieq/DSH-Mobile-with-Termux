@@ -411,4 +411,7 @@ engine: %6$s</string>
     <string name="progress_overlay_denied_title">Floating window needs permission — tap to grant</string>
     <string name="settings_a11y_enabled_not_connected">On (not connected)</string>
     <string name="settings_a11y_disabled_by_system">Granted but disabled by Android (tap to re-enable)</string>
+    <string name="setting_file_manager">File manager</string>
+    <string name="setting_file_manager_sub">Which app opens folders</string>
+    <string name="setting_file_manager_ask">Ask each time</string>
 </resources>

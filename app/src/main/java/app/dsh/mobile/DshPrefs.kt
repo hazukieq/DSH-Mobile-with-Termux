@@ -25,6 +25,21 @@ object DshPrefs {
     const val PAGE_SCALE_MAX = 120
     const val PAGE_SCALE_DEFAULT = 90
 
+    // ---- 文件管理器偏好（用户选的默认；null = 每次让系统询问） ----
+
+    const val KEY_FILE_MANAGER = "file_manager_pkg"
+
+    fun fileManager(ctx: Context): String? =
+        ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE)
+            .getString(KEY_FILE_MANAGER, null)?.takeIf { it.isNotBlank() }
+
+    /** pkg 传 null/空串 = 清除偏好，回到「每次让系统询问」。 */
+    fun setFileManager(ctx: Context, pkg: String?) {
+        ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE).edit().apply {
+            if (pkg.isNullOrBlank()) remove(KEY_FILE_MANAGER) else putString(KEY_FILE_MANAGER, pkg)
+        }.apply()
+    }
+
     // ---- 页面缩放 ----
 
     fun pageScale(ctx: Context): Int =

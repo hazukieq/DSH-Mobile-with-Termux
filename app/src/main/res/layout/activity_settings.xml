@@ -189,6 +189,69 @@
                         android:layout_height="20dp"
                         android:src="@drawable/ic_chevron" />
                 </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="0.5dp"
+                    android:layout_marginStart="66dp"
+                    android:background="#14000000" />
+
+                <!-- 文件管理器（打开文件夹时用哪个 App） -->
+                <LinearLayout
+                    android:id="@+id/rowFileManager"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="14dp"
+                    android:background="?android:attr/selectableItemBackground">
+
+                    <ImageView
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:padding="8dp"
+                        android:src="@drawable/ic_folder"
+                        android:background="@drawable/bg_icon_chip_soft_light"
+                        android:tint="#FF7DD3FC" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginStart="14dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setting_file_manager"
+                            android:textColor="#FF10141A"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setting_file_manager_sub"
+                            android:textColor="#FF6B7280"
+                            android:textSize="12sp"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/valFileManager"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/setting_file_manager_ask"
+                        android:textColor="#FF6B7280"
+                        android:textSize="14sp"
+                        android:layout_marginEnd="6dp" />
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_chevron" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- ============ 权限中心分组 ============ -->

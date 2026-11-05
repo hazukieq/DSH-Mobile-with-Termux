@@ -318,6 +318,7 @@ class SettingsActivity : Activity() {
 
         findViewById<TextView>(R.id.valLandscape).text = getString(orientLabel(orientMode))
         findViewById<TextView>(R.id.valScale).text = "$pageScale%"
+        bindFileManagerRow()
         findViewById<TextView>(R.id.valPriv).text = privLabel(Privilege.getMode(this))
         findViewById<TextView>(R.id.valRootStatus).let {
             val rootOk = Privilege.rootAvailableMinimal()
@@ -668,6 +669,37 @@ class SettingsActivity : Activity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .showStyled()
+    }
+
+    private fun bindFileManagerRow() {
+        val row = findViewById<android.view.View>(R.id.rowFileManager)
+        val valView = findViewById<TextView>(R.id.valFileManager)
+        fun refresh() {
+            val cur = app.dsh.mobile.engine.OpenWith.currentFileManager(this)
+            val label = cur?.let { pkg ->
+                runCatching {
+                    val ai = packageManager.getApplicationInfo(pkg, 0)
+                    packageManager.getApplicationLabel(ai).toString()
+                }.getOrDefault(pkg)
+            }
+            valView.text = label ?: getString(R.string.setting_file_manager_ask)
+        }
+        refresh()
+        row.setOnClickListener {
+            val candidates = app.dsh.mobile.engine.OpenWith.fileManagerCandidates(this)
+            val labels = ArrayList<String>()
+            labels.add(getString(R.string.setting_file_manager_ask))
+            candidates.forEach { labels.add(it.second) }
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(R.string.setting_file_manager)
+                .setItems(labels.toTypedArray()) { _, which ->
+                    val pkg = if (which == 0) null else candidates[which - 1].first
+                    app.dsh.mobile.engine.OpenWith.setFileManager(this, pkg)
+                    refresh()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
     }
 
     /** dp → px 小工具（对话框内边距用） */

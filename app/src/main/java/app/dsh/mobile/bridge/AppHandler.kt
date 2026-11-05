@@ -489,6 +489,28 @@ internal class AppHandler(private val bridge: AgentBridge) {
      * SKIP_UI 默认 false：厂商时钟对静默设置支持不一（小米实测忽略 SKIP_UI，闹钟不落库），
      * 默认走确认页最稳；调用方确实想要静默可显式传 skip_ui=true。
      */
+    /**
+     * 文件管理器偏好：GET 列出候选与当前选择；POST {package} 设为默认，{package:null} 清除（回到每次询问）。
+     * 用户先选、agent 也能改/清 —— 这就是「默认由用户定，agent 可取消默认」的落点。
+     */
+    internal fun fileManager(ctx: Context, body: String): Pair<Int, String> {
+        return runCatching {
+            val req = if (body.isBlank()) null else org.json.JSONObject(body)
+            if (req != null) {
+                val pkg = req.optString("package", "").takeIf { it.isNotBlank() }
+                OpenWith.setFileManager(ctx, pkg)
+            }
+            val out = org.json.JSONObject().put("ok", true)
+                .put("current", OpenWith.currentFileManager(ctx) ?: org.json.JSONObject.NULL)
+            val arr = org.json.JSONArray()
+            OpenWith.fileManagerCandidates(ctx).forEach { (pkg, label) ->
+                arr.put(org.json.JSONObject().put("package", pkg).put("label", label))
+            }
+            out.put("candidates", arr)
+            200 to out.toString()
+        }.getOrElse { 500 to org.json.JSONObject().put("ok", false).put("error", it.message ?: "file-manager failed").toString() }
+    }
+
     internal fun alarmSet(ctx: Context, body: String): Pair<Int, String> {
         with(bridge) {
         val obj = runCatching { JSONObject(body) }.getOrNull()

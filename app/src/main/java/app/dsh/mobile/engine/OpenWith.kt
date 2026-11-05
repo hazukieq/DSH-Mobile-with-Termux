@@ -49,6 +49,33 @@ object OpenWith {
      * DocumentsUI。不要写死某一个 activity：不同 ROM 的类名不同，且用户要的是自己手机上的文件
      * 管理器，不是开发用的 DocumentsUI。
      */
+    /** 系统里能「打开文件夹」的候选（包名 → 显示名），用于设置页/桥给用户挑选。 */
+    fun fileManagerCandidates(ctx: Context): List<Pair<String, String>> {
+        val probe = Intent(Intent.ACTION_VIEW).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            setDataAndType(
+                DocumentsContract.buildRootsUri(DshDocumentsProvider.authority(ctx.packageName)),
+                "vnd.android.document/directory"
+            )
+        }
+        val pm = ctx.packageManager
+        return runCatching {
+            pm.queryIntentActivities(probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+                .map { it.activityInfo.packageName }
+                .distinct()
+                .map { pkg ->
+                    val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }
+                        .getOrDefault(pkg)
+                    pkg to label
+                }
+                .sortedBy { it.second }
+        }.getOrDefault(emptyList())
+    }
+
+    fun setFileManager(ctx: Context, pkg: String?) = app.dsh.mobile.DshPrefs.setFileManager(ctx, pkg)
+
+    fun currentFileManager(ctx: Context): String? = app.dsh.mobile.DshPrefs.fileManager(ctx)
+
     private fun documentsUiComponent(ctx: Context, probe: android.content.Intent? = null): android.content.ComponentName? {
         val prefer = listOf(
             "com.google.android.apps.nbu.files",   // Files by Google（多数 GMS 机器的「文件」）
@@ -62,6 +89,17 @@ object OpenWith {
         val handlers = runCatching {
             ctx.packageManager.queryIntentActivities(base, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
         }.getOrDefault(emptyList())
+        // ① 用户在设置里选过的默认文件管理器优先（用户可随时改/清除）
+        val chosen = app.dsh.mobile.DshPrefs.fileManager(ctx)
+        if (!chosen.isNullOrBlank()) {
+            handlers.firstOrNull { it.activityInfo.packageName == chosen }?.let {
+                return android.content.ComponentName(it.activityInfo.packageName, it.activityInfo.name)
+            }
+        }
+        // ② 没选过且存在多个候选：不指定组件 —— 让系统弹「选择要使用的应用」，
+        //    用户勾「始终」即成为系统默认（这正是主人要的「让用户去选默认」）。
+        if (handlers.size > 1 && chosen.isNullOrBlank()) return null
+        // ③ 只有一个候选（或已选且命中）→ 显式指定，避免多一次选择器
         for (pkg in prefer) {
             val hit = handlers.firstOrNull { it.activityInfo.packageName == pkg }
             if (hit != null) {

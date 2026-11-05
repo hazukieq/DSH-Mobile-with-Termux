@@ -121,6 +121,9 @@ Groups (see the actual handlers for params):
   `{"component":"pkg/cls"}` (plus optional `action`, `data`, `extras`); a missing component returns
   `{"ok":false,"error":"component not found: ..."}`, and a successful component start is flagged
   `backgroundLaunchMayBeBlocked` because Android may silently refuse background activity starts.
+- File-manager choice: `GET /file-manager` lists candidates + the current pick;
+  `POST /file-manager {"package":"<pkg>"}` sets the default, `{"package":null}` clears it
+  (back to "ask every time"). Mirrors Settings → File manager.
 - Folders: `POST /open/folder` opens the directory in the **device's own file manager** (preference
   list: Files by Google → MIUI/AOSP file managers → DocumentsUI), not hard-wired to DocumentsUI;
   reply `target_package` tells you which one handled it.

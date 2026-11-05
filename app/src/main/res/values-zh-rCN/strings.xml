@@ -411,4 +411,7 @@ dsh：%2$s
     <string name="progress_overlay_denied_title">悬浮窗未授权 · 点此去授权</string>
     <string name="settings_a11y_enabled_not_connected">已开启（未连接）</string>
     <string name="settings_a11y_disabled_by_system">已授权但被系统停用（点此重开）</string>
+    <string name="setting_file_manager">文件管理器</string>
+    <string name="setting_file_manager_sub">打开文件夹时用哪个 App</string>
+    <string name="setting_file_manager_ask">每次询问</string>
 </resources>
