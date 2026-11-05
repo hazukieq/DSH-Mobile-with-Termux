@@ -14,5 +14,12 @@ internal data class Line(val text: String, val left: Int, val top: Int, val righ
         val cy: Int get() = (top + bottom) / 2
     }
 
-internal data class OcrPrefetch(val ts: Long, val w: Int, val h: Int, val nodes: JSONArray)
+internal data class OcrPrefetch(
+    val ts: Long,
+    val w: Int,
+    val h: Int,
+    val nodes: JSONArray,
+    /** 因为落在悬浮窗矩形内而被丢弃的 OCR 条数（>0 说明有区域被悬浮窗遮住，需要显式截图才能读到）。 */
+    val occluded: Int = 0,
+)
 

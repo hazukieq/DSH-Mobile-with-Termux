@@ -889,3 +889,10 @@ nal act '{"steps":[{"op":"scroll-node","direction":"forward","count":6}]}'   # f
   不要塞 40 进一次调用，会撞 bridge 10s 超时且超时前其实已经滚过。
 - 手势起点落在悬浮窗上会被吞：`/gesture` 回执现在带 `window` 与 `ownOverlay:true`（带 hint）；
   批量动作可加 `{"steps":[...],"hideOverlay":true}`，整批期间悬浮窗不接收触摸（结束后自动复位）。
+
+### 悬浮窗遮挡与截图（重要）
+
+后台 OCR prefetch **不摘悬浮窗**（摘了会让悬浮窗闪），因此被悬浮窗卡片盖住的区域**读不到文本**。
+prefetch 回执里若出现 `overlay_occluded > 0`，说明有区域被自己的悬浮窗遮住：
+**先显式调用一次截图**（`GET /screenshot?save=1`（或终端 `shot --out …`））再读；显式截图会临时摘掉悬浮窗、
+拍完立即挂回，所以那张图是干净的，可以据此点击被遮挡区域。

@@ -66,7 +66,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                         .put("center", JSONArray(listOf(b.cx, b.cy)))
                         .put("source", "ocr").put("role", "text"))
                 }
-                ocrPrefetch = OcrPrefetch(System.currentTimeMillis(), shot.first, shot.second, arr)
+                ocrPrefetch = OcrPrefetch(System.currentTimeMillis(), shot.first, shot.second, arr, occluded = dropped)
                 app.dsh.mobile.DshLog.d("prefetch", "ocr ready n=${arr.length()} dropped=$dropped ms=${System.currentTimeMillis() - t0}")
             } catch (e: Throwable) {
                 app.dsh.mobile.DshLog.e("prefetch", "ocr prefetch failed: ${e.message}", e)
@@ -85,6 +85,16 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                     .put("reason", reason).put("itemsKey", "nodes")
                     .put("screenshot", JSONObject().put("w", p.w).put("h", p.h))
                     .put("nodes", p.nodes)
+                if (p.occluded > 0) {
+                    // 关键提示：prefetch 不摘悬浮窗（摘了会闪），所以被悬浮窗盖住的区域读不到文本。
+                    scene.put("overlay_occluded", p.occluded)
+                        .put("occluded_by", "own_overlay")
+                        .put("hint", "prefetch does NOT hide the overlay (hiding it would make it flicker). " +
+                            "If you need to read/tap a region covered by the overlay card, call an explicit " +
+                            "screenshot first (GET /screenshot, or the `shot` gate command) — that path detaches the overlay " +
+                            "for the capture and restores it right after.")
+                        .put("actionHint", "GET /screenshot?save=1")
+                }
                 return 200 to scene.toString()
             }
             Thread.sleep(80)

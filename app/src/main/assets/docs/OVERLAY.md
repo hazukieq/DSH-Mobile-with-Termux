@@ -143,3 +143,20 @@
   （`warmup1`/`warmup2` 各打一行日志），再取真图。
 - **opsAvoid 去抖**：`beginOpsAvoid/endOpsAvoid` 400ms 内重复切换直接忽略（`opsAvoid on/off debounced`），
   避免每 250ms 翻一次导致状态栏/窗口抖动。
+
+### 3.z 为什么 OCR prefetch 绝不能摘悬浮窗（抖动 / flicker）
+
+- 现象：静置、不点任何截图，悬浮窗仍大约每 **3–5 秒**消失一次再出现（肉眼可见）。
+- 原因链：后台 OCR prefetch 每 3–5 秒抓一帧 → 若它也走「截图避让」→ 每帧都
+  `removeView` 摘掉悬浮窗再 `addView` 挂回 → 屏幕上一闪一闪。
+  摘/挂窗口是**真实窗口增删**，不是改 alpha，所以必然可见。
+- 结论（硬规则）：**只有显式截图允许摘窗口**（`screenshotBase64(avoidOverlay = true)`：
+  `/screenshot`、`shot` 门、agent 主动取图）；**prefetch 必须 `avoidOverlay = false`**。
+- prefetch 画面里带悬浮窗怎么办：用 `StatusOverlay.currentFrameRect()` 把落在悬浮窗矩形内的
+  OCR block 丢掉（日志 `ocr ready n=… dropped=…`），**不要靠摘窗口去获得干净画面**。
+- prefetch 的回执要告诉调用方：当 `overlay_occluded > 0` 时返回
+  `overlay_occluded` / `occluded_by:"own_overlay"` / `hint` / `actionHint:"GET /screenshot?save=1"`，
+  含义是「被悬浮窗盖住的区域这次没读到；要读/要点击那块区域，请先手动调用一次显式截图」。
+  显式截图路径会临时摘掉悬浮窗（并先丢两帧破双缓冲），拍完立即挂回。
+- 反向验证（回归判据）：静置 20 秒，logcat 里 `capture avoid: removed=true` 计数必须是 **0**；
+  若 >0 说明又有后台路径走了避让。
