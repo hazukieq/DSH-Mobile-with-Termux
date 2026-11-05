@@ -188,7 +188,8 @@ internal class Router(private val bridge: AgentBridge) {
             method == "POST" && path == "/open" -> appHandler.openTarget(ctx, body)
             method == "POST" && path == "/wait-app" -> appHandler.waitApp(ctx, body)
             method == "POST" && path == "/alarm/set" -> appHandler.alarmSet(ctx, body)
-            path == "/file-manager" -> appHandler.fileManager(ctx, body)
+            method == "GET" && path == "/file-manager" -> appHandler.fileManager(ctx, "")
+            method == "POST" && path == "/file-manager" -> appHandler.fileManager(ctx, body)
             method == "POST" && path == "/tap-id" -> action.tapId(body)
             // /wait-text 是 /wait 的别名（同一套节点树轮询），只保留一个实现。
             method == "POST" && path == "/wait-text" -> action.wait(body, "wait-text")
