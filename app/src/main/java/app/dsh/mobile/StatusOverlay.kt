@@ -757,39 +757,38 @@ object StatusOverlay {
     //   - alpha=0 的窗口仍然参与命中测试与无障碍树，会挡住自动点击、把「空闲/执行中」混进节点树；
     //   - 所以这里是 removeView / addView（同一份视图对象，不重建、不重新 inflate，状态不丢）。
     @Volatile private var hiddenForCapture = false
+    /** 本次避让是否真的把视图摘下来过（只有摘下来才需要在结束时 addView 回去） */
+    @Volatile private var detachedForCapture = false
 
     /** 截图前把悬浮窗从窗口移除（真正不可见、不可点、不进无障碍树） */
     fun beginCaptureAvoid(svc: AccessibilityService?) {
-        main {
-            if (hiddenForCapture) return@main
-            val r = root ?: return@main
-            val w = wm ?: return@main
-            hiddenForCapture = true
-            // ⚠️ 不再 removeViewImmediate：每次截图/读屏都摘挂窗口 → 画面必闪一下，
-            // 密集自动化时观感就是「一闪一闪」。改成 visibility=GONE：不参与绘制、
-            // 不参与命中测试、不进无障碍树，但窗口本身不动 → 视觉连贯。
-            r.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-            r.visibility = android.view.View.GONE
-            runCatching { w.updateViewLayout(r, params ?: return@main) }
+        if (hiddenForCapture) return
+        hiddenForCapture = true
+        // 只用「真摘窗口」：GONE 的窗口仍可能被合成器用上一帧缓存画出来（用户实测截图带上悬浮窗）。
+        // 摘窗口会让画面闪一帧，但截图是低频动作，正确性优先。
+        mainSync { 
+            val r = root ?: return@mainSync
+            val w = wm ?: return@mainSync
+            if (runCatching { w.removeViewImmediate(r) }.isSuccess) detachedForCapture = true
         }
-        // 等一帧，确保 GONE 已生效再截
-        Thread.sleep(35L)
+        // 让合成器丢弃上一帧
+        Thread.sleep(24L)
     }
 
     /** 截图完成后原样挂回窗口（沿用原 params 与档位状态） */
     fun endCaptureAvoid(svc: AccessibilityService?) {
-        main {
-            if (!hiddenForCapture) return@main
-            hiddenForCapture = false
-            val r = root ?: return@main
-            val w = wm ?: return@main
-            val p = params ?: return@main
+        if (!hiddenForCapture) return
+        hiddenForCapture = false
+        mainSync { 
+            val r = root ?: return@mainSync
+            val w = wm ?: return@mainSync
+            val p = params ?: return@mainSync
             runCatching {
-                r.visibility = android.view.View.VISIBLE
-                if (!r.isAttachedToWindow) {
-                    r.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                if (detachedForCapture || !r.isAttachedToWindow) {
+                    detachedForCapture = false
                     w.addView(r, p)
                 }
+                r.visibility = android.view.View.VISIBLE
                 // 档位状态原样保留（不重置 expandLevel）——用户展开后就该一直展开
                 applyExpandLevel(r)
             }
@@ -1202,6 +1201,28 @@ object StatusOverlay {
 
     private fun main(block: () -> Unit) {
         runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post(block) }
+    }
+
+    /**
+     * 在主线程执行并**等待完成**（最多 [timeoutMs]）。
+     *
+     * 截图避让必须确认「窗口已被摘掉」才能拍照，而 [main] 只是 post，调用方拿不到时序；
+     * 之前的版本在 post 出去的块里等栅栏 → 把主线程堵死 → 截图超时、窗口也没挂回去。
+     * 已经在主线程时直接执行（否则会自锁）。
+     */
+    private fun mainSync(timeoutMs: Long = 800L, block: () -> Unit): Boolean {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            return runCatching { block(); true }.getOrDefault(false)
+        }
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val posted = runCatching {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                runCatching(block)
+                latch.countDown()
+            }
+        }.isSuccess
+        if (!posted) return false
+        return latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
 

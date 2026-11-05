@@ -996,7 +996,15 @@ class DshAccessibilityService : AccessibilityService() {
         val svcForAvoid = instance
         StatusOverlay.beginCaptureAvoid(svcForAvoid)
         try {
-            return screenshotBase64Inner(timeoutMs)
+            // 系统对 takeScreenshot 有节流（ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT）：
+            // 一次读屏里 OCR / 图标识别 / agent 取图会连续要帧，实测 vivo 上刚截完立刻再截
+            // 直接返回 null（用户看到的就是「截图失败/超时」）。这里与 screenshotArgb 一致做
+            // 短退避重试，把「偶发被拒」和「真的不可用」分开。
+            repeat(3) { attempt ->
+                screenshotBase64Inner(timeoutMs)?.let { return it }
+                if (attempt < 2) Thread.sleep(450L)
+            }
+            return null
         } finally {
             StatusOverlay.endCaptureAvoid(svcForAvoid)
         }
