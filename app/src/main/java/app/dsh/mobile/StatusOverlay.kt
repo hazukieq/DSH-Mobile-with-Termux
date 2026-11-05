@@ -191,9 +191,13 @@ object StatusOverlay {
                 status.text = ctx.getString(R.string.overlay_idle)
                 statusTextColor = 0xFFE6EAF2.toInt()   // 固定浅色：XML 里的是给浅底准备的深色字
 
+                // 初值就用**折叠球尺寸**（不是 WRAP）：WRAP 时首帧会按 XML 自然尺寸
+                // （实测 178x79 的横条）画出来，再被 applyExpandLevel 改成 99x99 →
+                // 每次显示都闪一下「横条→圆球」。直接用最终尺寸即可无跳变。
+                val initSide = dp(ctx, COLLAPSED_BALL_DP)
                 val p = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    initSide,
+                    initSide,
                     windowType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -493,10 +497,10 @@ object StatusOverlay {
         val ctx = appCtx ?: return
         val view = r ?: return
         val collapsed = expandLevel == 0
-        val idleText = ctx.getString(R.string.overlay_idle)
-        // 文案是「空闲」就按空闲排：不看 working 标志（它在异常退出时可能残留 true）
-        val idleCompact = !collapsed && statusText?.text?.toString() == idleText
-        idleCompactNow = idleCompact
+        // 空闲**不再**缩成小条（旧行为：idle 时窗口收成 34dp、隐藏动作行/无障碍行，
+        // 观感像「展开后自己折叠了」，用户要求展开态视觉保持稳定 → 恒用完整卡片）。
+        val idleCompact = false
+        idleCompactNow = false
 
         // 内边距：球态必须为 0（否则球心会被 padding 顶偏）；卡片态 10/8/12/8。
         if (collapsed) view.setPadding(0, 0, 0, 0)
@@ -532,7 +536,7 @@ object StatusOverlay {
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
         // 空闲小块里必须能看到「空闲」二字：文字为空时补上（只补空值，不覆盖任何真实内容）
         if (!collapsed && statusText?.text.isNullOrBlank()) {
-            statusText?.text = idleText
+            statusText?.text = ctx.getString(R.string.overlay_idle)
             statusText?.setTextColor(statusTextColor)
         }
         statusScroll?.let { sc ->
@@ -595,13 +599,11 @@ object StatusOverlay {
         // 折叠=正方球；展开空闲=贴合内容（只有 dot + 文案）；展开运行=固定 240dp 宽
         val w = when {
             collapsed -> side
-            !idleCompactNow -> dp(ctx, 240)
-            else -> WRAP              // 空闲：窗口 = dot + 「空闲」+ 内边距，宽度由内容决定
+            else -> dp(ctx, 240)      // 展开态恒 240dp（空闲/运行同一尺寸，避免尺寸跳变）
         }
         val h = when {
             collapsed -> side
-            idleCompactNow -> dp(ctx, 34)  // 空闲：6dp+14dp dot+6dp，留 8dp 余量防裁切
-            else -> WRAP
+            else -> WRAP              // 高度由内容决定（空闲一行、运行多行，逐渐增高而非瞬变）
         }
         view.layoutParams?.let { lp ->
             if (lp.width != w || lp.height != h) {
@@ -613,15 +615,20 @@ object StatusOverlay {
         val p = params ?: return
         p.width = w
         p.height = h
-        Log.i(TAG, "[win] level=$expandLevel collapsed=$collapsed ${w}x$h")
+        // 防御：opsAvoid 不在生效期却带着 NOT_TOUCHABLE → 球永远点不动/拖不动。
+        // （历史现象：点击无任何 handle touch 日志，窗口成了「只能看」的摆设。）
+        val notTouch = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        if (!opsAvoid && (p.flags and notTouch) != 0) {
+            p.flags = p.flags and notTouch.inv()
+            Log.w(TAG, "cleared stale NOT_TOUCHABLE flag")
+        }
+        Log.i(TAG, "[win] level=$expandLevel collapsed=$collapsed ${w}x$h flags=0x${Integer.toHexString(p.flags)} touchable=${(p.flags and notTouch) == 0}")
         runCatching { safeUpdateLayout(wm, view, p) }
-        // 档位变化时重挂窗口：只改 LayoutParams 时部分 ROM 会保留旧 frame（透明区域挡住下层）
+        // 档位变化只改 LayoutParams + requestLayout，**不重挂窗口**：
+        // removeView/addView 会重建 surface，观感就是切换档位时闪一下（用户反馈「一闪一闪」）。
         if (lastAppliedLevel != expandLevel) {
             lastAppliedLevel = expandLevel
-            runCatching {
-                wm?.removeView(view)
-                wm?.addView(view, p)
-            }
+            view.requestLayout()
             view.post {
                 runCatching {
                     p.x = dockX(view, p, ctx)
@@ -736,9 +743,14 @@ object StatusOverlay {
             val r = root ?: return@main
             val w = wm ?: return@main
             hiddenForCapture = true
-            runCatching { w.removeViewImmediate(r) }
+            // ⚠️ 不再 removeViewImmediate：每次截图/读屏都摘挂窗口 → 画面必闪一下，
+            // 密集自动化时观感就是「一闪一闪」。改成 visibility=GONE：不参与绘制、
+            // 不参与命中测试、不进无障碍树，但窗口本身不动 → 视觉连贯。
+            r.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            r.visibility = android.view.View.GONE
+            runCatching { w.updateViewLayout(r, params ?: return@main) }
         }
-        // 等一帧，确保移除已生效再截（否则可能截到残留帧）
+        // 等一帧，确保 GONE 已生效再截
         Thread.sleep(35L)
     }
 
@@ -751,9 +763,12 @@ object StatusOverlay {
             val w = wm ?: return@main
             val p = params ?: return@main
             runCatching {
-                if (r.isAttachedToWindow) return@runCatching
-                r.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                w.addView(r, p)
+                r.visibility = android.view.View.VISIBLE
+                if (!r.isAttachedToWindow) {
+                    r.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                    w.addView(r, p)
+                }
+                // 档位状态原样保留（不重置 expandLevel）——用户展开后就该一直展开
                 applyExpandLevel(r)
             }
         }
@@ -769,16 +784,30 @@ object StatusOverlay {
      */
     @Volatile private var opsAvoid = false
 
+    /** opsAvoid 的看门狗：异常路径没配对调用 endOpsAvoid 时，90s 后自动恢复可点。 */
+    private val opsAvoidWatchdog = Runnable {
+        if (opsAvoid) {
+            Log.w(TAG, "opsAvoid watchdog fired (endOpsAvoid was missed) — restoring touch")
+            opsAvoid = false
+            applyOpsAvoid()
+        }
+    }
+
     fun beginOpsAvoid() {
         if (opsAvoid) return
         opsAvoid = true
         applyOpsAvoid()
+        mainHandler.removeCallbacks(opsAvoidWatchdog)
+        mainHandler.postDelayed(opsAvoidWatchdog, 90_000L)
+        Log.i(TAG, "opsAvoid on")
     }
 
     fun endOpsAvoid() {
+        mainHandler.removeCallbacks(opsAvoidWatchdog)
         if (!opsAvoid) return
         opsAvoid = false
         applyOpsAvoid()
+        Log.i(TAG, "opsAvoid off")
     }
 
     private fun applyOpsAvoid() {
