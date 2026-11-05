@@ -194,3 +194,27 @@
 
 排查口诀：悬浮窗可见但无响应 → 先看 `debugState()` 里的 `flags/touchable/opsAvoid`；
 `touchable=false` 就是上面两条之一。
+
+### 3.t 最终形态：显示/隐藏只用 view 级 `visibility`（一刀切重写）
+
+结论先行（2.9.71 起）：`StatusOverlay` 里**只有一种**显示/隐藏机制——`root.visibility`。
+
+- 隐藏用 `hideNow(reason)`（INVISIBLE，引用计数），显示用 `showNow(reason)`（计数归零才 VISIBLE）。
+- `beginCaptureAvoid/endCaptureAvoid`（截图）与 `beginOpsAvoid/endOpsAvoid`（自动化）**共用同一套**：
+  它们只是 `hideNow("capture")` / `hideNow("ops")`。因为 `INVISIBLE` 的视图不绘制、不进命中测试，
+  本身就**不会挡住注入手势**，所以「操作避让」根本不需要动窗口 flags。
+- 恢复时**不做布局重放**（不调 `applyExpandLevel`、不改 `layoutParams`）：只把 visibility 改回来 +
+  `requestLayout()`。重放布局正是「INVISIBLE 之后再点击出现 UI 变形/窗口错位」的来源。
+
+明令禁止（都踩过，见 3.v / 3.y）：
+
+1. ❌ `removeView/addView` 重建窗口 —— 丢触摸状态（点不动/拖不动/滚不动）+ 可见闪烁。
+2. ❌ 改 `params.flags` 做避让（`FLAG_NOT_TOUCHABLE`）—— 一旦残留就永久点不动；
+   且 `endOpsAvoid` 被任何「去抖」吞掉都会导致这个残留。
+3. ❌ 恢复时重放布局/改 weight —— UI 变形、正文文字被裁。
+4. ❌ `params.alpha=0` / 移出屏幕 —— `takeScreenshot` 仍会拍到。
+
+截图干净靠三件事配合：`INVISIBLE` 隐藏 → 120ms 等一帧 → 截图侧「≥333ms 节流 + 先丢两帧 warmup」。
+
+排查口诀：悬浮窗**看不见但还在** → `hideRefs` 没归零（看 `hide(...)/show(...)` 日志配对）；
+悬浮窗**看得见但点不动** → 看 `debugState()` 里 `flags/touchable`（应当 `touchable=true`，且 flags 里没有 0x10）。

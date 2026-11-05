@@ -154,7 +154,7 @@ object StatusOverlay {
             " pos=${p?.x},${p?.y} size=${p?.width}x${p?.height}" +
             " flags=0x${p?.flags?.toString(16) ?: "?"}" +
             " touchable=${p?.let { (it.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) == 0 } ?: "?"}" +
-            " opsAvoid=$opsAvoid hiddenForCapture=$hiddenForCapture" +
+            " hideRefs=$hideRefs" +
             " type=$windowTypeUsed"
     }
 
@@ -642,7 +642,8 @@ object StatusOverlay {
             needUpdate = true
         }
         val notTouch = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        if (!opsAvoid && (p.flags and notTouch) != 0) {
+        // 我们从不设置 NOT_TOUCHABLE；若历史版本残留过，这里顺手清掉（悬浮窗「看得见点不动」的真凶之一）
+        if ((p.flags and notTouch) != 0) {
             p.flags = p.flags and notTouch.inv()
             needUpdate = true
             Log.w(TAG, "cleared stale NOT_TOUCHABLE flag")
@@ -745,115 +746,73 @@ object StatusOverlay {
     /** 用户隐藏后重新允许显示（引擎重启等场景调用） */
     fun resetHidden() { hidden = false }
 
-    // 截图/读屏时必须让悬浮窗**真正消失**（不是 alpha=0）：
-    //   - alpha=0 的窗口仍然参与命中测试与无障碍树，会挡住自动点击、把「空闲/执行中」混进节点树；
-    //   - 所以这里是 removeView / addView（同一份视图对象，不重建、不重新 inflate，状态不丢）。
-    @Volatile private var hiddenForCapture = false
-    /** 本次避让是否真的把视图摘下来过（只有摘下来才需要在结束时 addView 回去） */
-    @Volatile private var detachedForCapture = false
-    /** 截图避让前的窗口 alpha / flags（alpha=0 方案下用于原样恢复） */
-    @Volatile private var prevXForCapture = 0
-    @Volatile private var prevAlphaForCapture = 1f
-    @Volatile private var prevFlagsForCapture = 0
+    // ── 显示/隐藏：唯一机制就是 view 级 visibility ─────────────────────────────
+    // 铁律（用户定调 + 实测，别再动）：
+    //  * `INVISIBLE` 的视图不绘制、不参与命中测试，**也不会挡住自动化注入的手势** ——
+    //    所以「截图避让」与「自动化操作避让」用同一套隐藏机制。
+    //  * 绝不 `removeView`/`addView`：重建窗口会丢触摸状态（点不动/拖不动/滚不动）还会闪。
+    //  * 绝不改 `params.flags`：`FLAG_NOT_TOUCHABLE` 一旦残留，悬浮窗就永久点不动。
+    //  * 恢复时不做布局重放：重放会改布局导致「UI 变形」；这里只把 visibility 改回来。
+    @Volatile private var hideRefs = 0
 
-    /**
-     * 截图前让悬浮窗「消失」，拍完恢复。
-     *
-     * 结论（alioth 实测，别再试别的路）：**只有真正把窗口从 WindowManager 摘掉才拍不到**。
-     *  - `visibility=GONE`：合成器可能仍用上一帧 → 拍到（2.9.38 回归的根因）。
-     *  - `params.alpha=0` + `INVISIBLE`：`takeScreenshot` 抓到的是已合成帧缓存，照样拍到
-     *    （03:12 实测：日志 `capture avoid: alpha=0.0 applied=true`，截图里卡片仍在）。
-     *  - `removeViewImmediate` → `addView`：可靠。历史上的副作用（文字被裁/空框）真因是
-     *    `applyExpandLevel` 把 overlayScroll 的 weight 清零，那个 bug 已单独修掉，
-     *    所以现在可以放心摘窗口，并在挂回时整套重放档位。
-     */
-    /**
-     * 截图前让悬浮窗不出现——**只隐藏，不摘窗口**。
-     *
-     * 演进史与结论（都在 alioth/vivo 上实测过）：
-     *  - `removeViewImmediate` + `addView`：图像最干净，但代价大——重建窗口会带走触摸状态，
-     *    用户「自动化刚跑完想点一下悬浮窗看输出」时点不动；而且是真实窗口增删，可见地闪。
-     *  - `params.alpha=0` / 移出屏幕：`takeScreenshot` 仍会拍到（合成缓存里还有这一层）。
-     *  - `visibility=INVISIBLE`：视图不画、不进命中测试，但窗口不动 → **触摸状态不丢**；
-     *    配合「先丢两帧」处理双缓冲陈旧帧后，实测截图里不再出现悬浮窗。
-     */
-    fun beginCaptureAvoid(svc: AccessibilityService?) {
-        if (hiddenForCapture) {
-            Log.i(TAG, "capture avoid: already hidden, skip (${debugState()})")
+    private fun hideNow(reason: String) {
+        hideRefs += 1
+        if (hideRefs > 1) {
+            Log.i(TAG, "hide($reason): already hidden refs=$hideRefs")
             return
         }
-        hiddenForCapture = true
-        Log.i(TAG, "capture avoid: before (${debugState()})")
         mainSync {
-            val r = root
-            if (r == null) {
-                Log.w(TAG, "capture avoid: nothing to hide")
-                return@mainSync
-            }
-            r.visibility = View.INVISIBLE
-            Log.i(TAG, "capture avoid: hidden=$r visibility=${r.visibility} (${debugState()})")
+            root?.visibility = View.INVISIBLE
+            Log.i(TAG, "hide($reason): visibility=${root?.visibility} (${debugState()})")
         }
-        // 给合成器一帧：这一帧里这个视图已经不再绘制
-        Thread.sleep(120L)
-        Log.i(TAG, "capture avoid: done (${debugState()})")
+    }
+
+    private fun showNow(reason: String) {
+        if (hideRefs <= 0) {
+            hideRefs = 0
+            return
+        }
+        hideRefs -= 1
+        if (hideRefs > 0) {
+            Log.i(TAG, "show($reason): still hidden refs=$hideRefs")
+            return
+        }
+        mainSync {
+            root?.let {
+                it.visibility = View.VISIBLE
+                it.requestLayout()
+            }
+            Log.i(TAG, "show($reason): visibility=${root?.visibility} (${debugState()})")
+        }
+    }
+
+    /**
+     * 截图前隐藏悬浮窗（view 级 INVISIBLE，不摘窗口、不改 flags）。
+     * 配合 [DshAccessibilityService.screenshotBase64] 里的「≥333ms 节流 + 先丢两帧」，
+     * 实测截图里不会出现悬浮窗。
+     */
+    fun beginCaptureAvoid(svc: AccessibilityService?) {
+        Log.i(TAG, "capture avoid: begin (${debugState()})")
+        hideNow("capture")
+        Thread.sleep(120L)   // 让合成器吃掉这一帧（双缓冲陈旧帧由截图侧 warmup 处理）
     }
 
     fun endCaptureAvoid(svc: AccessibilityService?) {
-        if (!hiddenForCapture) return
-        hiddenForCapture = false
-        Log.i(TAG, "capture restore: before (${debugState()})")
-        mainSync {
-            val r = root ?: return@mainSync
-            r.visibility = View.VISIBLE
-            // 关键：按「当前」opsAvoid 状态重算窗口 flags。
-            // 历史 bug：opsAvoid 期间（自动化进行中）发生过一次截图，endOpsAvoid 只改了 params 而
-            // 没生效到窗口/或时序错开，于是 FLAG_NOT_TOUCHABLE 残留在窗口上 —— 表现就是
-            // 「悬浮窗看得见但完全点不动、拖不动」。这里每次恢复都纠正一次。
-            val p = params
-            if (p != null) {
-                val notTouch = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                val want = if (opsAvoid) (p.flags or notTouch) else (p.flags and notTouch.inv())
-                if (want != p.flags) {
-                    p.flags = want
-                    Log.i(TAG, "capture restore: flags fixed -> 0x${want.toString(16)} touchable=${(want and notTouch) == 0}")
-                }
-                runCatching { safeUpdateLayout(wm, r, p) }
-            }
-            // 重建/重放都按当前 opsAvoid 走一次，避免 flags 状态漂移
-            applyExpandLevel(r)
-            runCatching { r.requestLayout() }
-            Log.i(TAG, "capture restore: shown visibility=${r.visibility} (${debugState()})")
-        }
+        showNow("capture")
         Log.i(TAG, "capture restore: done (${debugState()})")
     }
 
-    /**
-     * 自动化操作期间让悬浮窗**不吃点击**。
-     *
-     * 为什么需要：窗口是 FLAG_NOT_FOCUSABLE|NOT_TOUCH_MODAL，但**仍然可触摸**——
-     * 球/卡片覆盖的那一块，注入的 tap/swipe 会先落到我们自己的窗口上，被当成
-     * 「拖动悬浮窗」，于是自动点击在那一块区域永远点不中目标。
-     * 操作期间加 FLAG_NOT_TOUCHABLE（可见、但不参与命中测试），操作结束立刻去掉。
-     */
-    @Volatile private var opsAvoid = false
-
-    /** opsAvoid 的看门狗：异常路径没配对调用 endOpsAvoid 时，90s 后自动恢复可点。 */
+    /** 自动化操作期间的避让：同样只是隐藏（INVISIBLE 不吃命中测试），不改 flags、不摘窗口。 */
     private val opsAvoidWatchdog = Runnable {
-        if (opsAvoid) {
-            Log.w(TAG, "opsAvoid watchdog fired (endOpsAvoid was missed) — restoring touch")
-            opsAvoid = false
-            applyOpsAvoid()
+        if (hideRefs > 0) {
+            Log.w(TAG, "opsAvoid watchdog fired (endOpsAvoid missed) — force show")
+            hideRefs = 0
+            mainSync { root?.visibility = View.VISIBLE }
         }
     }
 
-    // 注意：这里**不能**做时间窗去抖。曾经的 400ms 去抖会把紧随其后的 endOpsAvoid 一起吞掉，
-    // 于是 FLAG_NOT_TOUCHABLE 永久留在窗口上 —— 用户看到的就是「悬浮窗看得见但点不动/拖不动」。
-    // 要去抖的只是「重复的 begin」，end 必须立刻生效。
-
     fun beginOpsAvoid() {
-        if (opsAvoid) return
-        opsAvoid = true
-        applyOpsAvoid()
+        hideNow("ops")
         mainHandler.removeCallbacks(opsAvoidWatchdog)
         mainHandler.postDelayed(opsAvoidWatchdog, 90_000L)
         Log.i(TAG, "opsAvoid on (${debugState()})")
@@ -861,23 +820,8 @@ object StatusOverlay {
 
     fun endOpsAvoid() {
         mainHandler.removeCallbacks(opsAvoidWatchdog)
-        if (!opsAvoid) return
-        opsAvoid = false
-        applyOpsAvoid()
+        showNow("ops")
         Log.i(TAG, "opsAvoid off (${debugState()})")
-    }
-
-    private fun applyOpsAvoid() {
-        main {
-            val p = params ?: return@main
-            val r = root ?: return@main
-            val w = wm ?: return@main
-            val notTouchable = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            val next = if (opsAvoid) (p.flags or notTouchable) else (p.flags and notTouchable.inv())
-            if (next == p.flags) return@main
-            p.flags = next
-            runCatching { if (r.isAttachedToWindow) safeUpdateLayout(w, r, p) }
-        }
     }
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
