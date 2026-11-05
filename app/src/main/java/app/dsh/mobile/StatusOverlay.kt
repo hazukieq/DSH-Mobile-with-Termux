@@ -366,6 +366,7 @@ object StatusOverlay {
                 view, p, ctx,
                 onClick = { /* 展开态点卡片空白处不收起，保持稳定展开 */ },
                 onLongPress = { hide(DshAccessibilityService.instance) },
+                scrollChild = sScroll,
             )
         } else {
             // 折叠态：整颗球都能点/拖；长按 = 隐藏
@@ -396,6 +397,11 @@ object StatusOverlay {
         ctx: Context,
         onClick: () -> Unit,
         onLongPress: (() -> Unit)? = null,
+        /**
+         * 展开态传 statusScroll：手指落在「可滚动的正文区」里时**不吃事件**，
+         * 交给 ScrollView 自己滚。不传的话根容器会把 DOWN 吞掉 → 正文滚不动。
+         */
+        scrollChild: android.widget.ScrollView? = null,
     ) {
         val slop = dp(ctx, TAP_SLOP_DP).toFloat()
         var downX = 0f; var downY = 0f
@@ -407,6 +413,17 @@ object StatusOverlay {
             Log.i(TAG, "handle touch: action=${ev.actionMasked} at (${ev.x.toInt()},${ev.y.toInt()})")
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (scrollChild != null && scrollChild.visibility == View.VISIBLE) {
+                        val r = android.graphics.Rect()
+                        scrollChild.getHitRect(r)
+                        val inside = r.contains(ev.x.toInt(), ev.y.toInt())
+                        val scrollable = scrollChild.canScrollVertically(1) || scrollChild.canScrollVertically(-1)
+                        if (inside && scrollable) {
+                            Log.i(TAG, "handle touch: pass through to scroll area at (${ev.x.toInt()},${ev.y.toInt()})")
+                            dragging = false
+                            return@setOnTouchListener false
+                        }
+                    }
                     clearReplyReady()
                     downX = ev.rawX; downY = ev.rawY
                     startX = p.x; startY = p.y

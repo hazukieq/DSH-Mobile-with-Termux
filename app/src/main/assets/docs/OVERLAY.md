@@ -167,3 +167,15 @@
   显式截图路径会临时摘掉悬浮窗（并先丢两帧破双缓冲），拍完立即挂回。
 - 反向验证（回归判据）：静置 20 秒，logcat 里 `capture avoid: removed=true` 计数必须是 **0**；
   若 >0 说明又有后台路径走了避让。
+
+### 3.w 展开态「正文滚不动」的根因
+
+- 现象：展开卡片里正文比较长时，用手指上下滑没有任何反应。
+- 根因：展开态为了支持「拖卡片 / 长按隐藏」，在**根容器**上装了 `OnTouchListener`，并且
+  `ACTION_DOWN` 一律 `return true` 把事件吃掉 —— 子 View（`overlayScroll`）根本收不到触摸，
+  于是 ScrollView 永远不滚。
+- 修法：`attachGesture(..., scrollChild = sScroll)`；DOWN 时先做命中判断
+  「点是否落在滚动区内 **且** `canScrollVertically(±1)` 为真」→ 满足就 `return false`，
+  把事件交给 ScrollView（日志 `handle touch: pass through to scroll area at (x,y)`）；
+  不在滚动区（或内容不够滚）才走拖动/点击逻辑。
+- 判据：日志里应看到 `pass through to scroll area` 而不是只有 `handle touch: action=0`。
