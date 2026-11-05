@@ -76,6 +76,15 @@
   那会让卡片在空闲/工作之间跳变，用户会读成「它自己折叠了」。
 
 
+
+### 3.y 截图避让的正确姿势：窗口 alpha=0（不是 GONE / 不是摘窗口）
+
+- `beginCaptureAvoid()`：`params.alpha = 0f` + 临时 `FLAG_NOT_TOUCHABLE` → `updateViewLayout`；`endCaptureAvoid()` 原样恢复。
+- 为什么不用 `visibility=GONE`：`takeScreenshot` 抓的是**已合成缓冲**，GONE 只是「下一帧不画」，上一帧的悬浮窗还会被拍进去。
+- 为什么不用 `removeView/addView`：摘窗口会触发重排/重测，历史上引发过「展开态文字被裁成 0 宽、卡片空框、漏挂回」一连串问题。
+- 截图前顺手 `sweep` 掉 `liveViews` 里的重复窗口：只对 root 设 alpha 时，历史副本仍会被拍到。
+- 现场自检：logcat 应有 `capture avoid: alpha=0.0 ... applied=true`。
+
 ## 4. 状态机速查
 
 ```

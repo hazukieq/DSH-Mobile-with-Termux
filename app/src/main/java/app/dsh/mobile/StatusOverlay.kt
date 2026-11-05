@@ -706,38 +706,59 @@ object StatusOverlay {
     @Volatile private var hiddenForCapture = false
     /** 本次避让是否真的把视图摘下来过（只有摘下来才需要在结束时 addView 回去） */
     @Volatile private var detachedForCapture = false
+    /** 截图避让前的窗口 alpha / flags（alpha=0 方案下用于原样恢复） */
+    @Volatile private var prevAlphaForCapture = 1f
+    @Volatile private var prevFlagsForCapture = 0
 
-    /** 截图前把悬浮窗从窗口移除（真正不可见、不可点、不进无障碍树） */
+    /**
+     * 截图前让悬浮窗「消失」，拍完恢复。
+     *
+     * 做法：**改窗口 alpha=0**（用户建议，实测最稳），而不是 GONE 或摘窗口：
+     *  - alpha=0 → 合成器这一帧完全不画它，`takeScreenshot` 抓不到（这是截图要的唯一效果）；
+     *  - 窗口仍挂在 WindowManager 上 → 不触发 removeView/addView、不重排、不重测，
+     *    之前「摘窗口再挂回」引发的一连串问题（文字被裁/空框/闪烁/漏挂回）全部消失；
+     *  - 期间顺手加 FLAG_NOT_TOUCHABLE，避免拍照这几十毫秒里把手势吃掉。
+     */
     fun beginCaptureAvoid(svc: AccessibilityService?) {
         if (hiddenForCapture) return
         hiddenForCapture = true
-        mainSync { 
+        mainSync {
             val r = root ?: return@mainSync
-            // 整体 GONE：不绘制、不命中、不进无障碍树；恢复在 endCaptureAvoid 里整套重放
-            r.visibility = View.GONE
+            val p = params ?: return@mainSync
+            val w = wm ?: return@mainSync
+            // 先把历史遗留的重复窗口清掉：之前 addView 重挂路径可能留下多个窗口，
+            // 只把 root 的 alpha 置 0，其它副本照样会被截图拍到（用户实测截图里还有悬浮窗）。
+            val dup = liveViews.count { it !== r }
+            if (dup > 0) {
+                for (v in liveViews.filter { it !== r }) runCatching { w.removeView(v) }
+                liveViews.clear(); liveViews.add(r)
+                Log.w(TAG, "removed $dup stale overlay window(s) before capture")
+            }
+            prevAlphaForCapture = p.alpha
+            prevFlagsForCapture = p.flags
+            p.alpha = 0f
+            p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            val ok = runCatching { safeUpdateLayout(w, r, p) }.isSuccess
+            Log.i(TAG, "capture avoid: alpha=${p.alpha} touchable=false applied=$ok attached=${r.isAttachedToWindow}")
         }
-        Thread.sleep(16L)
+        // 给合成器一帧时间应用新 alpha
+        Thread.sleep(20L)
     }
 
-    /** 截图完成后恢复可见 */
+    /** 截图完成后把 alpha / flags 原样恢复（视图与布局完全不动，所以不需要任何重排）。 */
     fun endCaptureAvoid(svc: AccessibilityService?) {
         if (!hiddenForCapture) return
         hiddenForCapture = false
         mainSync {
             val r = root ?: return@mainSync
+            val p = params ?: return@mainSync
             val w = wm ?: return@mainSync
-            val c = appCtx ?: return@mainSync
-            // 截图期间可能整窗被摘掉（或视图被 GONE），挂回时必须**整套状态**重放一遍：
-            // 只写 visibility=VISIBLE 不够 —— 子 View 的可见性/内边距/窗口尺寸都还停在
-            // 「折叠球」那一档，展开态就会出现「卡片在、文字被裁掉/不显示」。
-            if (!r.isAttachedToWindow) {
-                runCatching { w.addView(r, params) }
+            p.alpha = prevAlphaForCapture
+            Log.i(TAG, "capture restore: alpha=${p.alpha}")
+            p.flags = (prevFlagsForCapture or (p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)).let { f ->
+                if (opsAvoid) f else p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
-            r.visibility = View.VISIBLE
-            applyExpandLevel(r)
-            applyWindowSize(c, r, expandLevel == 0)
-            runCatching { r.requestLayout() }
-            runCatching { r.invalidate() }
+            runCatching { safeUpdateLayout(w, r, p) }
         }
     }
 
