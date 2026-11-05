@@ -116,8 +116,6 @@ object StatusOverlay {
      * 空闲时不该还挂着上一次的动作文案（主人要的是「现在在干什么」）。
      */
     @Volatile private var working = false
-    /** 空闲紧凑态：三块固定占位收起，面板只剩状态行 */
-    @Volatile private var idleCompactNow = false
     private var lastStatusBody: String = ""
     private var lastStatusAt: Long = 0L
 
@@ -191,21 +189,21 @@ object StatusOverlay {
                 status.text = ctx.getString(R.string.overlay_idle)
                 statusTextColor = 0xFFE6EAF2.toInt()   // 固定浅色：XML 里的是给浅底准备的深色字
 
-                // 初值就用**折叠球尺寸**（不是 WRAP）：WRAP 时首帧会按 XML 自然尺寸
-                // （实测 178x79 的横条）画出来，再被 applyExpandLevel 改成 99x99 →
-                // 每次显示都闪一下「横条→圆球」。直接用最终尺寸即可无跳变。
-                val initSide = dp(ctx, COLLAPSED_BALL_DP)
+                // 根据当前记忆档位初始化尺寸（折叠态 36dp，展开态 240dp），初始即用最终尺寸避免闪白跳动
+                expandLevel = rememberedLevel
+                val isCollapsed = expandLevel == 0
+                val initW = if (isCollapsed) dp(ctx, COLLAPSED_BALL_DP) else dp(ctx, 240)
+                val initH = if (isCollapsed) dp(ctx, COLLAPSED_BALL_DP) else WindowManager.LayoutParams.WRAP_CONTENT
                 val p = WindowManager.LayoutParams(
-                    initSide,
-                    initSide,
+                    initW,
+                    initH,
                     windowType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                     PixelFormat.TRANSLUCENT,
                 ).apply {
                     gravity = Gravity.TOP or Gravity.START
-                    // 默认放**右侧**：多数 App 的左侧是导航栏/图标栏，悬浮窗压在上面会挡住操作。
-                    // ⚠️ 初值必须保守 —— 见下方 post 里的修正。
+                    // 默认放右侧
                     x = dp(ctx, 8)
                     y = dp(ctx, 120)
                 }
@@ -271,9 +269,8 @@ object StatusOverlay {
                 // "overlay shown at 1059,315 (0x0)"）。用 post 等布局完成再回算。
                 view.post {
                     val margin = dp(ctx, 8)
-                    val vw = if (view.width > 0) view.width else dp(ctx, 120)
-                    p.x = (ctx.resources.displayMetrics.widthPixels - vw - margin)
-                        .coerceAtLeast(margin)
+                    val vw = if (p.width > 0) p.width else if (view.width > 0) view.width else dp(ctx, 240)
+                    p.x = (screenRect(ctx).width() - vw - margin).coerceAtLeast(margin)
                     p.y = clampY(view, p, ctx)
                     runCatching { safeUpdateLayout(w, view, p) }
                     Log.i(TAG, "overlay shown at ${p.x},${p.y} (${view.width}x${view.height})")
@@ -302,35 +299,46 @@ object StatusOverlay {
      */
     private fun bindHandle(view: View, p: WindowManager.LayoutParams, ctx: Context) {
         val statusTv = view.findViewById<TextView>(R.id.overlayStatus)
-        // 先摘掉全部旧监听 + **复位 clickable**（档位切换会换目标）
-        //
-        // 🔴 修主人实测的「球心点不动、点旁边才行」：
-        // 状态点在某些档位会当手柄（attachGesture 会给它 isClickable = true）。
-        // 只清监听、不复位 isClickable 的话，那颗点会**自己吃掉触摸**
-        // （clickable 的 View 在 onTouchEvent 里消费 DOWN，父容器再也收不到），
-        // 表现就是「点球心（= 圆点所在位置）毫无反应，点球的其他位置正常」。
-        listOfNotNull(view, statusTv).forEach { v ->
+        val sDot = view.findViewById<View>(R.id.overlayDot)
+        val sScroll = view.findViewById<android.widget.ScrollView>(R.id.overlayScroll)
+
+        listOfNotNull(view, statusTv, sDot, sScroll, footRow, a11yText, elapsedText, sessionText).forEach { v ->
             v.setOnTouchListener(null)
             v.setOnLongClickListener(null)
+            v.setOnClickListener(null)
             v.isClickable = false
             v.isLongClickable = false
         }
-        val expanded = expandLevel > 0 && statusTv != null && statusTv.visibility == View.VISIBLE
+        val expanded = expandLevel > 0
         if (expanded) {
-            // 抢去拖窗口，ScrollView 收不到事件，长回复就只能看到前几行（用户实测）。
-            // 现在只有「动作行/状态点」可以点收/拖动，正文区域完全交给 ScrollView 滚动。
-            // 展开态：整张卡片**任意位置**点击都收起（用户要求「layout 上所有点击都能触发状态变化」）
+            // 展开态：只有点击状态圆点（statusDot）才收起回折叠球
             val collapse = android.view.View.OnClickListener { collapseToBall() }
-            listOfNotNull(view, statusTv, statusScroll, footRow, a11yText, statusDot, elapsedText)
-                .forEach { v ->
-                    v.setOnClickListener(collapse)
-                    v.isClickable = true
-                }
-            (statusText ?: view).let { d ->
-                attachGesture(d, p, ctx, onClick = { collapseToBall() })
+            sDot?.setOnClickListener(collapse)
+            sDot?.isClickable = true
+
+            // 扩展 statusDot 的触摸热区，方便点击收起
+            val parent = sDot?.parent as? View
+            parent?.post {
+                val rect = android.graphics.Rect()
+                sDot?.getHitRect(rect)
+                val pad = dp(ctx, 12)
+                rect.top -= pad
+                rect.bottom += pad
+                rect.left -= pad
+                rect.right += pad
+                parent.touchDelegate = android.view.TouchDelegate(rect, sDot)
             }
-            // 是残留交互，展开态点正文只会让人以为有第四段；正文现在纯滚动。
-            // 收起：点圆点或动作行；隐藏：长按动作行。
+
+            // 正文区域纯滚动，不响应收起，不拦截卡片手势
+            sScroll?.isClickable = false
+            statusTv?.isClickable = false
+
+            // 卡片主体支持拖动与长按隐藏；单击主体空白处不收起，避免误触
+            attachGesture(
+                view, p, ctx,
+                onClick = { /* 展开态点卡片空白处不收起，保持稳定展开 */ },
+                onLongPress = { hide(DshAccessibilityService.instance) },
+            )
         } else {
             // 折叠态：整颗球都能点/拖；长按 = 隐藏
             attachGesture(
@@ -341,12 +349,12 @@ object StatusOverlay {
         }
     }
 
-    /** 收起回折叠球（展开态点面板空白处的语义） */
+    /** 收起回折叠球（展开态点圆点的语义） */
     private fun collapseToBall() {
         autoExpanded = false
         if (expandLevel == 0) return
-        statusScroll?.post { statusScroll?.fullScroll(View.FOCUS_DOWN) }
         expandLevel = 0
+        rememberedLevel = 0
         applyExpandLevel()
     }
 
@@ -427,9 +435,9 @@ object StatusOverlay {
     private fun clampY(v: View, p: WindowManager.LayoutParams, ctx: Context): Int {
         val screenH = screenRect(ctx).height()
         val vh = when {
-            v.height > 0 -> v.height
             p.height > 0 -> p.height
-            else -> dp(ctx, 100)
+            v.height > 0 -> v.height
+            else -> if (expandLevel == 0) dp(ctx, COLLAPSED_BALL_DP) else dp(ctx, 120)
         }
         return p.y.coerceIn(dp(ctx, 10), (screenH - vh - dp(ctx, 10)).coerceAtLeast(dp(ctx, 10)))
     }
@@ -439,9 +447,9 @@ object StatusOverlay {
         val screenW = screenRect(ctx).width()
         val margin = dp(ctx, 8)
         val vw = when {
-            v.width > 0 -> v.width
             p.width > 0 -> p.width
-            else -> dp(ctx, 120)
+            v.width > 0 -> v.width
+            else -> if (expandLevel == 0) dp(ctx, COLLAPSED_BALL_DP) else dp(ctx, 240)
         }
         return if (dockRight) (screenW - vw - margin).coerceAtLeast(margin) else margin
     }
@@ -449,9 +457,7 @@ object StatusOverlay {
     /**
      * 按「当前尺寸」重新贴到所在一侧。
      *
-     * 用于档位切换（球 ↔ 卡片）后的锚定：窗口 x 是左上角坐标，球变宽成 240dp 卡片时
-     * 左上角不动、右边缘却往右长出去 —— 观感就是「一开始说话悬浮窗跳了一下」。
-     * 这里在布局完成后再按新宽度重新算 x，保持贴边的一侧不移动。
+     * 仅用于档位切换（球 ↔ 卡片）后的锚定：保持贴边的一侧不移动。
      */
     private fun anchorToEdge() {
         val v = root ?: return
@@ -467,12 +473,13 @@ object StatusOverlay {
     /** 松手后吸附到最近的水平边缘（避免长期悬在屏幕中央挡内容） */
     private fun snapToEdge(p: WindowManager.LayoutParams, ctx: Context) {
         val view = root ?: return
-        // ⚠️ 不能读 resources.displayMetrics：视频全屏/横屏切换时它还是旧值，
-        // 于是 x 按竖屏宽度算，观感就是「横屏了还按竖屏左右贴边」。
         val screenW = screenRect(ctx).width()
         val margin = dp(ctx, 8)
-        // 宽度兜底：测量未完成时 view.width 会是 0，直接用会把窗口推到屏外
-        val vw = if (view.width > 0) view.width else dp(ctx, 120)
+        val vw = when {
+            p.width > 0 -> p.width
+            view.width > 0 -> view.width
+            else -> if (expandLevel == 0) dp(ctx, COLLAPSED_BALL_DP) else dp(ctx, 240)
+        }
         dockRight = !(p.x + vw / 2 < screenW / 2)
         val target = if (dockRight) screenW - vw - margin else margin
         p.y = clampY(view, p, ctx)
@@ -481,152 +488,100 @@ object StatusOverlay {
     }
 
     /**
-     *
-     *  0 折叠：只有圆形状态点（最省空间，半透明）
-     *  1 展开：状态点 + 状态文字 + 麦克风按钮
-     *  2 详情：在展开基础上 + 最近动作 + 活跃会话列表
+     * 展开悬浮窗卡片：
+     *  0 折叠：只有圆形状态点（36dp）
+     *  1 展开：固定 240dp 定宽卡片，三段式展示
      */
     private fun expandPanel() {
-        autoExpanded = false   // 用户自己动的档位 → 不再自动收回
+        autoExpanded = false
+        if (expandLevel == 1) return
         expandLevel = 1
         rememberedLevel = 1
         applyExpandLevel()
+        // 再补一次：刚摘过窗口/刚由 GONE 恢复时，首帧测量可能还停在折叠态，
+        // 补一次保证圆点、滚动区、文字三者的可见性与卡片尺寸一致。
+        root?.postDelayed({ runCatching { applyExpandLevel() } }, 120L)
     }
-
-    /** 按当前档位应用可见性（所有控件都在同一窗口里，只切 visibility） */
-    /**
-     * 按当前档位应用可见性（所有控件都在同一窗口里，只切 visibility）。
-     * @param r 根 View（显式传入：本方法可能在 root 字段赋值前就被调用）
-     */
     /** 按档位应用布局。窗口尺寸只由 [applyWindowSize] 决定，其它任何地方都不写宽高。 */
     private fun applyExpandLevel(r: View? = root) {
         val ctx = appCtx ?: return
         val view = r ?: return
         val collapsed = expandLevel == 0
-        // 空闲态必须「自适应」：宽度贴着 dot +「空闲」走（WRAP），不占 240dp 空白；
-        // 但不能缩成 34dp 细条（那会看起来像自己折叠了），高度仍按内容走。
-        val idleText2 = ctx.getString(R.string.overlay_idle)
-        val idleCompact = !collapsed && statusText?.text?.toString() == idleText2
-        idleCompactNow = idleCompact
 
-        // 内边距：球态必须为 0（否则球心会被 padding 顶偏）；卡片态 10/8/12/8。
+        // 内边距：球态必须为 0（保证圆点居中）；卡片态 10/8/12/8。
         if (collapsed) view.setPadding(0, 0, 0, 0)
         else view.setPadding(dp(ctx, 10), dp(ctx, 8), dp(ctx, 12), dp(ctx, 8))
+
         val bgRes = if (collapsed) R.drawable.bg_overlay_ball else R.drawable.bg_overlay_panel
         if (bgRes != lastBgRes) {
             lastBgRes = bgRes
             runCatching { view.setBackgroundResource(bgRes) }
         }
 
-        // 球态：窗口本身就是正方形，圆点靠 gravity 居中——不用 margin 像素补偿。
+        // 球态：窗口本身是正方形，圆点居中
         (view as? LinearLayout)?.gravity =
             if (collapsed) Gravity.CENTER else (Gravity.TOP or Gravity.START)
+
         statusRow?.visibility = if (collapsed) View.GONE else View.VISIBLE
-        statusRow?.let { row ->
-            val lp = row.layoutParams as? LinearLayout.LayoutParams
-            if (lp != null) {
-                val h = if (collapsed) LinearLayout.LayoutParams.MATCH_PARENT
-                else LinearLayout.LayoutParams.WRAP_CONTENT
-                val g = if (collapsed) Gravity.CENTER else (Gravity.TOP or Gravity.START)
-                if (lp.height != h || lp.gravity != g) {
-                    lp.height = h
-                    lp.gravity = g
-                    row.layoutParams = lp
-                }
-            }
-        }
-
-        // 球态只显示独立圆点（布局居中）；卡片态反过来。
         ballDot?.visibility = if (collapsed) View.VISIBLE else View.GONE
-
-        // 内容可见性：卡片空闲态只留状态行（滚动区/动作行/页脚都收起）。
         statusText?.visibility = if (collapsed) View.GONE else View.VISIBLE
-        // 空闲小块里必须能看到「空闲」二字：文字为空时补上（只补空值，不覆盖任何真实内容）
-        if (!collapsed && statusText?.text.isNullOrBlank()) {
-            statusText?.text = ctx.getString(R.string.overlay_idle)
+        statusScroll?.visibility = if (collapsed) View.GONE else View.VISIBLE
+
+        // 展开态必须**永远**有字：曾经出现过「卡片在、文字空了」——档位切换/截图避让
+        // 的 GONE-VISIBLE 往返中途被打断，文字停留空串，卡片就成了一张空框。
+        if (!collapsed) {
             statusText?.setTextColor(statusTextColor)
-        }
-        statusScroll?.let { sc ->
-            // 折叠态不参与测量；空闲 = 贴合文字；工作态 = 固定 92dp（文字在框内滚动，窗口不伸缩）。
-            val targetH = when {
-                collapsed -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                idleCompactNow -> android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                else -> dp(ctx, 92)
+            if (statusText?.text.isNullOrBlank()) {
+                statusText?.text = ctx.getString(R.string.overlay_idle)
             }
+        }
+
+        statusScroll?.let { sc ->
+            // 折叠态不参与测量；展开态**空闲与工作用同一套宽高**（用户定调：
+            // 「空闲态就是和工作态一样的宽高」）——滚动区固定 92dp，卡片高度恒定不跳动。
+            val targetH = if (collapsed) android.view.ViewGroup.LayoutParams.WRAP_CONTENT else dp(ctx, 92)
             val lp = sc.layoutParams
             if (lp != null) {
                 var changed = false
                 if (lp.height != targetH) { lp.height = targetH; changed = true }
-                // 只有「有内容（非空闲）」的展开态才需要固定 92dp 滚动区；
-                // 空闲态保持贴合内容（不受这次修复影响）。
-                if (!idleCompactNow && lp is LinearLayout.LayoutParams && lp.weight != 0f) {
-                    lp.weight = 0f   // XML 的 layout_weight=1 会把滚动区撑成"占满剩余高度"，必须清零
-                    changed = true
-                }
+                // ⚠️ 绝对不要动 weight：overlayScroll 的 layout_width 是 0dp + weight=1
+                // （横向 LinearLayout 里靠权重撑开）。把 weight 清零会让宽度变成 0，
+                // 卡片照样画出来、圆点也在，但**文字全被裁成 0 宽**——
+                // 用户看到的就是「展开态文本不显示」。这里只固定高度。
                 if (changed) sc.layoutParams = lp
             }
-            // 状态文字永远可见：空闲时也要能看到「空闲」二字（之前把它 GONE 掉 → 面板空白的根源）
             sc.visibility = if (collapsed) View.GONE else View.VISIBLE
         }
-        // 状态行宽高一律 wrap_content（尺寸由 applyWindowSize 的窗口大小决定，行不再撑满）
-        (statusRow?.layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { rlp ->
-            if (rlp.width != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
-                rlp.width = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                statusRow?.layoutParams = rlp
-            }
-        }
-        a11yText?.visibility = if (!collapsed && !idleCompactNow) View.VISIBLE else View.GONE
-        footRow?.visibility = if (collapsed || idleCompactNow) View.GONE else View.VISIBLE
-        refreshActionVisibility()
 
+        refreshActionVisibility()
         applyWindowSize(ctx, view, collapsed)
 
-        if (!anchorPending) {
-            anchorPending = true
-            view.postOnAnimation {
-                anchorPending = false
-                anchorToEdge()
+        // 仅在档位切换时才需要重新锚定贴边
+        if (lastAppliedLevel != expandLevel) {
+            lastAppliedLevel = expandLevel
+            if (!anchorPending) {
+                anchorPending = true
+                view.postOnAnimation {
+                    anchorPending = false
+                    anchorToEdge()
+                }
             }
         }
+
         bindHandle(view, params ?: return, ctx)
         view.requestLayout()
-        view.post {
-            runCatching { bindHandle(view, params ?: return@post, ctx) }
-            runCatching {
-                val xy = IntArray(2); view.getLocationOnScreen(xy)
-                Log.i(TAG, "[geo] level=$expandLevel ${view.width}x${view.height} at ${xy[0]},${xy[1]} idle=$idleCompactNow bg=$lastBgRes text='${statusText?.text}' vis=${statusText?.visibility} tw=${statusText?.width} sw=${statusScroll?.width} rw=${statusRow?.width}")
-            }
-        }
     }
 
     /**
-     * 窗口尺寸的唯一真源。**三种形态互不相同，禁止为了「统一」把它们合并**（详见 docs/OVERLAY.md §2.0）：
-     *
-     * | 形态 | 宽 | 高 |
-     * | --- | --- | --- |
-     * | 折叠球 `collapsed` | `COLLAPSED_BALL_DP`（正方形） | 同宽 |
-     * | 展开·空闲 `idleCompactNow` | `WRAP_CONTENT`（贴着 图标+「空闲」，自适应） | `WRAP_CONTENT` |
-     * | 展开·工作 | `dp(240)` 固定 | `WRAP_CONTENT`（内部正文区固定 92dp，窗口高度稳定） |
-     *
-     * 历史踩坑（别重犯）：
-     *  - 把空闲也写死 240dp → 右边一大片空白，用户报「空闲又不自适应了」；
-     *  - 把空闲压成 34dp 细条 → 看起来像「展开后自己折叠」；
-     *  - 用 removeView/addView 换尺寸 → 每次切换/截图都闪一下。
-     * 档位切换只走 updateViewLayout + requestLayout；可见性切换只改 visibility。
+     * 窗口尺寸的唯一真源：
+     *  - 折叠球：COLLAPSED_BALL_DP (36dp) 正方球
+     *  - 展开态：无论空闲还是工作，一律保持固定 240dp 宽，高度稳定（内部滚动区 92dp）
      */
     private fun applyWindowSize(ctx: Context, view: View, collapsed: Boolean) {
         val side = dp(ctx, COLLAPSED_BALL_DP)
-        val WRAP = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-        // 折叠=正方球；展开空闲=贴合内容（只有 dot + 文案）；展开运行=固定 240dp 宽
-        val w = when {
-            collapsed -> side
-            !idleCompactNow -> dp(ctx, 240)   // 工作态：固定 240dp（文字在框内滚动）
-            else -> WRAP                      // 空闲：自适应内容宽度
-        }
-        val h = when {
-            collapsed -> side
-            else -> WRAP              // 高度由内容决定（空闲一行、运行多行，逐渐增高而非瞬变）
-        }
+        val w = if (collapsed) side else dp(ctx, 240)
+        val h = if (collapsed) side else android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+
         view.layoutParams?.let { lp ->
             if (lp.width != w || lp.height != h) {
                 lp.width = w
@@ -635,28 +590,20 @@ object StatusOverlay {
             }
         }
         val p = params ?: return
-        p.width = w
-        p.height = h
-        // 防御：opsAvoid 不在生效期却带着 NOT_TOUCHABLE → 球永远点不动/拖不动。
-        // （历史现象：点击无任何 handle touch 日志，窗口成了「只能看」的摆设。）
+        var needUpdate = false
+        if (p.width != w || p.height != h) {
+            p.width = w
+            p.height = h
+            needUpdate = true
+        }
         val notTouch = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         if (!opsAvoid && (p.flags and notTouch) != 0) {
             p.flags = p.flags and notTouch.inv()
+            needUpdate = true
             Log.w(TAG, "cleared stale NOT_TOUCHABLE flag")
         }
-        Log.i(TAG, "[win] level=$expandLevel collapsed=$collapsed ${w}x$h flags=0x${Integer.toHexString(p.flags)} touchable=${(p.flags and notTouch) == 0}")
-        runCatching { safeUpdateLayout(wm, view, p) }
-        // 档位变化只改 LayoutParams + requestLayout，**不重挂窗口**：
-        // removeView/addView 会重建 surface，观感就是切换档位时闪一下（用户反馈「一闪一闪」）。
-        if (lastAppliedLevel != expandLevel) {
-            lastAppliedLevel = expandLevel
-            view.requestLayout()
-            view.post {
-                runCatching {
-                    p.x = dockX(view, p, ctx)
-                    safeUpdateLayout(wm, view, p)
-                }
-            }
+        if (needUpdate) {
+            runCatching { safeUpdateLayout(wm, view, p) }
         }
     }
 
@@ -764,34 +711,33 @@ object StatusOverlay {
     fun beginCaptureAvoid(svc: AccessibilityService?) {
         if (hiddenForCapture) return
         hiddenForCapture = true
-        // 只用「真摘窗口」：GONE 的窗口仍可能被合成器用上一帧缓存画出来（用户实测截图带上悬浮窗）。
-        // 摘窗口会让画面闪一帧，但截图是低频动作，正确性优先。
         mainSync { 
             val r = root ?: return@mainSync
-            val w = wm ?: return@mainSync
-            if (runCatching { w.removeViewImmediate(r) }.isSuccess) detachedForCapture = true
+            // 整体 GONE：不绘制、不命中、不进无障碍树；恢复在 endCaptureAvoid 里整套重放
+            r.visibility = View.GONE
         }
-        // 让合成器丢弃上一帧
-        Thread.sleep(24L)
+        Thread.sleep(16L)
     }
 
-    /** 截图完成后原样挂回窗口（沿用原 params 与档位状态） */
+    /** 截图完成后恢复可见 */
     fun endCaptureAvoid(svc: AccessibilityService?) {
         if (!hiddenForCapture) return
         hiddenForCapture = false
-        mainSync { 
+        mainSync {
             val r = root ?: return@mainSync
             val w = wm ?: return@mainSync
-            val p = params ?: return@mainSync
-            runCatching {
-                if (detachedForCapture || !r.isAttachedToWindow) {
-                    detachedForCapture = false
-                    w.addView(r, p)
-                }
-                r.visibility = android.view.View.VISIBLE
-                // 档位状态原样保留（不重置 expandLevel）——用户展开后就该一直展开
-                applyExpandLevel(r)
+            val c = appCtx ?: return@mainSync
+            // 截图期间可能整窗被摘掉（或视图被 GONE），挂回时必须**整套状态**重放一遍：
+            // 只写 visibility=VISIBLE 不够 —— 子 View 的可见性/内边距/窗口尺寸都还停在
+            // 「折叠球」那一档，展开态就会出现「卡片在、文字被裁掉/不显示」。
+            if (!r.isAttachedToWindow) {
+                runCatching { w.addView(r, params) }
             }
+            r.visibility = View.VISIBLE
+            applyExpandLevel(r)
+            applyWindowSize(c, r, expandLevel == 0)
+            runCatching { r.requestLayout() }
+            runCatching { r.invalidate() }
         }
     }
 
@@ -876,13 +822,8 @@ object StatusOverlay {
      */
     private fun refreshActionVisibility() {
         val expanded = expandLevel >= 1
-        // 第三段：会话标题 + 倒计时
-        // 无障碍/打开应用动作链（第④段）：展开态且有内容才显示
-        a11yText?.visibility = if (expanded && !idleCompactNow && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
-        val foot = footRow ?: return
-        val hasFoot = sessionText?.text?.isNotEmpty() == true || elapsedText?.text?.isNotEmpty() == true
-        // 固定占位：展开态始终占这 16dp（无内容时留空），避免出现/消失时窗口高度跳变
-        foot.visibility = if (expanded && !idleCompactNow) View.VISIBLE else View.GONE
+        a11yText?.visibility = if (expanded && a11yLines.isNotEmpty()) View.VISIBLE else View.GONE
+        footRow?.visibility = if (expanded) View.VISIBLE else View.GONE
     }
 
     /** 排一个「holdMs 后回空闲」，可被后续任何新状态取消 */
@@ -900,40 +841,6 @@ object StatusOverlay {
     }
 
     /**
-     * 这里按内容实测高度夹到 176dp（不够就不动），超出则固定高度并内部滚动。
-     */
-    private fun capScrollHeight() {
-        // 按内容夹高会让每条状态都改一次窗口高度，观感就是持续闪烁。
-        if (true) return
-        val sc = statusScroll ?: return
-        val ctx = appCtx ?: return
-        val maxPx = dp(ctx, 132)
-        val child = sc.getChildAt(0) ?: return
-        // 宽度未知时按卡片正文最大宽度（216dp - 内边距）量一遍，保证拿到真实内容高度。
-        var desired = child.measuredHeight
-        if (desired <= 0 || child.width == 0) {
-            val w = (sc.width - sc.paddingLeft - sc.paddingRight)
-                .takeIf { it > 0 } ?: dp(ctx, 200)
-            child.measure(
-                android.view.View.MeasureSpec.makeMeasureSpec(w, android.view.View.MeasureSpec.AT_MOST),
-                android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
-            )
-            desired = child.measuredHeight
-        }
-        if (desired <= 0) return
-        val target = if (desired > maxPx) maxPx else desired
-        val lp = sc.layoutParams ?: return
-        if (lp.height != target) {
-            lp.height = target
-            sc.layoutParams = lp
-            sc.requestLayout()
-            root?.requestLayout()
-            root?.let { r -> params?.let { safeUpdateLayout(wm, r, it) } }
-        }
-    }
-
-    /**
-     *
      * 与 AI 的工具链分开显示：这里是 App 真的对外做的事——读屏点击/滑动/按键、
      * 启动或跳转别的 App（微信/支付宝/浏览器…）。连续相同行不重复，只留最近 4 条。
      */
@@ -947,7 +854,6 @@ object StatusOverlay {
             a11yText?.text = a11yLines.joinToString("\n") { "› " + it }
             refreshActionVisibility()
             root?.requestLayout()
-            root?.let { rv -> params?.let { pr -> safeUpdateLayout(wm, rv, pr) } }
         }
     }
 
@@ -969,33 +875,29 @@ object StatusOverlay {
         if (working) replyReady = false   // 新活动开始 → 清红（红只代表「整轮结束」）
         main {
             cancelIdleReset()   // 新状态来了 → 作废"回空闲"定时器（否则会把这里覆盖掉）
-            val wasWorking = working
             working = true
-            if (!wasWorking) runCatching { applyExpandLevel() }   // 离开空闲态 → 恢复固定占位
-            // 用户要求「点击后再展开」，所以这里**不**自动升档（折叠球由用户点开）。
-            // 原来每次都把全文塞进 TextView 再 fullScroll → 每 250ms 一次全量重排。
-            // 现在：① 只留末尾 600 字（显示区 92dp≈4 行）；② 文本没变不动；
-            // ③ 400ms 内最多更新一次（丢中间帧，末尾状态自然会再到）。
+
             val full = text.trim()
             val body = if (full.length > 600) full.takeLast(600) else full
             val nowMs = android.os.SystemClock.uptimeMillis()
-            if (body == lastStatusBody || nowMs - lastStatusAt < 400L) {
-                Log.i(TAG, "setStatus skip len=${full.length}")
+            if (body == lastStatusBody || nowMs - lastStatusAt < 250L) {
                 return@main
             }
             lastStatusBody = body
             lastStatusAt = nowMs
+
             statusText?.text = body
-            runCatching { applyExpandLevel() }   // 文案变了要重排：空闲→工作会切到固定 92dp 滚动区
-            scrollStatusToBottom()
-            Log.i(TAG, "setStatus len=${body.length} full=${full.length}")
+            statusText?.visibility = if (expandLevel > 0) View.VISIBLE else View.GONE
+            ensureExpandedContent()
             clearReplyReady()
             tintDots(COLOR_WORKING)
-            statusScroll?.post {
-                capScrollHeight()
-                statusScroll?.fullScroll(View.FOCUS_DOWN)
+
+            // 流式输出时：仅当展开态且在 View 层平滑滚动到底部，绝不调用 applyExpandLevel 触发 WMS 重排与跳动！
+            if (expandLevel > 0) {
+                statusScroll?.post {
+                    statusScroll?.fullScroll(View.FOCUS_DOWN)
+                }
             }
-            refreshActionVisibility()
         }
     }
 
@@ -1020,7 +922,6 @@ object StatusOverlay {
         val t = title.trim().take(80)
         main {
             sessionText?.text = t
-            refreshActionVisibility()
         }
     }
 
@@ -1062,7 +963,30 @@ object StatusOverlay {
         override fun run() {
             if (!ticking || startedAt <= 0L) return
             updateElapsedText()
+            ensureExpandedContent()
             mainHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    /**
+     * 展开态自愈：卡片窗口在、但圆点/滚动区/文字被中途的 GONE→VISIBLE、摘窗口重挂、
+     * 活动切后台等操作打断时会停在「空框」状态（用户看到的「展开态文本不显示」）。
+     * 这里做一次廉价的可见性+文案校验，不一致就整套重放，成本只有几个 getter。
+     */
+    private fun ensureExpandedContent() {
+        if (expandLevel == 0) return
+        val r = root ?: return
+        if (!r.isAttachedToWindow || r.visibility != View.VISIBLE) return
+        val st = statusText ?: return
+        val bad = statusRow?.visibility != View.VISIBLE ||
+            st.visibility != View.VISIBLE ||
+            statusScroll?.visibility != View.VISIBLE ||
+            st.text.isNullOrBlank() ||
+            st.currentTextColor != statusTextColor
+        if (bad) {
+            Log.w(TAG, "expanded content out of sync (row=${statusRow?.visibility} st=${st.visibility}" +
+                " text='${st.text?.take(10)}'), reapplying")
+            applyExpandLevel(r)
         }
     }
 
@@ -1080,62 +1004,20 @@ object StatusOverlay {
 
     /**
      * 回到空闲态（灰色点 + 空闲文案）。
-     *
-     * 收起 = **悬浮窗尺寸变化**（展开卡片 → 圆形球：文字/动作行隐藏、padding、
-     * minWidth/Height、背景全变），而 View 属性动画管不到窗口尺寸，直接改会在
-     * 1~2 帧里看到整体跳变。
-     *
-     * 处理：把**所有**会改变尺寸的改动（文案、动作行、档位）都挪到 alpha=0 期间，
-     * 再淡入。并延迟 60ms 避开语音面板移除那一帧（两个 overlay 窗口同时重排时
-     * 闪得更明显）。延迟期间若已有新任务/新状态，[cancelCollapse] 会取消这次收起。
+     * ⚠️ 展开态回到空闲时，保持展开卡片展示「空闲」，绝不自动收起成球或改变尺寸！
      */
     fun setIdle() {
         main {
-            val r = root
-            // 下一条状态又展开 → 一轮对话里反复「球↔面板」，观感就是持续闪烁。
-            // 收球只由用户点击触发（expandPanel 循环档位）。
-            val needFade = false
-
-            /** 真正的空闲布局（调用时必须处于 alpha=0 或本来就不需要淡出）。 */
-            fun applyIdleNow() {
-                statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
-                tintDots(COLOR_IDLE)
-                working = false
-                startedAt = 0L
-                stopTicker()
-                elapsedText?.text = ""
-                refreshActionVisibility()
-                autoExpanded = false
-            }
-
-            if (!needFade) {
-                applyIdleNow()
-                return@main
-            }
-
-            // 立刻标记，避免重复排队；真正的布局改动在淡出后执行
+            cancelIdleReset()
+            statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
+            tintDots(COLOR_IDLE)
+            working = false
+            startedAt = 0L
+            stopTicker()
+            elapsedText?.text = ""
+            refreshActionVisibility()
+            ensureExpandedContent()
             autoExpanded = false
-            cancelCollapse()
-            val job = Runnable {
-                collapsePending = null
-                val view = root ?: return@Runnable
-                view.animate().cancel()
-                view.animate().alpha(0f).setDuration(80L).withEndAction {
-                    // 此刻不可见 → 安全地改尺寸
-                    statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
-                    tintDots(COLOR_IDLE)
-                    working = false
-                    startedAt = 0L
-                    stopTicker()
-                    elapsedText?.text = ""
-                    refreshActionVisibility()
-                    expandLevel = 0
-                    applyExpandLevel()
-                    view.animate().alpha(1f).setDuration(140L).start()
-                }.start()
-            }
-            collapsePending = job
-            mainHandler.postDelayed(job, 60L)
         }
     }
 

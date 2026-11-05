@@ -30,11 +30,10 @@
     <!-- 展开态一行：圆点 + 文字（文字包在 ScrollView 里，长内容在框内滚动） -->
     <LinearLayout
         android:id="@+id/overlayRow"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_gravity="center_horizontal"
-        android:gravity="center_vertical">
+        android:gravity="top">
         <!-- 图标固定在这里（不放进 ScrollView），随卡片静止；topMargin 让它的中线落到首行文字的中线 -->
         <View
             android:id="@+id/overlayDot"
@@ -46,22 +45,21 @@
 
         <ScrollView
             android:id="@+id/overlayScroll"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:layout_marginStart="6dp"
             android:layout_marginTop="2dp"
-            android:maxWidth="216dp"
             android:scrollbars="vertical"
             android:overScrollMode="never">
 
             <TextView
                 android:id="@+id/overlayStatus"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textSize="12sp"
                 android:includeFontPadding="false"
-                android:textColor="#E6EAF2"
-                android:maxWidth="216dp" />
+                android:textColor="#E6EAF2" />
         </ScrollView>
     </LinearLayout>
 
@@ -84,6 +82,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
+        android:minHeight="14dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:visibility="gone">
