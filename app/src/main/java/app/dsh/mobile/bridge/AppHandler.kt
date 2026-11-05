@@ -493,6 +493,12 @@ internal class AppHandler(private val bridge: AgentBridge) {
      * 文件管理器偏好：GET 列出候选与当前选择；POST {package} 设为默认，{package:null} 清除（回到每次询问）。
      * 用户先选、agent 也能改/清 —— 这就是「默认由用户定，agent 可取消默认」的落点。
      */
+    /** GET /storage → 存储布局诊断（工作区真实路径、软链、授权、卸载是否保留）。 */
+    internal fun storage(ctx: Context): Pair<Int, String> =
+        runCatching { 200 to app.dsh.mobile.engine.EnginePaths.layoutReport(ctx).toString() }
+            .getOrElse { 500 to org.json.JSONObject().put("ok", false)
+                .put("error", it.message ?: "storage report failed").toString() }
+
     internal fun fileManager(ctx: Context, body: String): Pair<Int, String> {
         return runCatching {
             val req = if (body.isBlank()) null else org.json.JSONObject(body)

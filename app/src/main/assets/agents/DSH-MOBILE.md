@@ -121,6 +121,8 @@ Groups (see the actual handlers for params):
   `{"component":"pkg/cls"}` (plus optional `action`, `data`, `extras`); a missing component returns
   `{"ok":false,"error":"component not found: ..."}`, and a successful component start is flagged
   `backgroundLaunchMayBeBlocked` because Android may silently refuse background activity starts.
+- Storage layout: `GET /storage` reports where workspaces/sessions really live
+  (`workspaces_real`, symlink flags, All-Files-Access state, `survives_uninstall`).
 - File-manager choice: `GET /file-manager` lists candidates + the current pick;
   `POST /file-manager {"package":"<pkg>"}` sets the default, `{"package":null}` clears it
   (back to "ask every time"). Mirrors Settings → File manager.

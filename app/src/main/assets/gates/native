@@ -106,6 +106,10 @@ case "${1:-}" in
     [ -n "$pkg" ] && [ -n "$sid" ] || { echo "native shortcut: --package <pkg> --id <shortcutId> required" >&2; exit 2; }
     json_or_die POST /shortcut/launch "{\"package\":\"$pkg\",\"id\":\"$sid\"}"
     ;;
+  storage)
+    # 存储布局诊断：工作区/会话的真实落点、是否软链、是否需要「所有文件访问」
+    json_or_die GET /storage
+    ;;
   file-manager)
     # 不带参 = 看当前选择与候选；--pick <pkg> 设为默认；--clear 清除（回到每次询问）
     shift

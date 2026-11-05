@@ -188,6 +188,7 @@ internal class Router(private val bridge: AgentBridge) {
             method == "POST" && path == "/open" -> appHandler.openTarget(ctx, body)
             method == "POST" && path == "/wait-app" -> appHandler.waitApp(ctx, body)
             method == "POST" && path == "/alarm/set" -> appHandler.alarmSet(ctx, body)
+            method == "GET" && path == "/storage" -> appHandler.storage(ctx)
             method == "GET" && path == "/file-manager" -> appHandler.fileManager(ctx, "")
             method == "POST" && path == "/file-manager" -> appHandler.fileManager(ctx, body)
             method == "POST" && path == "/tap-id" -> action.tapId(body)

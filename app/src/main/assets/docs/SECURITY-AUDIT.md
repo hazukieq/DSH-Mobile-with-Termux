@@ -130,10 +130,21 @@ HTTP 服务，只绑回环；桥要求 `X-DSH-Token`，token 每次启动随机�
 | `files/dsh-home/` | 会话、工作区注册表、插件、`profiles/`、日志 | 设置 → 关于 → 清除数据（或卸载） |
 | `files/log/` | 引擎与 App 日志（滚动，默认保留最近若干 MB） | 同上 |
 | `files/usr/`（`$PREFIX`） | Termux 运行时 + 引擎闭包（约 1.2 GB） | 卸载即清 |
-| `/sdcard/Documents/dshdata/` | **共享存储**里你创建的工作区（默认位置） | 需要你自己删，卸载 App 不会删 |
+| `/sdcard/Documents/dshdata/` | **只有在设置里授予「所有文件访问」后才生效**：此时 `dsh-home/sessions`、`dsh-home/workspaces` 是指向它的软链，工作区/会话文件真的在共享存储里 | 需要你自己删，卸载 App 不会删 |
+| `Android/data/com.termux/files/dshdata/` | **未授予「所有文件访问」时的回退位置**：目录同样可被文件管理器访问，但**卸载 App 会一起删** | 卸载即删 |
 | 系统凭据（API Key） | 存在 App 私有目录的配置文件里，明文（沙箱内） | 删除配置或清数据 |
 
 没有任何数据被复制到共享存储或外部（除非你让 AI 导出文件，那是显式动作）。
+
+**工作区到底落在哪**：取决于上面的权限。随时用一条命令确认真实路径（跟随软链后的结果）：
+
+```
+native storage          # GET /storage
+```
+
+回执里 `workspaces_real` 是解析软链后的真实目录，`workspaces_is_symlink` 说明是否外置，`public_root` 为 `null` 表示当前没外置（只在 App 私有目录，卸载会删），`survives_uninstall` 直接给结论。
+
+> 已知差异（2026-11-05 反馈）：WebUI「添加工作区」走系统目录选择器，选择器起始页是 Documents，但注册表里记录的是 `dsh-home/workspaces/<name>` 这个**软链路径**（真实文件在 `dshdata/` 下）。用 `native storage` 看 `workspaces_real` 即可确认，不要用注册表里的原始字符串判断在不在共享存储。
 
 ---
 

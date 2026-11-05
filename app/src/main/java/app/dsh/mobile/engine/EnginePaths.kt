@@ -361,6 +361,39 @@ internal object EnginePaths {
     fun userDataLocation(ctx: android.content.Context): String? =
         publicDataRoot(ctx)?.absolutePath
 
+    /**
+     * 存储布局诊断（`GET /storage`）—— 回答「我的工作区到底落在哪」。
+     *
+     * 背景（issue 2026-11-05）：文档曾写「默认 /sdcard/Documents/dshdata」，
+     * 但实际取决于「所有文件访问」是否已授权；未授权时 workspaces 只在 App 私有目录，
+     * 系统文件管理器看不到。所以这里把**真实解析后的路径**（跟随软链）+ 授权状态一起回。
+     */
+    fun layoutReport(ctx: android.content.Context): org.json.JSONObject {
+        val home = dshHome(ctx)
+        fun canonical(f: File): String = runCatching { f.canonicalPath }.getOrElse { f.absolutePath }
+        val ws = File(home, "workspaces")
+        val sessions = File(home, "sessions")
+        val pub = publicDataRoot(ctx)
+        val docsDsh = File(android.os.Environment.getExternalStorageDirectory(), "Documents/dshdata")
+        val appsDsh = ctx.getExternalFilesDir(null)?.let { File(it, "dshdata") }
+        return org.json.JSONObject()
+            .put("dsh_home", home.absolutePath)
+            .put("workspaces_link", ws.absolutePath)
+            .put("workspaces_real", canonical(ws))
+            .put("workspaces_is_symlink", runCatching { java.nio.file.Files.isSymbolicLink(ws.toPath()) }.getOrDefault(false))
+            .put("sessions_real", canonical(sessions))
+            .put("sessions_is_symlink", runCatching { java.nio.file.Files.isSymbolicLink(sessions.toPath()) }.getOrDefault(false))
+            .put("public_root", pub?.absolutePath ?: org.json.JSONObject.NULL)
+            .put("all_files_access",
+                android.os.Build.VERSION.SDK_INT >= 30 && android.os.Environment.isExternalStorageManager())
+            .put("documents_dshdata", docsDsh.absolutePath)
+            .put("documents_dshdata_exists", docsDsh.isDirectory)
+            .put("documents_dshdata_entries", runCatching { docsDsh.list()?.size ?: 0 }.getOrDefault(0))
+            .put("app_external_dshdata", appsDsh?.absolutePath ?: org.json.JSONObject.NULL)
+            .put("app_external_dshdata_exists", appsDsh?.isDirectory == true)
+            .put("survives_uninstall", pub != null)
+    }
+
     fun tmpDir(ctx: android.content.Context): File =
         File(EngineConfig.engineRoot(ctx), "tmp").apply { mkdirs() }
 }
