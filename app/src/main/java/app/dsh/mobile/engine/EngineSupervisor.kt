@@ -581,6 +581,21 @@ class EngineSupervisor(private val ctx: Context) {
                 }
             }
 
+            // ---- dshmarket「立即重启」识别（issue-dshmarket-android-restart）----
+            // 市场插件不认 App 的 supervisor（它只认 systemd），会 SIGTERM 宿主并 detached
+            // spawn 一个自己的 `dsh web`。那条替换进程写盘不上我们的 engine.log，token 也
+            // 不是我们的；唯一正确的应对是**立刻**由受管引擎夺回端口并按正常重启流程换 token。
+            // 这里做的就是把「退避」跳过：否则用户看到的是错误页停留 2~30s。
+            val marketRestart = withContext(Dispatchers.IO) { detectMarketRestartIntent() }
+            if (marketRestart != null) {
+                Log.w(TAG, "dshmarket self-restart detected (${marketRestart.name}) — taking over immediately, skipping backoff")
+                withContext(Dispatchers.IO) { reclaimPort() }
+                backoffIndex = 0
+                portReclaimCount = 0
+                deterministicFailure = null
+                delay(300)
+            }
+
             // 统一走退避重启
             backoffIndex++
             if (backoffIndex > EngineConfig.MAX_RESTART) {
@@ -594,6 +609,26 @@ class EngineSupervisor(private val ctx: Context) {
             delay(delayMs)
         }
     }
+
+    /**
+     * 检测「dshmarket 刚刚发起过自重启」。
+     *
+     * dshmarket 的自重启 helper 会把状态落在 `$PREFIX/tmp/dsh-market-restart-*.{recovery.json,out.log,err.log}`：
+     *   - `restart.js` 先写 `<ts>.recovery.json`（含 port/spawn 配置）
+     *   - helper 再写 `<ts>.out.log`（里面是它自己那份引擎的 `dsh web: …?token=`）
+     * 我们只把它的**存在**当作「这次退出是市场发起的」证据，用来跳过退避、立即夺回端口；
+     * 不读它的 token —— 受管引擎重启后会写自己的 token 到 engine.log，WebView 照常换新。
+     *
+     * 时间窗 5 分钟：够覆盖 helper 起停全过程，又不会把很久以前的旧记录当成新事件。
+     */
+    private fun detectMarketRestartIntent(): File? = runCatching {
+        val tmp = File(EngineConfig.engineRoot(ctx), "tmp")
+        if (!tmp.isDirectory) return@runCatching null
+        val cutoff = System.currentTimeMillis() - 5 * 60_000L
+        tmp.listFiles { f ->
+            f.isFile && f.name.startsWith("dsh-market-restart-") && f.lastModified() > cutoff
+        }?.maxByOrNull { it.lastModified() }
+    }.getOrNull()
 
     /** 等待本次引擎写出插件健康标记；marker 本身不包含凭证或用户路径。 */
     private suspend fun awaitPluginHealth(

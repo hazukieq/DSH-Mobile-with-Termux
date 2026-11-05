@@ -30,7 +30,13 @@ restart: the engine will stop/start by itself; do not run another restart
 与受管引擎抢 3080，表现为 WebView `ERR_CONNECTION_REFUSED` / `ERR_INCOMPLETE_CHUNKED_ENCODING`、
 引擎连启数分钟。因此：
 
-- 插件市场的「立即重启」不可用，重启只走 §1 的受控路径；
+- 插件市场的「立即重启」不会成为第二条重启路径：`EngineSupervisor` 在崩溃路径里检测
+  `$PREFIX/tmp/dsh-market-restart-*`（近 5 分钟内的 `*.recovery.json` / `*.out.log`），
+  一旦命中就判定「这次退出是市场发起的」→ **跳过退避** → 立即 `reclaimPort()` 清掉市场
+  自己的 `dsh web` → 由受管引擎重启 → WebView 按新 token 重载。日志：
+  `dshmarket self-restart detected (<file>) — taking over immediately, skipping backoff`。
+  用户侧表现：市场页闪一下连接错误，随即回到 WebUI（不再出现「连启 3 分钟」）；
+- 重启仍只走 §1 的受控路径（`dsh-update restart` / `POST /engine/restart` / 设置页）；
 - `EngineSupervisor` 在 `spawnEngine()` 前、以及健康轮询失败后清理外来监听者：
   `portListenInodes()` 解析 `/proc/net/tcp`、`/proc/net/tcp6` 的 LISTEN 行取 socket inode →
   `pidsForSocketInodes()` 扫 `/proc/<pid>/fd` 反查 PID → `killForeignPortHolders(port)` 杀掉既不是本进程、
