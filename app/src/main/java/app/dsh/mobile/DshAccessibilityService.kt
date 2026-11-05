@@ -1198,8 +1198,16 @@ class DshAccessibilityService : AccessibilityService() {
         a == b || a.startsWith(b) || b.startsWith(a)
 
     /** 点是否落在本 App 自己的无障碍悬浮窗（状态条/悬浮球）上 —— 这类窗口吞合成手势。 */
+    /**
+     * 点是否落在**我们自己的**无障碍悬浮窗上。
+     *
+     * ⚠️ 判据必须是窗口类型 `TYPE_ACCESSIBILITY_OVERLAY`，不能用包名：
+     * 主 WebView 窗口的包名同样是 `com.termux`，按包名判会把整屏都算成「自家悬浮窗」
+     * （实测 2.9.43 首次上线时任何点都回 ownOverlay:true，等于这条提示失效）。
+     */
     fun pointInOwnOverlay(x: Int, y: Int): Boolean = runCatching {
         windows?.any { w ->
+            if (w.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) return@any false
             val root = w.root ?: return@any false
             if ((root.packageName ?: "").toString() != "com.termux") return@any false
             val r = Rect(); root.getBoundsInScreen(r)

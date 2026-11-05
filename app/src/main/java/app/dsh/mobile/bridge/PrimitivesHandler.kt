@@ -47,7 +47,11 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
         app.dsh.mobile.DshAccessibilityService.instance?.dumpScreenCompact("text")
             ?.lineSequence()
             ?.map { it.trim() }
-            ?.firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+            ?.firstOrNull { line ->
+                line.isNotEmpty() && !line.startsWith("#") &&
+                    !line.startsWith("fg=") && !line.endsWith("nodes") &&
+                    !line.startsWith("===") && !line.startsWith("--")
+            }
             ?.take(60)
             ?: ""
     }.getOrDefault("")
