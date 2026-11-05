@@ -130,7 +130,7 @@ HTTP 服务，只绑回环；桥要求 `X-DSH-Token`，token 每次启动随机�
 | `files/dsh-home/` | 会话、工作区注册表、插件、`profiles/`、日志 | 设置 → 关于 → 清除数据（或卸载） |
 | `files/log/` | 引擎与 App 日志（滚动，默认保留最近若干 MB） | 同上 |
 | `files/usr/`（`$PREFIX`） | Termux 运行时 + 引擎闭包（约 1.2 GB） | 卸载即清 |
-| `/sdcard/Documents/dshdata/` | **只有在设置里授予「所有文件访问」后才生效**：此时 `dsh-home/sessions`、`dsh-home/workspaces` 是指向它的软链，工作区/会话文件真的在共享存储里 | 需要你自己删，卸载 App 不会删 |
+| `/sdcard/Documents/dshdata/`（或 `Documents/DSH`、`Documents/DSH-Mobile`） | **只有在设置里授予「所有文件访问」后才生效**：此时 `dsh-home/sessions`、`dsh-home/workspaces` 是指向它的软链，工作区/会话文件真的在共享存储里。若历史 `dshdata` 目录被别的 uid 创建过、本 App 写不进去，会自动改用 `Documents/DSH` 或 `Documents/DSH-Mobile` | 需要你自己删，卸载 App 不会删 |
 | `Android/data/com.termux/files/dshdata/` | **未授予「所有文件访问」时的回退位置**：目录同样可被文件管理器访问，但**卸载 App 会一起删** | 卸载即删 |
 | 系统凭据（API Key） | 存在 App 私有目录的配置文件里，明文（沙箱内） | 删除配置或清数据 |
 

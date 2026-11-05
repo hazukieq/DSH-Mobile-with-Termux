@@ -60,7 +60,19 @@ internal object EnginePaths {
         // Android 11+ 的 FUSE（scoped storage）下 canWrite() 可能返回 true 而实际
         // list()/读取被拒（文件属 media_rw 组、mode 660）—— 历史踩坑两次：
         // 软链建了、App 却读不到，会话文件找不到、悬浮条空白，且无任何错误日志。
-        val docs = File(android.os.Environment.getExternalStorageDirectory(), "Documents/dshdata")
+        // 候选公开根：优先历史目录 dshdata，其次自建目录（dshdata 常由旧 uid/媒体进程创建，
+        // 本 app 在 FUSE 下对它没有写权限 —— 实测 alioth：all_files_access=true 仍
+        // `public storage NOT writable`，于是 workspaces 永远留在私有目录，
+        // 与文档「/sdcard/Documents/dshdata 是默认位置」矛盾（issue 2026-11-05）。
+        val documents = File(android.os.Environment.getExternalStorageDirectory(), "Documents")
+        val candidates = listOf(
+            File(documents, "dshdata"),
+            File(documents, "DSH"),
+            File(documents, "DSH-Mobile"),
+        )
+        val docs = candidates.firstOrNull { dir ->
+            (dir.exists() || dir.mkdirs()) && isDirUsable(dir)
+        } ?: candidates.first()
         // 诊断（v1.2.110）：记录存储管理权限的真实状态与探针结果，便于确认
         // 「用户已授权却仍不可用」是权限没生效还是探针误判。
         val manager = android.os.Build.VERSION.SDK_INT >= 30 &&
@@ -195,6 +207,10 @@ internal object EnginePaths {
             // 但 **Java `File.list()` 在 FUSE 上对这种目录返回空数组而不是 null**（老坑），
             // 所以"list() != null"永远为真、探测形同虚设。
             // 改为**写入 + 列名字 + 读回**三步，用真实文件名验证（不依赖 null 语义）。
+            // ⚠️ 必须先建目录：首次外置时 pub 还不存在，直接 writeText 会抛
+            // FileNotFoundException，被 getOrDefault(false) 吞成「不可写」，
+            // 于是软链永远建不起来（表象=文档说在 Documents，实际永远在私有目录）。
+            pub.mkdirs()
             val marker = ".dsh-probe-" + System.nanoTime()
             val pf = File(pub, marker)
             pf.writeText("ok")
@@ -374,6 +390,12 @@ internal object EnginePaths {
         val ws = File(home, "workspaces")
         val sessions = File(home, "sessions")
         val pub = publicDataRoot(ctx)
+        val documentsDir = File(android.os.Environment.getExternalStorageDirectory(), "Documents")
+        val candidates = listOf(
+            File(documentsDir, "dshdata"),
+            File(documentsDir, "DSH"),
+            File(documentsDir, "DSH-Mobile"),
+        ).map { c -> org.json.JSONObject().put("path", c.absolutePath).put("usable", isDirUsable(c)) }
         val docsDsh = File(android.os.Environment.getExternalStorageDirectory(), "Documents/dshdata")
         val appsDsh = ctx.getExternalFilesDir(null)?.let { File(it, "dshdata") }
         return org.json.JSONObject()
@@ -391,7 +413,10 @@ internal object EnginePaths {
             .put("documents_dshdata_entries", runCatching { docsDsh.list()?.size ?: 0 }.getOrDefault(0))
             .put("app_external_dshdata", appsDsh?.absolutePath ?: org.json.JSONObject.NULL)
             .put("app_external_dshdata_exists", appsDsh?.isDirectory == true)
-            .put("survives_uninstall", pub != null)
+            .put("documents_candidates", org.json.JSONArray(candidates))
+            // 只有真外置成功（workspaces 是指向公开目录的软链）才谈得上「卸载不删」
+            .put("survives_uninstall", pub != null &&
+                runCatching { java.nio.file.Files.isSymbolicLink(ws.toPath()) }.getOrDefault(false))
     }
 
     fun tmpDir(ctx: android.content.Context): File =
