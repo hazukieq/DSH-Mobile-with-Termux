@@ -89,17 +89,61 @@ object OpenWith {
         }
         val pm = ctx.packageManager
         return runCatching {
-            pm.queryIntentActivities(probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            // ① 声明了「打开目录」Intent 的（通常是 DocumentsUI 系）
+            val byIntent = pm.queryIntentActivities(probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
                 .map { it.activityInfo.packageName }
+            // ② 已装的 OEM 文件管理器：vivo/小米/三星等**多数不声明** vnd.android.document/directory，
+            //    只靠 ① 会漏掉它们（实测 vivo 只剩 AOSP「文件」一项），所以再按白名单扫一遍已装包。
+            val installed = runCatching {
+                @Suppress("DEPRECATION")
+                pm.getInstalledPackages(0).map { it.packageName }
+            }.getOrDefault(emptyList())
+            (byIntent + installed)
                 .distinct()
-                .filter { isOemFileManager(it) }   // 只留 OEM + DocumentsUI，第三方不动
+                .filter { isOemFileManager(it) }
+                .filter { hasLaunchEntry(ctx, it) || it in byIntent }
                 .map { pkg ->
                     val label = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() }
                         .getOrDefault(pkg)
-                    pkg to label
+                    // 标签后带上包名：OEM 的「文件」和 AOSP 的「文件」label 同名，光看名字必选错
+                    "$label ($pkg)" to pkg
                 }
-                .sortedBy { it.second }
+                .sortedBy { it.first }
+                .map { (shown, pkg) -> pkg to shown }
         }.getOrDefault(emptyList())
+    }
+
+    /** 包有没有可启动入口（LAUNCHER / 主 Activity）。 */
+    private fun hasLaunchEntry(ctx: Context, pkg: String): Boolean {
+        val pm = ctx.packageManager
+        if (pm.getLaunchIntentForPackage(pkg) != null) return true
+        return runCatching {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(pkg, android.content.pm.PackageManager.GET_ACTIVITIES)
+                .activities?.isNotEmpty() == true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 把「用户选的文件管理器包名」解析成可启动组件：
+     * 优先声明 directory MIME 的 Activity，其次该包的 LAUNCHER Activity。
+     * （OEM 文件管理器通常不声明 directory MIME，只有后者可用；这也是之前「选了却打开 AOSP」的原因。）
+     */
+    private fun componentForPackage(ctx: Context, pkg: String, probe: Intent? = null): android.content.ComponentName? {
+        val pm = ctx.packageManager
+        val base = probe ?: Intent(Intent.ACTION_VIEW).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            setDataAndType(
+                DocumentsContract.buildRootsUri(DshDocumentsProvider.authority(ctx.packageName)),
+                "vnd.android.document/directory"
+            )
+        }
+        runCatching {
+            pm.queryIntentActivities(base, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+                .firstOrNull { it.activityInfo.packageName == pkg }
+        }.getOrNull()?.let { return android.content.ComponentName(pkg, it.activityInfo.name) }
+        val launch = pm.getLaunchIntentForPackage(pkg) ?: return null
+        return launch.component
     }
 
     fun setFileManager(ctx: Context, pkg: String?) = app.dsh.mobile.DshPrefs.setFileManager(ctx, pkg)
@@ -122,9 +166,9 @@ object OpenWith {
         // ① 用户在设置里选过的默认文件管理器优先（用户可随时改/清除）
         val chosen = app.dsh.mobile.DshPrefs.fileManager(ctx)
         if (!chosen.isNullOrBlank()) {
-            handlers.firstOrNull { it.activityInfo.packageName == chosen }?.let {
-                return android.content.ComponentName(it.activityInfo.packageName, it.activityInfo.name)
-            }
+            // 用户选的包必须**真的用它**：先找它的 directory 处理器，再退到它的 LAUNCHER，
+            // 都找不到才继续往下（此前直接落进 prefer 硬编码 → 选 vivo「文件管理」却开了 AOSP）。
+            componentForPackage(ctx, chosen, probe)?.let { return it }
         }
         // ② 没选过且存在多个候选：不指定组件 —— 让系统弹「选择要使用的应用」，
         //    用户勾「始终」即成为系统默认（这正是主人要的「让用户去选默认」）。
