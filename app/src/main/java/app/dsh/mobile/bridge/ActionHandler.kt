@@ -375,7 +375,26 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 "tap" -> svc.dispatchTap(obj.getDouble("x").toFloat(), obj.getDouble("y").toFloat())
                 else -> return 400 to """{"ok":false,"error":"type must be swipe|long_press|tap"}"""
             }
-            if (ok) 200 to """{"ok":true}""" else 500 to """{"ok":false,"error":"gesture dispatch failed"}"""
+            if (!ok) {
+                500 to """{"ok":false,"error":"gesture dispatch failed"}"""
+            } else {
+                // 回执补窗口信息：swipe 被自家悬浮窗吞掉时，这里能直接看到 ownOverlay=true，
+                // 而不是「回执 ok 但画面没动」（复盘 issue: retro-alarm-scroll）。
+                val out = JSONObject().put("ok", true)
+                val (px, py) = runCatching {
+                    if (obj.has("x1")) Pair(obj.getDouble("x1").toInt(), obj.getDouble("y1").toInt())
+                    else Pair(obj.getDouble("x").toInt(), obj.getDouble("y").toInt())
+                }.getOrDefault(Pair(0, 0))
+                runCatching { svc.windowInfoAt(px, py) }.getOrNull()?.let {
+                    if (it.isNotBlank()) out.put("window", JSONObject(it))
+                }
+                if (runCatching { svc.pointInOwnOverlay(px, py) }.getOrDefault(false)) {
+                    out.put("ownOverlay", true)
+                    out.put("ownOverlayHint", "gesture start point is inside our own overlay; the swipe may be swallowed — pass hideOverlay:true to /act, or use op:scroll-node")
+                }
+                if (gestureWarn.isNotBlank()) out.put("warning", gestureWarn)
+                200 to out.toString()
+            }
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"${e.message}"}"""
         }
@@ -479,6 +498,11 @@ internal class ActionHandler(private val bridge: AgentBridge) {
         val results = JSONArray()
         var allOk = true
         var failedAt = -1
+        // hideOverlay:true —— 整批动作期间悬浮窗「不吃手势」（复盘：swipe 起点落在我家卡片上时
+        // 30 次滑动全部无效，且 /gesture 回执看不出原因）。这里复用 opsAvoid 的 NOT_TOUCHABLE 机制。
+        val hideOverlay = runCatching { JSONObject(body).optBoolean("hideOverlay", false) }.getOrDefault(false)
+        if (hideOverlay) runCatching { app.dsh.mobile.StatusOverlay.beginOpsAvoid() }
+        try {
         val before = if (returnScreens) runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault("") else ""
 
         for (i in 0 until steps.length()) {
@@ -495,6 +519,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 val res: Pair<Int, String> = when (primOp) {
                     "motion" -> prim.motion(st.toString())
                     "scroll-probe" -> prim.scrollProbe(st.toString())
+                    "scroll-node" -> prim.scrollNode(st.toString())
                     "drag-fast" -> prim.dragFast(st.toString())
                     "skip" -> prim.skip(st.toString())
                     "transient" -> prim.transient(ctx, st.toString())
@@ -683,6 +708,10 @@ internal class ActionHandler(private val bridge: AgentBridge) {
         if (returnScreens) out.put("beforeScreen", before)
             .put("afterScreen", runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault(""))
         return 200 to out.toString()
+        } finally {
+            // hideOverlay 必须成对复位：否则整批结束后悬浮窗永久不可点（历史上就是这种「只能看」状态）
+            if (hideOverlay) runCatching { app.dsh.mobile.StatusOverlay.endOpsAvoid() }
+        }
         }
     }
 
@@ -838,7 +867,11 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             val obj = JSONObject(body)
             val t = ((obj.optString("text").ifBlank { obj.optString("query") })).trim()
             if (t.isBlank()) return 400 to """{"ok":false,"error":"text is required"}"""
-            val maxSwipes = obj.optInt("maxSwipes", 8)
+            // 复盘 issue(retro-alarm-scroll)：单次 maxSwipes 过大会撞 bridge 10s 超时，
+            // 而超时后其实已经滚了一段，agent 容易误判失败重来。这里把单批硬上限压到 6，
+            // 超出部分让调用方再发一次（回执带 capped/note 说明）。
+            val requested = obj.optInt("maxSwipes", 8)
+            val maxSwipes = requested.coerceIn(1, 6)
             val forward = !obj.optBoolean("back", false)
             val rect = svc.scrollToCenter(t, maxSwipes, forward)
                 ?: return 200 to """{"ok":false,"error":"not found after scrolling"}"""
@@ -848,6 +881,10 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 put("x", rect.centerX()); put("y", rect.centerY())
                 put("w", rect.width()); put("h", rect.height())
                 if (tapped) put("tapped", true)
+                if (requested > maxSwipes) {
+                    put("capped", true)
+                    put("note", "maxSwipes capped at 6 per call to stay under the bridge timeout; call again to keep scrolling")
+                }
             }.let { 200 to it.toString() }
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"${e.message}"}"""

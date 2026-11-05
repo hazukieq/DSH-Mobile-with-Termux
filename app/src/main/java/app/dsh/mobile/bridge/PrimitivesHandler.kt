@@ -37,6 +37,21 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
     }
 
     /** 滚动方向确认：执行一次滑动，然后用 frameDiff 判断画面是否真的动了。 */
+    /**
+     * 取当前屏「第一条有内容的控件文本」——用来给滚动方向提供可比较的锚点。
+     *
+     * 只读 a11y 的紧凑 dump（不截图、不 OCR），失败返回空串：
+     * 调用方看到 `first_before` 为空即表示「这次取不到锚点」，不应据此判断方向。
+     */
+    private fun firstVisibleText(bridge: AgentBridge): String = runCatching {
+        app.dsh.mobile.DshAccessibilityService.instance?.dumpScreenCompact("text")
+            ?.lineSequence()
+            ?.map { it.trim() }
+            ?.firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+            ?.take(60)
+            ?: ""
+    }.getOrDefault("")
+
     internal fun scrollProbe(body: String): Pair<Int, String> {
         val o = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
         val dir = o.optString("direction", "down")
@@ -47,17 +62,62 @@ internal class PrimitivesHandler(private val bridge: AgentBridge) {
             put("durationMs", o.optLong("duration_ms", 260L))
         }.toString()
         val before = bridge.screen.frameDiff().second
+        // 复盘 issue(retro-alarm-scroll)：只给 moved 无法判断「滚的是不是目标方向」，
+        // 于是 agent 在两个方向都 moved=true 时彻底迷失。这里直接给出滚动前后的**首条可见文本**，
+        // 让调用方用「首条内容变早/变晚」自行判定语义方向（Android 上没有通用的时间序信息源）。
+        val firstBefore = firstVisibleText(bridge)
         val r = bridge.action.gesture(steps)
         val gestureOk = r.first == 200 && !r.second.contains("\"ok\":false")
         Thread.sleep(o.optLong("settle_ms", 260L).coerceIn(80L, 1200L))
         val after = bridge.screen.frameDiff().second
+        val firstAfter = firstVisibleText(bridge)
         val moved = gestureOk && before != after
         return 200 to JSONObject()
             .put("ok", true)
             .put("direction", o.optString("direction", "down"))
             .put("moved", moved)
+            .put("first_before", firstBefore)
+            .put("first_after", firstAfter)
+            .put("content_changed", firstBefore.isNotEmpty() && firstAfter.isNotEmpty() && firstBefore != firstAfter)
             .put("gesture", r.second)
             .put("hint", if (moved) "\u65b9\u5411\u6709\u6548\uff0c\u753b\u9762\u5df2\u6eda\u52a8" else "\u753b\u9762\u6ca1\u52a8\uff1a\u53ef\u80fd\u5df2\u5230\u8fb9\u754c\u6216\u8be5\u533a\u57df\u4e0d\u53ef\u6eda")
+            .toString()
+    }
+
+    /**
+     * `op:"scroll-node"` —— 直接对可滚动节点派发 `ACTION_SCROLL_FORWARD/BACKWARD`。
+     *
+     * 为什么要这条：手势滚动会被三层东西干扰（我家悬浮窗吞手势、列表惯性、速率不稳），
+     * 复盘 issue(retro-alarm-scroll) 里 30 次 swipe 全被卡片吃掉就是典型。节点滚动没有惯性、
+     * 不会穿过悬浮窗，方向语义由参数显式给出，所以长列表粗定位优先用它；
+     * 拿不到可滚动节点（Compose/自绘）时返回 `via:"none"`，调用方再退回 swipe。
+     *
+     * 参数：`{"op":"scroll-node","direction":"forward|backward","count":1}`
+     * （也收 `down/up` 作别名，与 scroll-probe 的写法保持一致）
+     */
+    internal fun scrollNode(body: String): Pair<Int, String> {
+        val o = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
+        val raw = o.optString("direction", "forward").lowercase()
+        val forward = when (raw) {
+            "forward", "down", "next" -> true
+            "backward", "back", "up", "prev" -> false
+            else -> return 400 to """{"ok":false,"error":"direction must be forward|backward"}"""
+        }
+        val count = o.optInt("count", 1).coerceIn(1, 12)
+        val svc = app.dsh.mobile.DshAccessibilityService.instance
+            ?: return 503 to """{"ok":false,"error":"accessibility service not connected"}"""
+        val steps = runCatching { svc.scrollNodeSteps(forward, count) }.getOrDefault(0)
+        val before = firstVisibleText(bridge)
+        Thread.sleep(o.optLong("settle_ms", 160L).coerceIn(60L, 800L))
+        val after = firstVisibleText(bridge)
+        return 200 to JSONObject()
+            .put("ok", steps > 0)
+            .put("via", if (steps > 0) "node" else "none")
+            .put("direction", if (forward) "forward" else "backward")
+            .put("steps", steps)
+            .put("first_before", before)
+            .put("first_after", after)
+            .put("hint", if (steps > 0) "node scroll applied" else "no scrollable node found; fall back to swipe (POST /gesture) or /act steps")
             .toString()
     }
 

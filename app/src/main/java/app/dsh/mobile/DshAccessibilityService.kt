@@ -1527,6 +1527,24 @@ class DshAccessibilityService : AccessibilityService() {
         return n
     }
 
+    /**
+     * 对可滚动节点派发 count 次 SCROLL action（v2.9.43：`op:"scroll-node"` 的实现）。
+     * 返回**实际成功次数**；0 表示当前界面没有可滚动节点（调用方应退回手势）。
+     */
+    fun scrollNodeSteps(forward: Boolean, count: Int = 1): Int {
+        val root = rootInActiveWindow ?: return 0
+        val scroller = findScrollable(root) ?: return 0
+        val action = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        var n = 0
+        repeat(count.coerceIn(1, 12)) {
+            if (!scroller.performAction(action)) return n
+            n++
+            Thread.sleep(120)
+        }
+        return n
+    }
+
     // ---- 通知事件缓存（v1.2.141）：桥的 /notif 读取用 ----
     private val notifLog = java.util.ArrayDeque<String>()
     private val notifLock = Any()

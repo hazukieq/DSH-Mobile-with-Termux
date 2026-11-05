@@ -871,3 +871,21 @@ Rules:
   `click-text` 默认就用它）；synthetic KeyboardEvents 不行，打字仍用 helper 的 `type` / `key`。
 - Verify after each step (dialog present, text changed, or `appshot`); an element with x<0 means
   its panel is not open yet - open it first. Two failures -> ask the user which entry they mean.
+
+### 滚动：优先「节点滚」，手势只作兜底（v2.9.43）
+
+长列表（闹钟/设置/聊天记录）**先试节点滚动**，它没有惯性、不会被我们自己的悬浮窗吞、方向语义显式：
+
+```bash
+nal act '{"steps":[{"op":"scroll-node","direction":"forward","count":6}]}'   # forward/backward，等价 down/up
+```
+
+回执 `{ok, via:"node"|"none", steps, first_before, first_after}`；`via:"none"` 说明当前界面没有可滚动节点
+（Compose/自绘），再退回 `{"op":"scroll-probe"}` 或 `POST /gesture`。
+
+- `scroll-probe` 现在除了 `moved` 还回 `first_before` / `first_after` / `content_changed`：**别再只看 moved**
+  （两个方向都可能是 true），用首条内容的变化判断「滚的是不是目标方向」。
+- `POST /scroll-center` 单批 `maxSwipes` 上限 6（回执 `capped:true` + `note`），要更远就再发一次 —
+  不要塞 40 进一次调用，会撞 bridge 10s 超时且超时前其实已经滚过。
+- 手势起点落在悬浮窗上会被吞：`/gesture` 回执现在带 `window` 与 `ownOverlay:true`（带 hint）；
+  批量动作可加 `{"steps":[...],"hideOverlay":true}`，整批期间悬浮窗不接收触摸（结束后自动复位）。
