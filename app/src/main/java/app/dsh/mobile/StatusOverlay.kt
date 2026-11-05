@@ -319,7 +319,13 @@ object StatusOverlay {
         if (expanded) {
             // 抢去拖窗口，ScrollView 收不到事件，长回复就只能看到前几行（用户实测）。
             // 现在只有「动作行/状态点」可以点收/拖动，正文区域完全交给 ScrollView 滚动。
-            // 展开态：点文字区域收起（图标是 TextView 的 drawableStart，没有独立 View 可点）
+            // 展开态：整张卡片**任意位置**点击都收起（用户要求「layout 上所有点击都能触发状态变化」）
+            val collapse = android.view.View.OnClickListener { collapseToBall() }
+            listOfNotNull(view, statusTv, statusScroll, footRow, a11yText, statusDot, elapsedText)
+                .forEach { v ->
+                    v.setOnClickListener(collapse)
+                    v.isClickable = true
+                }
             (statusText ?: view).let { d ->
                 attachGesture(d, p, ctx, onClick = { collapseToBall() })
             }
@@ -497,10 +503,11 @@ object StatusOverlay {
         val ctx = appCtx ?: return
         val view = r ?: return
         val collapsed = expandLevel == 0
-        // 空闲**不再**缩成小条（旧行为：idle 时窗口收成 34dp、隐藏动作行/无障碍行，
-        // 观感像「展开后自己折叠了」，用户要求展开态视觉保持稳定 → 恒用完整卡片）。
-        val idleCompact = false
-        idleCompactNow = false
+        // 空闲态必须「自适应」：宽度贴着 dot +「空闲」走（WRAP），不占 240dp 空白；
+        // 但不能缩成 34dp 细条（那会看起来像自己折叠了），高度仍按内容走。
+        val idleText2 = ctx.getString(R.string.overlay_idle)
+        val idleCompact = !collapsed && statusText?.text?.toString() == idleText2
+        idleCompactNow = idleCompact
 
         // 内边距：球态必须为 0（否则球心会被 padding 顶偏）；卡片态 10/8/12/8。
         if (collapsed) view.setPadding(0, 0, 0, 0)
@@ -599,7 +606,8 @@ object StatusOverlay {
         // 折叠=正方球；展开空闲=贴合内容（只有 dot + 文案）；展开运行=固定 240dp 宽
         val w = when {
             collapsed -> side
-            else -> dp(ctx, 240)      // 展开态恒 240dp（空闲/运行同一尺寸，避免尺寸跳变）
+            !idleCompactNow -> dp(ctx, 240)   // 工作态：固定 240dp（文字在框内滚动）
+            else -> WRAP                      // 空闲：自适应内容宽度
         }
         val h = when {
             collapsed -> side
