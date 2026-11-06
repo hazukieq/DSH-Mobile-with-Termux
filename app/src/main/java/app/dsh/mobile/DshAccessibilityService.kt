@@ -1071,6 +1071,246 @@ class DshAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * 截图路径标记：`window` = 免闪窗口截图，`display` = 整屏截图（需避让悬浮窗）。
+     * 供 /screenshot 回执与日志区分，便于真机验收「这一次到底闪没闪」。
+     */
+    @Volatile var lastShotVia: String = "display"
+
+    /**
+     * 选「要截的那个窗口」（v2.9.73）。
+     *
+     * 为什么需要选：`takeScreenshotOfWindow` 只截**指定窗口自己的内容**，所以必须挑
+     * 「用户正在看的那个窗口」，否则截出来会是空的/别的 app。
+     * 规则：
+     *  - 有输入法窗口（TYPE_INPUT_METHOD）→ 返回 null（键盘是画面一部分，窗口截图拿不到，
+     *    交给整屏+避让的旧路径）；
+     *  - 有**获得焦点的系统窗口**（权限弹窗/ANR 框，TYPE_SYSTEM）→ null（同上）；
+     *  - 否则取应用窗口（TYPE_APPLICATION）里 active 的那个，没有就取面积最大的。
+     *
+     * 注意：**绝不能按包名排除 com.termux** —— 主 WebView 窗口的包名也是 com.termux，
+     * 按包名会把自家界面也排除掉（2.9.43 踩过同样的坑，见 [pointInOwnOverlay]）。
+     */
+    private fun pickCaptureWindow(): android.view.accessibility.AccessibilityWindowInfo? {
+        if (Build.VERSION.SDK_INT < 34) return null
+        val ws = runCatching { windows }.getOrNull() ?: return null
+        if (ws.isEmpty()) return null
+        val tApp = android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION
+        val tIme = android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+        val tSys = android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM
+        fun focused(w: android.view.accessibility.AccessibilityWindowInfo) =
+            runCatching { w.isFocused }.getOrDefault(false)
+        if (ws.any { it.type == tIme }) return null
+        if (ws.any { it.type == tSys && focused(it) }) return null
+        val apps = ws.filter { it.type == tApp }
+        if (apps.isEmpty()) return null
+        val active = apps.firstOrNull { runCatching { it.isActive }.getOrDefault(false) } ?: apps.maxByOrNull {
+            val r = Rect(); runCatching { it.getBoundsInScreen(r) }
+            r.width().toLong() * r.height().toLong()
+        }
+        return active
+    }
+
+    /**
+     * **免闪截图**（v2.9.73，Android 14 / API 34+）：截「前台上层应用窗口」，不去动悬浮窗。
+     *
+     * 为什么要它：显式截图过去靠把悬浮窗 `visibility=INVISIBLE` 来避免把它截进图里，
+     * 但真机取证证明那等价于让 WMS **销毁并重建 surface**（`mDrawState: HAS_DRAWN → NO_SURFACE`），
+     * 肉眼就是闪 2.3 秒，而且这 2.3 秒里悬浮窗点不到。
+     * `takeScreenshotOfWindow` 按 windowId 只取目标窗口的层，悬浮窗（type=2032，另一个窗口）
+     * 天然不参与合成，所以**悬浮窗全程可见、不闪、照样能点**。
+     *
+     * 返回的图会**贴回整屏画布**（按窗口 bounds 定位），保证坐标与整屏截图一致——
+     * 否则把窗口图当整屏用，点击坐标会整体偏移。窗口外区域留黑（状态栏/导航栏），
+     * 这是本方案的固有代价；需要完整画面时用 `?flash=1` 走旧的整屏+避让路径。
+     *
+     * @return null = 不可用（API<34 / 没有可截窗口 / 系统拒绝），调用方应回退到
+     *         [screenshotBase64]（整屏 + 避让）。
+     */
+    fun screenshotWindowBase64(timeoutMs: Long = 3000L): Triple<Int, Int, String>? {
+        if (Build.VERSION.SDK_INT < 34) return null
+        val win = pickCaptureWindow() ?: run {
+            Log.i("DshA11y", "screenshot(window): no capturable window (ime/system-dialog/no app)")
+            return null
+        }
+        val bounds = Rect().also { runCatching { win.getBoundsInScreen(it) } }
+        val latch = CountDownLatch(1)
+        var bmp: Bitmap? = null
+        var errCode = -1
+        val t0 = System.currentTimeMillis()
+        val cb = object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
+                runCatching {
+                    val hw = Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                    bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                    hw?.recycle()
+                }
+                screenshot.hardwareBuffer.close()
+                latch.countDown()
+            }
+
+            override fun onFailure(errorCode: Int) {
+                errCode = errorCode
+                latch.countDown()
+            }
+        }
+        awaitCaptureSlot()
+        return try {
+            takeScreenshotOfWindow(win.id, { it.run() }, cb)
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            val wb = bmp ?: run {
+                Log.w("DshA11y", "screenshot(window): failed errorCode=$errCode " +
+                    "(1=INTERNAL 2=NO_ACCESSIBILITY_ACCESS 3=INTERVAL_TIME_SHORT 4=INVALID_DISPLAY)")
+                null
+            }
+            if (wb == null) null else {
+                // 画布用**整屏**尺寸（不是 displayMetrics 的可用区），否则截图与 /screen 的
+                // 节点坐标会差一个导航栏高度（真机 2400 vs 2305）
+                val (sw, sh) = realScreenSize()
+                val out = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
+                val c = android.graphics.Canvas(out)
+                c.drawColor(android.graphics.Color.BLACK)
+                // 窗口图贴回它在屏幕上的位置：坐标与整屏一致（点击不用换算）
+                c.drawBitmap(wb, bounds.left.toFloat(), bounds.top.toFloat(), null)
+                val outW = out.width
+                val outH = out.height
+                val capW = wb.width
+                val capH = wb.height
+                wb.recycle()
+                val baos = ByteArrayOutputStream()
+                out.compress(Bitmap.CompressFormat.PNG, 100, baos)
+                out.recycle()
+                val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                lastShotVia = "window"
+                Log.i("DshA11y", "screenshot(window): ok id=${win.id} bounds=${bounds.left},${bounds.top}," +
+                    "${bounds.width()}x${bounds.height()} out=${outW}x$outH " +
+                    "captured=${capW}x$capH ms=${System.currentTimeMillis() - t0}")
+                Triple(outW, outH, b64)
+            }
+        } catch (e: Throwable) {
+            Log.w("DshA11y", "screenshot(window): exception ${e.message}")
+            null
+        } finally {
+            bmp?.recycle()
+        }
+    }
+
+    /** 单个窗口图（内部用）：成功返回 ARGB_8888 位图，失败 null。 */
+    private fun captureWindowBitmap(windowId: Int, timeoutMs: Long): Bitmap? {
+        val latch = CountDownLatch(1)
+        var bmp: Bitmap? = null
+        var errCode = -1
+        val cb = object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
+                runCatching {
+                    val hw = Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                    bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                    hw?.recycle()
+                }
+                runCatching { screenshot.hardwareBuffer.close() }
+                latch.countDown()
+            }
+
+            override fun onFailure(errorCode: Int) {
+                errCode = errorCode
+                latch.countDown()
+            }
+        }
+        return try {
+            takeScreenshotOfWindow(windowId, { it.run() }, cb)
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            if (bmp == null) Log.w("DshA11y", "captureWindow(id=$windowId): failed errorCode=$errCode")
+            bmp
+        } catch (e: Throwable) {
+            Log.w("DshA11y", "captureWindow(id=$windowId): exception ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * **组合窗口截图**（v2.9.75）：把「除自己悬浮窗以外」的可见窗口逐个
+     * [takeScreenshotOfWindow]，按各自 bounds 贴回整屏画布。
+     *
+     * 为什么需要组合：单个窗口截图拿不到**输入法键盘**和**系统弹窗**，会退回「整屏+避让」
+     * 的老路（会闪）。逐窗口合成后，键盘/对话框/状态栏都在画面里，而悬浮窗是自己的独立窗口、
+     * 被排除在外 ⇒ **任何场景都不用动悬浮窗**。
+     *
+     * 排除自己悬浮窗的办法：不能按包名（主界面也是 com.termux，见 [pickCaptureWindow] 注释），
+     * 也不能靠 a11y 的 type（application overlay 在 a11y 里报成 TYPE_SYSTEM，与状态栏撞型），
+     * 所以**按 bounds 精确比对** [StatusOverlay.currentFrameRect]。
+     */
+    fun screenshotCompositeBase64(timeoutMs: Long = 3000L): Triple<Int, Int, String>? {
+        if (Build.VERSION.SDK_INT < 34) return null
+        val ws = runCatching { windows }.getOrNull() ?: return null
+        if (ws.isEmpty()) return null
+        val overlay = StatusOverlay.currentFrameRect()
+        fun isOwnOverlay(w: android.view.accessibility.AccessibilityWindowInfo): Boolean {
+            if (overlay == null) return false
+            val b = Rect(); runCatching { w.getBoundsInScreen(b) }
+            return Math.abs(b.left - overlay.left) <= 2 && Math.abs(b.top - overlay.top) <= 2 &&
+                Math.abs(b.right - overlay.right) <= 2 && Math.abs(b.bottom - overlay.bottom) <= 2
+        }
+        // 按 layer 升序（底层先画），最多 6 个，避免异常窗口把耗时拉爆
+        val targets = ws.filter { !isOwnOverlay(it) }
+            .sortedBy { runCatching { it.layer }.getOrDefault(0) }
+            .takeLast(6)
+        if (targets.isEmpty()) return null
+
+        // 节流：窗口版计时器按 windowId 分桶（AOSP acc.java:250/1416），同一次合成里
+        // 不同窗口互不消耗；这里只按「同一服务相邻两次截图」做保守排队。
+        awaitCaptureSlot()
+        val (sw, sh) = realScreenSize()
+        val out = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(out)
+        c.drawColor(android.graphics.Color.BLACK)
+        var painted = 0
+        val t0 = System.currentTimeMillis()
+        val parts = StringBuilder()
+        for (w in targets) {
+            val b = Rect().also { runCatching { w.getBoundsInScreen(it) } }
+            if (b.isEmpty) continue
+            val cap = captureWindowBitmap(w.id, timeoutMs) ?: continue
+            runCatching {
+                c.drawBitmap(cap, null, android.graphics.RectF(b), null)
+                painted++
+            }
+            parts.append(" [id=").append(w.id).append(" t=").append(w.type)
+                .append(" ").append(b.left).append(',').append(b.top)
+                .append(" ").append(b.width()).append('x').append(b.height()).append(']')
+            cap.recycle()
+        }
+        if (painted == 0) {
+            out.recycle()
+            Log.w("DshA11y", "screenshot(composite): no window captured")
+            return null
+        }
+        val baos = ByteArrayOutputStream()
+        out.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        val outW = out.width
+        val outH = out.height
+        out.recycle()
+        lastShotVia = "composite"
+        Log.i("DshA11y", "screenshot(composite): ok painted=$painted" +
+            " out=${outW}x$outH ms=${System.currentTimeMillis() - t0}$parts")
+        return Triple(outW, outH, Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP))
+    }
+
+    /**
+     * 显式截图（免闪优先）：先试 [screenshotWindowBase64]，不可用才退回整屏 + 避让。
+     * `/screenshot` 默认走这条；需要完整画面（含状态栏/键盘）时传 `?flash=1` 强制旧路径。
+     */
+    fun screenshotBase64NoFlash(timeoutMs: Long = 3000L): Triple<Int, Int, String>? {
+        lastShotVia = "composite"
+        // 1) 组合窗口截图：键盘/弹窗也能拍到，且完全不动悬浮窗（首选）
+        screenshotCompositeBase64(timeoutMs)?.let { return it }
+        // 2) 单个窗口截图（只有一个前台窗口时的快速路径）
+        lastShotVia = "window"
+        screenshotWindowBase64(timeoutMs)?.let { return it }
+        lastShotVia = "display"
+        Log.i("DshA11y", "screenshot: window capture unavailable → display+avoid (will flicker)")
+        return screenshotBase64(timeoutMs, avoidOverlay = true)
+    }
+
     private fun screenshotBase64Inner(timeoutMs: Long): Triple<Int, Int, String>? {
         val latch = CountDownLatch(1)
         var bmp: Bitmap? = null
@@ -2229,6 +2469,20 @@ class DshAccessibilityService : AccessibilityService() {
     /** 屏幕尺寸（供坐标换算/比例点击） */
     fun screenSize(): Pair<Int, Int> =
         resources.displayMetrics.widthPixels to resources.displayMetrics.heightPixels
+
+    /**
+     * **真实显示尺寸**（含状态栏/导航栏区域），v2.9.73。
+     *
+     * `resources.displayMetrics` 在无障碍服务里拿到的是「去掉导航栏」的可用区
+     * （真机 1080x2400 → 报 1080x2305），而 `takeScreenshot` 返回的是整屏 2400。
+     * 两者混用会让截图坐标系和 /screen 节点坐标系差 95px（底部点击会偏）。
+     * 这里统一按 WindowManager 的 window metrics 取整屏。
+     */
+    fun realScreenSize(): Pair<Int, Int> = runCatching {
+        val wm = getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
+        val b = wm.maximumWindowMetrics.bounds
+        if (b.width() > 0 && b.height() > 0) b.width() to b.height() else screenSize()
+    }.getOrDefault(screenSize())
 
     /**
      * 点击一个节点矩形（供桥接层在「滚动找到」后点击）。

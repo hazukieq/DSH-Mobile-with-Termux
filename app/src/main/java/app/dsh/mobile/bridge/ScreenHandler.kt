@@ -40,6 +40,16 @@ import app.dsh.mobile.engine.AgentBridge
  * 跨组裸调用由本包的 AgentBridge 扩展别名（CrossCalls.kt）兜住。
  */
 internal class ScreenHandler(private val bridge: AgentBridge) {
+    /**
+     * 后台 OCR 预热（每个 HTTP 请求触发一次，TTL 2.5s）——给 [ocrFallback] 提供兜底文本。
+     *
+     * 引擎选择（v2.9.73 修）：先 PP-OCRv6（精度高，但依赖 Termux 侧 python+onnxruntime），
+     * **不可用就立刻回退内置 ML Kit**，不再静默空转。
+     * 真机取证：ppocr6 模型虽随包部署，但 `PpOcr.ready()` 为 false（缺 python 依赖），
+     * `PpOcr.recognize()` 只返回 ok=false 不抛异常；旧代码没检查 ok，于是每 2.5s 白烧
+     * ~780ms 截图 + 起进程，日志却只写 `n=0 blocks`，看起来像识别不出来。实际 `/ocr`
+     * （ML Kit）170ms 就有结果。现在判死后 5 分钟内直接走 ML Kit。
+     */
     internal fun prefetchOcr(svc: DshAccessibilityService, tier: String = "tiny") {
         with(bridge) {
         val now = System.currentTimeMillis()
@@ -50,24 +60,69 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         Thread {
             try {
                 val t0 = System.currentTimeMillis()
-                val shot = svc.screenshotBase64(2500L, avoidOverlay = false) ?: return@Thread
-                val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
-                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@Thread
-                val r = PpOcr.recognize(svc, bmp, tier, useCache = true, regionOnly = false)
-                bmp.recycle()
-                // prefetch 不再摘悬浮窗（否则每 3–5 秒闪一次），改成把落在悬浮窗矩形里的 OCR 结果剔掉
+                var engine = "mlkit"
+                var w = 0
+                var h = 0
+                // 统一成 (文本, 边界矩形)：矩形用屏幕坐标，后面按悬浮窗矩形过滤。
+                var lines: MutableList<Pair<String, android.graphics.Rect>>? = null
+
+                val nowMs = System.currentTimeMillis()
+                val ppocrWanted = PpOcr.deployed(svc) && PpOcr.python(svc).isFile &&
+                    nowMs > ppocr6BrokenUntil
+                if (ppocrWanted) {
+                    val shot = svc.screenshotBase64(2500L, avoidOverlay = false)
+                    val bmp = shot?.let {
+                        val raw = android.util.Base64.decode(it.third, android.util.Base64.NO_WRAP)
+                        android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size)
+                    }
+                    if (shot != null && bmp != null) {
+                        val r = PpOcr.recognize(svc, bmp, tier, useCache = true, regionOnly = false)
+                        bmp.recycle()
+                        if (r.ok && r.blocks.isNotEmpty()) {
+                            w = shot.first
+                            h = shot.second
+                            engine = "ppocr6-$tier"
+                            lines = r.blocks.mapTo(ArrayList()) {
+                                it.text to android.graphics.Rect(it.left, it.top, it.right, it.bottom)
+                            }
+                        } else {
+                            ppocr6BrokenUntil = nowMs + 5 * 60_000L
+                            app.dsh.mobile.DshLog.d("prefetch",
+                                "ppocr6 unusable (${r.reason.ifBlank { "empty result" }}) — mlkit for 5min")
+                        }
+                    }
+                }
+                if (lines == null) {
+                    // 内置 ML Kit：随 APK 分发、不依赖 python/网络；同屏结果缓存 3s
+                    val r = app.dsh.mobile.ScreenOcr.recognize(svc, force = false)
+                    // 用整屏尺寸（displayMetrics 是去掉导航栏的可用区，坐标会差一截）
+                    val (rw, rh) = svc.realScreenSize()
+                    w = rw
+                    h = rh
+                    engine = if (r.unavailable) "mlkit(unavailable)" else "mlkit"
+                    lines = r.blocks.mapTo(ArrayList()) {
+                        it.text to android.graphics.Rect(it.left, it.top, it.right, it.bottom)
+                    }
+                }
+
+                // prefetch 不再摘悬浮窗（摘了每 2–5 秒闪一次），改成把落在悬浮窗矩形里的结果剔掉
                 val overlayRect = app.dsh.mobile.StatusOverlay.currentFrameRect()
                 var dropped = 0
                 val arr = JSONArray()
-                r.blocks.forEach { b ->
-                    if (overlayRect != null && overlayRect.contains(b.cx, b.cy)) { dropped++; return@forEach }
-                    arr.put(JSONObject().put("text", b.text)
-                        .put("bounds", JSONArray(listOf(b.left, b.top, b.right, b.bottom)))
-                        .put("center", JSONArray(listOf(b.cx, b.cy)))
+                (lines ?: emptyList()).forEach { (text, rc) ->
+                    if (overlayRect != null && overlayRect.contains(rc.centerX(), rc.centerY())) {
+                        dropped++
+                        return@forEach
+                    }
+                    arr.put(JSONObject().put("text", text)
+                        .put("bounds", JSONArray(listOf(rc.left, rc.top, rc.right, rc.bottom)))
+                        .put("center", JSONArray(listOf(rc.centerX(), rc.centerY())))
                         .put("source", "ocr").put("role", "text"))
                 }
-                ocrPrefetch = OcrPrefetch(System.currentTimeMillis(), shot.first, shot.second, arr, occluded = dropped)
-                app.dsh.mobile.DshLog.d("prefetch", "ocr ready n=${arr.length()} dropped=$dropped ms=${System.currentTimeMillis() - t0}")
+                ocrPrefetch = OcrPrefetch(System.currentTimeMillis(), w, h, arr, occluded = dropped)
+                app.dsh.mobile.DshLog.d("prefetch",
+                    "ocr ready n=${arr.length()} dropped=$dropped engine=$engine " +
+                        "size=${w}x$h ms=${System.currentTimeMillis() - t0}")
             } catch (e: Throwable) {
                 app.dsh.mobile.DshLog.e("prefetch", "ocr prefetch failed: ${e.message}", e)
             } finally { ocrPrefetching = false }
@@ -1018,8 +1073,18 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             return 400 to """{"ok":false,"error":"accessibility service lacks screenshot capability — toggle the service off/on in system settings to grant it"}"""
         }
         return try {
-            val shot = svc.screenshotBase64()
-                ?: return 400 to """{"ok":false,"error":"screenshot failed (timeout or unsupported)"}"""
+            // v2.9.73：默认**免闪**——截前台应用窗口（API 34+），悬浮窗全程可见不闪；
+            // 只有窗口截图不可用（API<34 / 有输入法或系统对话框 / 系统拒绝）才退回
+            // 「整屏 + 隐藏悬浮窗」的旧路径（那条路会闪，真机实测 2.3s）。
+            // ?flash=1 用于需要完整画面（状态栏/键盘）或回归对比时强制走旧路径。
+            val params = parseQuery(query)
+            val shot = if (params["flash"] == "1") {
+                svc.lastShotVia = "display-forced"
+                svc.screenshotBase64()
+            } else {
+                svc.screenshotBase64NoFlash()
+            } ?: return 400 to """{"ok":false,"error":"screenshot failed (timeout or unsupported)"}"""
+            val via = svc.lastShotVia
             // ?max=N：把最长边缩到 N 像素（省 base64 体积 + 省上下文）
             val maxDim = parseQuery(query)["max"]?.toIntOrNull()?.coerceIn(256, 4096)
             var w = shot.first; var h = shot.second; var b64 = shot.third
@@ -1047,10 +1112,10 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                     f.writeBytes(android.util.Base64.decode(b64, android.util.Base64.DEFAULT))
                     dir.listFiles { file -> file.name.startsWith("shot-") }
                         ?.sortedBy { it.lastModified() }?.dropLast(12)?.forEach { it.delete() }
-                    return 200 to """{"ok":true,"path":"${f.absolutePath}","width":$w,"height":$h,"hint":"read it with the read_image tool"}"""
+                    return 200 to """{"ok":true,"path":"${f.absolutePath}","width":$w,"height":$h,"via":"$via","hint":"read it with the read_image tool"}"""
                 }
             }
-            return 200 to """{"ok":true,"format":"png","width":$w,"height":$h,"base64":"$b64"}"""
+            return 200 to """{"ok":true,"format":"png","width":$w,"height":$h,"via":"$via","base64":"$b64"}"""
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"${e.message}"}"""
         }
@@ -1332,6 +1397,20 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
     @Volatile internal var ocrPrefetch: OcrPrefetch? = null
 
     @Volatile internal var ocrPrefetching = false
+
+    /**
+     * PP-OCRv6 引擎「判死」截止时间（v2.9.73）。
+     *
+     * 背景（真机取证）：ppocr6 的 onnx 模型是随 APK 部署的，但推理依赖 Termux 侧
+     * python+onnxruntime（`PpOcr.ready()`）。依赖没装时 `PpOcr.recognize()` 只返回
+     * `ok=false / unavailable=true`，**不抛异常**；而 prefetch 早期没检查 `r.ok`，
+     * 于是每 2.5s 白烧约 780ms 截图+进程启动，日志却只写 `n=0 blocks`，
+     * 看起来像「OCR 识别不出来」。真机实测 `/ocr?engine=ppocr6` 报
+     * `ppocr6 deps missing`，而 `/ocr`（ML Kit）300ms 内返回 37 行 —— 即引擎根本没用上。
+     *
+     * 现在：一旦判定不可用就 5 分钟内不再尝试，直接走内置 ML Kit，避免空转。
+     */
+    @Volatile internal var ppocr6BrokenUntil = 0L
 
     internal val A11Y_NOTIF_THRESHOLD = 3
 

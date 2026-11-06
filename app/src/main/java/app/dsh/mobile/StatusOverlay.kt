@@ -107,6 +107,8 @@ object StatusOverlay {
     private var statusTextColor: Int = 0xFFE6EAF2.toInt()   // 面板底是深色，字必须浅色
     /** 当前窗口由哪种 type 创建：无障碍窗口随服务销毁，应用悬浮窗不随 Activity/服务走。 */
     @Volatile private var windowTypeUsed = 0
+    /** 换窗口类型（2038→2032）时暂存旧位置，供 startOverlay 复用。 */
+    @Volatile private var pendingPos: Pair<Int, Int>? = null
     @Volatile private var appCtx: Context? = null
     @Volatile private var wm: WindowManager? = null
 
@@ -168,6 +170,21 @@ object StatusOverlay {
     fun show(svc: AccessibilityService) {
         val ctx = svc.applicationContext
         val w = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        // 窗口类型纠正（2.9.75）：App 先起、无障碍后连时，窗口是按下面 show(ctx) 的
+        // 「应用悬浮窗」(2038 + Activity token) 建的；这种窗口 App 一退后台就被 WMS 置
+        // hidden（见 show(ctx) 注释里的实测，Xiaomi 上还叠加 mIsForceHiddenNonSystemOverlayWindow），
+        // 表现就是「切个 App 悬浮窗就没了 / 一会儿又出来」。无障碍已就绪 → 换成 2032 并
+        // 保留位置与展开档位，一次性纠正（只在 idle 时换，避免丢正在显示的进度文本）。
+        if (root != null) {
+            if (windowTypeUsed == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) return
+            if (working) {
+                Log.i(TAG, "overlay type switch skipped: working (type=$windowTypeUsed)")
+            } else {
+                Log.i(TAG, "overlay type switch: $windowTypeUsed → TYPE_ACCESSIBILITY_OVERLAY (a11y ready)")
+                pendingPos = (params?.x ?: 0) to (params?.y ?: 0)
+                hideInternal(false)
+            }
+        }
         startOverlay(ctx, w, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
     }
 
@@ -231,9 +248,11 @@ object StatusOverlay {
                     PixelFormat.TRANSLUCENT,
                 ).apply {
                     gravity = Gravity.TOP or Gravity.START
-                    // 默认放右侧
-                    x = dp(ctx, 8)
-                    y = dp(ctx, 120)
+                    // 默认放右侧；换窗口类型时沿用旧坐标（否则球会跳回默认位）
+                    val keep = pendingPos
+                    pendingPos = null
+                    x = keep?.first ?: dp(ctx, 8)
+                    y = keep?.second ?: dp(ctx, 120)
                 }
 
                 // ⚠️ 顺序有讲究（实测踩坑）：
