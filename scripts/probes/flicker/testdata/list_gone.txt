@@ -1,0 +1,3 @@
+@@1000
+RequestedLayerState{StatusBar#86 parentId=9960 z=1}
+RequestedLayerState{Wallpaper#10 parentId=9960}

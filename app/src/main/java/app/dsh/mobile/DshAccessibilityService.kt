@@ -622,7 +622,7 @@ class DshAccessibilityService : AccessibilityService() {
             val elapsed = System.nanoTime() / 1_000_000 - tDumpStart
             if (cands.isNotEmpty() && elapsed < 900L) {
                 // 剩余预算 ~1.1s：截图上限 700ms（超时即放弃图标，保住本次读屏）
-                val shot = screenshotArgb(700L)
+                val shot = screenshotArgb(700L, avoidOverlay = false)
                 if (shot != null) {
                     for ((idx, rect) in cands) {
                         val hit = IconMatcher.identify(this, shot, rect) ?: continue
@@ -906,7 +906,10 @@ class DshAccessibilityService : AccessibilityService() {
      *
      * @return (像素数组, 宽, 高)；失败返回 null
      */
-    fun screenshotArgb(timeoutMs: Long = 5000L): Triple<IntArray, Int, Int>? {
+    fun screenshotArgb(
+        timeoutMs: Long = 5000L,
+        avoidOverlay: Boolean = true,
+    ): Triple<IntArray, Int, Int>? {
         if (Build.VERSION.SDK_INT < 30) return null
         // v1.2.156 实测修复：系统对 takeScreenshot 有节流（errorCode=3
         // INTERVAL_TIME_SHORT）。实测**间隔 5 秒仍被拒**——因为一次读屏里 OCR 与
@@ -927,11 +930,18 @@ class DshAccessibilityService : AccessibilityService() {
         // 截图前**临时隐藏**悬浮窗，截完恢复。悬浮窗是 app 自己的 UI，被截进去会让
         // AI 把它当成页面内容（状态球/文字混进识别结果）→ 误判。
         // 用 try/finally 保证任何异常路径都能恢复，绝不把用户的悬浮窗"吞掉"。
-        val svcForAvoid = instance
-        StatusOverlay.beginCaptureAvoid(svcForAvoid)
+        // v2.9.72（真机取证修复）：避让不是免费的 —— 对 TYPE_ACCESSIBILITY_OVERLAY 窗口
+        // 设 INVISIBLE 会让 WMS 真正销毁 surface（WindowStateAnimator 里 t.remove +
+        // setHasSurface(false) + NO_SURFACE），恢复时重建 layer 并等首帧 ⇒ 肉眼一闪。
+        // 帧轮询（/frame-wait、verify、settle）以 250–300ms 的频率走这里，等于 3–5Hz
+        // 闪烁；而它们只需要「画面变没变」，不需要干净画面（Framer 会把悬浮窗矩形排除
+        // 在比对之外）。所以**只有需要干净画面的消费者**（显式 /screenshot、视觉模型）
+        // 才传 avoidOverlay=true；内部测量一律 false。
+        val svcForAvoid = if (avoidOverlay) instance else null
+        if (avoidOverlay) StatusOverlay.beginCaptureAvoid(svcForAvoid)
         try {
             repeat(3) { attempt ->
-                screenshotArgbOnce(timeoutMs)?.let {
+                screenshotArgbOnce(timeoutMs, avoidOverlay)?.let {
                     lastShotCache = it
                     lastShotAt = System.currentTimeMillis()
                     return it
@@ -940,7 +950,7 @@ class DshAccessibilityService : AccessibilityService() {
             }
             return null
         } finally {
-            StatusOverlay.endCaptureAvoid(svcForAvoid)
+            if (avoidOverlay) StatusOverlay.endCaptureAvoid(svcForAvoid)
         }
     }
 
@@ -949,7 +959,10 @@ class DshAccessibilityService : AccessibilityService() {
     @Volatile private var lastShotAt = 0L
     private val SHOT_REUSE_MS = 700L
 
-    private fun screenshotArgbOnce(timeoutMs: Long): Triple<IntArray, Int, Int>? {
+    private fun screenshotArgbOnce(
+        timeoutMs: Long,
+        avoidOverlay: Boolean,
+    ): Triple<IntArray, Int, Int>? {
         val latch = java.util.concurrent.CountDownLatch(1)
         var bmp: Bitmap? = null
         val callback = object : TakeScreenshotCallback {
@@ -972,13 +985,13 @@ class DshAccessibilityService : AccessibilityService() {
             }
         }
         // v1.2.164：截图前临时隐藏自己的悬浮窗（同 screenshotArgb，见其注释）
-        val svcForAvoid = instance
-        StatusOverlay.beginCaptureAvoid(svcForAvoid)
+        val svcForAvoid = if (avoidOverlay) instance else null
+        if (avoidOverlay) StatusOverlay.beginCaptureAvoid(svcForAvoid)
         try {
             takeScreenshot(android.view.Display.DEFAULT_DISPLAY, { it.run() }, callback)
             latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         } finally {
-            StatusOverlay.endCaptureAvoid(svcForAvoid)
+            if (avoidOverlay) StatusOverlay.endCaptureAvoid(svcForAvoid)
         }
         val bitmap = bmp ?: return null
         val w = bitmap.width

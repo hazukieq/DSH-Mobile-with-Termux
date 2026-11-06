@@ -1,0 +1,16 @@
+@@1000
+  Input Dispatcher State:
+    FocusedApplications:
+      displayId=0, name='ccc3333 com.android.launcher3/android.app.Activity'
+    FocusedWindows:
+      displayId=0, name='ccc3333 com.android.launcher3/com.android.launcher3.uioverrides.QuickstepLauncher'
+    FocusRequests:
+      displayId=0, name='ccc3333 com.android.launcher3/x' result='OK'
+    TouchStatesByDisplay: <no displays touched>
+    CursorStatesByDisplay: <no displays touched by cursor>
+    Display: 0
+      logicalSize=1080x2400
+    Windows:
+      0: name=eee5555 PointerEventDispatcherOverlay0, id=77, displayId=0, inputConfig=NOT_FOCUSABLE | NOT_TOUCHABLE, alpha=1, frame=[0,0][1080,2400], globalScale=1, applicationInfo.name=, applicationInfo.token=<null>, touchableRegion=<empty>, ownerPid=2661, ownerUid=1000, dispatchingTimeout=5000ms, token=0x1, touchOcclusionMode=BLOCK_UNTRUSTED
+      1: name=fff6666 com.android.launcher3/com.android.launcher3.uioverrides.QuickstepLauncher, id=59, displayId=0, inputConfig=NOT_FOCUSABLE | TRUSTED_OVERLAY, alpha=1, frame=[0,95][1080,2400], globalScale=1, applicationInfo.name=com.android.launcher3, applicationInfo.token=<null>, touchableRegion=[0,95][1080,2400], ownerPid=1234, ownerUid=10123, dispatchingTimeout=5000ms, token=0x2, touchOcclusionMode=BLOCK_UNTRUSTED
+      5: name=73085c8 com.termux, id=10474, displayId=0, inputConfig=NOT_FOCUSABLE | TRUSTED_OVERLAY, alpha=1, frame=[959,425][1058,524], globalScale=1, applicationInfo.name=com.termux, applicationInfo.token=<null>, touchableRegion=[959,425][1058,524], ownerPid=21666, ownerUid=10278, dispatchingTimeout=5000ms, token=0x3, touchOcclusionMode=BLOCK_UNTRUSTED, canOccludePresentation

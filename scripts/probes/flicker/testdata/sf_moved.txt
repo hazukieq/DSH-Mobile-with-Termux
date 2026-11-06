@@ -1,0 +1,44 @@
+@@1000
+Active Layers - layers with client handles (count = 3)
+Composition list (top to bottom)
+LayerStack=0
+  Layer [86] StatusBar#86
+    visible reason= buffer=11 frame=2
+    bounds={0,0,105,1080}
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) touchableRegion={0,0,105,1080}}
+  Layer [10474] #10474
+    visible reason= buffer=93054761435173 frame=1
+    bounds={959,900,524,999} toDisplayTransform={ tx=959.0000 ty=425.0000 }
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) canOccludePresentation touchableRegion={959,425,1058,524}}
+Input list
+LayerStack=0
+  Layer [86] StatusBar#86
+    visible reason= buffer=11 frame=2
+    bounds={0,0,105,1080}
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) touchableRegion={0,0,105,1080}}
+  Layer [10474] #10474
+    visible reason= buffer=93054761435173 frame=1
+    bounds={959,900,524,999}
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) canOccludePresentation touchableRegion={959,425,1058,524}}
+Layer Hierarchy
+LayerStack=0
+└─ #10474 requestedFrameRate pid=21666 uid=10278
+Display 1 HWC layers (top to bottom):
+ Layer name
+ #10474
+           9 |         2032 |     DEVICE |          0 |  959  900 1058  999 |    0.0    0.0   99.0   99.0 |        Cat::NoPreference           Default    [ ]
+Displays (1 entries)
+Display 1 (physical, "")
+   Composition Display State:
+   isEnabled=true isSecure=true usesDeviceComposition=true
+   usesClientComposition=false flipClientTarget=false reusedClientComposition=false
+Display 1
+  - Output Layer 0xb400007b17a047f0(#10474)
+        Region visibleRegion (this=0x1, count=1)
+    [959, 425, 1058, 524]
+        Region visibleNonTransparentRegion (this=0x2, count=1)
+    [959, 425, 1058, 524]
+      forceClientComposition=false clearClientTarget=true displayFrame=[959 900 1058 999] sourceCrop=[0.000000 0.000000 99.000000 99.000000] bufferTransform=0 (0) dataspace=V0_SRGB (142671872)
+      hwc: layer=0x0895c composition=DEVICE (2)
+   Composition RenderSurface State:
+        default-size=[1080x2400] default-format=1         transform-hint=00 frame-counter=26214

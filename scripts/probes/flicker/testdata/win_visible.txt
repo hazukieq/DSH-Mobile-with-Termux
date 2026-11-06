@@ -1,0 +1,18 @@
+@@1000
+  Window #2 Window{73085c8 u0 com.termux}:
+    mOwnerUid=10278 showForAllUsers=false package=com.termux appop=CREATE_ACCESSIBILITY_OVERLAY
+    mAttrs={(959,330)(99x99) gr=TOP START CENTER sim={adjust=pan} ty=ACCESSIBILITY_OVERLAY fmt=TRANSLUCENT
+      fl=NOT_FOCUSABLE NOT_TOUCH_MODAL HARDWARE_ACCELERATED
+      dvrrWindowFrameRateHint=true}
+    Requested w=99 h=99 mLayoutSeq=13846
+    mBaseLayer=311000 mSubLayer=0    mToken=WindowToken{9aa094e type=2032 android.os.Binder@9a5e250}
+    mViewVisibility=0x0 mHaveFrame=true mObscured=false
+    mHasSurface=true isReadyForDisplay()=true mWindowRemovalAllowed=false
+    Frames: parent=[0,95][1080,2400] display=[0,95][1080,2400] frame=[959,425][1058,524] last=[959,425][1058,524] insetsChanged=false
+     surface=[0,0][0,0]
+    WindowStateAnimator{b8659d1 }:
+      mSurface=Surface(name=#10474)/@0x381c36
+      Surface: shown=true      mDrawState=HAS_DRAWN       mLastHidden=false
+    isOnScreen=true
+    isVisible=true
+    mBufferSeqId=0

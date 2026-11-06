@@ -218,3 +218,35 @@
 
 排查口诀：悬浮窗**看不见但还在** → `hideRefs` 没归零（看 `hide(...)/show(...)` 日志配对）；
 悬浮窗**看得见但点不动** → 看 `debugState()` 里 `flags/touchable`（应当 `touchable=true`，且 flags 里没有 0x10）。
+
+### 3.u 2.9.72：高频消费者不再避让 + 引用计数加固（真机取证定案）
+
+真机 root 取证（详见 `docs/qa/flicker-fix-report.md`）把两件事钉死了：
+
+1. **`INVISIBLE` 就是「窗口退场」，不是「不绘制」。** 避让期间 `dumpsys window windows` 里该 2032 窗口
+   连续样本是 `Surface: shown=false mDrawState=NO_SURFACE`，恢复后回到 `HAS_DRAWN`——
+   对应 `WindowManagerService → WindowStateAnimator.java:707-721` 的 `t.remove(mSurfaceControl)` +
+   `setHasSurface(false)`。**所以任何一次隐藏都会销毁并重建 surface，必然闪一次。**
+   推论：闪多少次 = 隐藏多少次，唯一解法是**少隐藏**。
+2. **隐藏期间点不到是官方语义**（Android 12 untrusted-touch 例外表：根 view GONE/INVISIBLE 的窗口
+   触摸放行穿透），再叠 `InputMonitor` 输入表的异步刷新。**不隐藏的时间占比 = 能点到的概率。**
+
+定下的分工（改代码必须遵守）：
+
+| 消费者 | 是否避让 | 理由 |
+|---|---|---|
+| `screenshotArgb(Framer / 帧轮询 / verify / settle)` | ❌ **不避让** | 只要「变没变」；悬浮窗矩形用 `Framer.maskOverlayRegion()` 抹平 |
+| `ScreenOcr` / prefetch / dump 图标识别 | ❌ **不避让** | 只要文字/图标；落在悬浮窗矩形里的结果直接剔掉 |
+| `screenshotBase64`（显式 `/screenshot`、视觉模型） | ✅ 避让 | 需要干净画面给用户/模型看 |
+| `beginOpsAvoid`（`/act`、`/batch`、`/pick`、`/overlay`、`/open/*`） | ✅ 避让 | 注入手势需要触摸穿透 |
+
+计数加固（否则「球没了 / 再也点不到」）：
+
+- `hideRefs` 读写全部走 `refLock`（原来裸 `+=` 在多线程下是竞态）；
+- `hideNow/showNow` 检查 `mainSync` 是否真执行、是否真生效（`root` 为空 / 主线程 800ms 超时），
+  **未生效就回滚计数**，不让计数与真实可见性脱钩；
+- `hideInternal`（摘窗口）必须把 `hideRefs` 归零，否则之后每个 `showNow()` 只减到 1 就 return；
+- `reassertVisible()` 在 `hideRefs > 0` 时必须让位（ProgressHub 每 120ms 调一次，会把避让硬捞回来）。
+
+实测（643）：静置 / prefetch 高压 / `frame-wait` 3 轮 / `/ocr` 四条路径 **0 次窗口状态跳变、0 次无谓隐藏**；
+仅显式 `/screenshot`（1 次，2.32s，截图成品中悬浮窗区域为纯白、标准差 0）与 `/act`（1 次，0.72s）各隐藏一次。

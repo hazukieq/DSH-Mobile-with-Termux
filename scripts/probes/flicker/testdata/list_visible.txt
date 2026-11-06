@@ -1,0 +1,4 @@
+@@1000
+RequestedLayerState{73085c8 com.termux#10473 parentId=9960}
+RequestedLayerState{#10474 parentId=10473}
+RequestedLayerState{StatusBar#86 parentId=9960 z=1}

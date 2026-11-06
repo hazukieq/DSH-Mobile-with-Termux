@@ -77,7 +77,14 @@ object Framer {
      */
     fun captureAndDiff(svc: android.accessibilityservice.AccessibilityService): DiffResult {
         val t0 = System.currentTimeMillis()
-        val shot = runCatching { (svc as? DshAccessibilityService)?.screenshotArgb() }.getOrNull()
+        // v2.9.72：帧差**不避让**悬浮窗。避让要 INVISIBLE 一次、WMS 就会销毁并重建
+        // 该窗口的 surface（见 DshAccessibilityService.screenshotArgb 注释），
+        // 250–300ms 一次的轮询就是 3–5Hz 闪。悬浮窗只有右下角 99×99，
+        // 遮住的 64×64 格子下面用上一帧内容抹平（[maskOverlayRegion]），
+        // 所以「我们自己画的那块」既不会被算成变化，也不需要隐藏窗口。
+        val shot = runCatching {
+            (svc as? DshAccessibilityService)?.screenshotArgb(avoidOverlay = false)
+        }.getOrNull()
         if (shot == null) {
             return DiffResult(0f, false, emptyList(), -1f, -1f,
                 System.currentTimeMillis() - t0, false, unavailable = true)
@@ -90,6 +97,7 @@ object Framer {
                 DiffResult(0f, false, emptyList(), -1f, -1f,
                     System.currentTimeMillis() - t0, isFirst = true, unavailable = false)
             } else {
+                maskOverlayRegion(p, cur, w, h)
                 computeDiff(p, cur, System.currentTimeMillis() - t0)
             }
             prev = cur
@@ -105,6 +113,29 @@ object Framer {
     fun hasBaseline(): Boolean = synchronized(lock) { prev != null }
 
     // ---------------- 内部实现 ----------------
+
+    /**
+     * 把悬浮窗矩形覆盖到的 64×64 格子用上一帧的值抹平（v2.9.72）。
+     *
+     * 因为帧差不再隐藏悬浮窗（隐藏会销毁/重建 window surface → 闪），悬浮窗会出现在
+     * 截到的画面里。它自身重绘（进度环呼吸、状态点变色）不该被当成「界面变了」，
+     * 否则 verify 会误判、settle 永远等不到静帧。这里直接把该区域"冻结"成上一帧。
+     */
+    private fun maskOverlayRegion(prev: ByteArray, cur: ByteArray, sw: Int, sh: Int) {
+        val rect = runCatching { StatusOverlay.currentFrameRect() }.getOrNull() ?: return
+        if (rect.isEmpty || sw <= 0 || sh <= 0) return
+        val x0 = (rect.left.toLong() * SIDE / sw).toInt().coerceIn(0, SIDE - 1)
+        val x1 = ((rect.right.toLong() * SIDE + sw - 1) / sw).toInt().coerceIn(0, SIDE)
+        val y0 = (rect.top.toLong() * SIDE / sh).toInt().coerceIn(0, SIDE - 1)
+        val y1 = ((rect.bottom.toLong() * SIDE + sh - 1) / sh).toInt().coerceIn(0, SIDE)
+        for (y in y0 until y1) {
+            val row = y * SIDE
+            for (x in x0 until x1) {
+                val i = row + x
+                cur[i] = prev[i]
+            }
+        }
+    }
 
     /** 区域平均降采样 + 转灰度（luma 600/1000 权重，抗锯齿优于逐点抽样） */
     private fun downsampleGray(argb: IntArray, sw: Int, sh: Int): ByteArray {

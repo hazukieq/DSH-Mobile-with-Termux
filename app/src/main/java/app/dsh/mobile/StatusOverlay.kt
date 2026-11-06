@@ -697,6 +697,10 @@ object StatusOverlay {
     }
 
     fun reassertVisible() {
+        // v2.9.72（真机取证修复）：ProgressHub 每 120ms 无脑 reassert 一次，
+        // 避让期间会把 INVISIBLE 硬捞回 VISIBLE —— 截图带上悬浮窗 + VISIBLE/INVISIBLE
+        // 交替 = 加倍闪。避让是引用计数的语义，reassert 必须让位于它。
+        if (hideRefs > 0) return
         main {
             val v = root ?: return@main
             val p = params ?: return@main
@@ -723,6 +727,9 @@ object StatusOverlay {
             wm?.let { sweepLiveViews(it) }
             root = null; params = null; statusText = null; statusDot = null
             statusScroll = null; a11yText = null
+            // v2.9.72：窗口被摘掉后引用计数必须归零——否则此后每个 showNow() 都只会
+            // 把 refs 减到 1 就 return，悬浮窗永久不再出现（用户报「有时候再也点不到」）。
+            synchronized(refLock) { hideRefs = 0 }
             hidden = userHidden
             Log.i(TAG, if (userHidden) "overlay hidden by user" else "overlay hidden (auto)")
         }
@@ -754,35 +761,57 @@ object StatusOverlay {
     //  * 绝不改 `params.flags`：`FLAG_NOT_TOUCHABLE` 一旦残留，悬浮窗就永久点不动。
     //  * 恢复时不做布局重放：重放会改布局导致「UI 变形」；这里只把 visibility 改回来。
     @Volatile private var hideRefs = 0
+    /** 保护 [hideRefs]：bridge 线程、主线程、watchdog 都会加减它（原先 `+=` 是竞态） */
+    private val refLock = Any()
 
     private fun hideNow(reason: String) {
-        hideRefs += 1
-        if (hideRefs > 1) {
-            Log.i(TAG, "hide($reason): already hidden refs=$hideRefs")
-            return
+        synchronized(refLock) {
+            hideRefs += 1
+            if (hideRefs > 1) {
+                Log.i(TAG, "hide($reason): already hidden refs=$hideRefs")
+                return
+            }
         }
-        mainSync {
-            root?.visibility = View.INVISIBLE
-            Log.i(TAG, "hide($reason): visibility=${root?.visibility} (${debugState()})")
+        var applied = false
+        val ran = mainSync {
+            root?.let {
+                it.visibility = View.INVISIBLE
+                applied = true
+                Log.i(TAG, "hide($reason): visibility=${it.visibility} (${debugState()})")
+            } ?: Log.w(TAG, "hide($reason): no root (overlay not attached)")
+        }
+        if (!ran || !applied) {
+            // 没真隐藏就没资格占用引用计数：否则 endCaptureAvoid 时 refs 减到 0
+            // 之外的路径会让计数永久偏移 → 要么一直接不到、要么再也不显示。
+            synchronized(refLock) { hideRefs = (hideRefs - 1).coerceAtLeast(0) }
+            Log.w(TAG, "hide($reason): FAILED (ran=$ran applied=$applied) refs rolled back to $hideRefs")
         }
     }
 
     private fun showNow(reason: String) {
-        if (hideRefs <= 0) {
-            hideRefs = 0
-            return
+        var stillHidden = false
+        synchronized(refLock) {
+            if (hideRefs <= 0) {
+                hideRefs = 0
+                return
+            }
+            hideRefs -= 1
+            stillHidden = hideRefs > 0
+            if (stillHidden) Log.i(TAG, "show($reason): still hidden refs=$hideRefs")
         }
-        hideRefs -= 1
-        if (hideRefs > 0) {
-            Log.i(TAG, "show($reason): still hidden refs=$hideRefs")
-            return
-        }
-        mainSync {
+        if (stillHidden) return
+        var applied = false
+        val ran = mainSync {
             root?.let {
                 it.visibility = View.VISIBLE
                 it.requestLayout()
-            }
-            Log.i(TAG, "show($reason): visibility=${root?.visibility} (${debugState()})")
+                applied = true
+                Log.i(TAG, "show($reason): visibility=${it.visibility} (${debugState()})")
+            } ?: Log.w(TAG, "show($reason): no root (overlay not attached)")
+        }
+        if (!ran || !applied) {
+            synchronized(refLock) { hideRefs += 1 }
+            Log.w(TAG, "show($reason): FAILED (ran=$ran applied=$applied) refs restored to $hideRefs")
         }
     }
 
@@ -804,10 +833,17 @@ object StatusOverlay {
 
     /** 自动化操作期间的避让：同样只是隐藏（INVISIBLE 不吃命中测试），不改 flags、不摘窗口。 */
     private val opsAvoidWatchdog = Runnable {
-        if (hideRefs > 0) {
+        val stuck = synchronized(refLock) {
+            if (hideRefs > 0) { hideRefs = 0; true } else false
+        }
+        if (stuck) {
             Log.w(TAG, "opsAvoid watchdog fired (endOpsAvoid missed) — force show")
-            hideRefs = 0
-            mainSync { root?.visibility = View.VISIBLE }
+            mainSync {
+                root?.let {
+                    it.visibility = View.VISIBLE
+                    it.requestLayout()
+                }
+            }
         }
     }
 

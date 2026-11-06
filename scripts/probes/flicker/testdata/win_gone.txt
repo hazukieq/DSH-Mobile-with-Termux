@@ -1,0 +1,14 @@
+@@1000
+  Window #0 Window{aaa1111 u0 com.android.launcher3/com.android.launcher3.uioverrides.QuickstepLauncher}:
+    mOwnerUid=10123 showForAllUsers=false package=com.android.launcher3 appop=NONE
+    mAttrs={(0,0)(fillxfill) sim={adjust=resize} ty=BASE_APPLICATION fmt=TRANSLUCENT
+      fl=HARDWARE_ACCELERATED}
+    mToken=ActivityRecord{bbb2222 u0 com.android.launcher3/.uioverrides.QuickstepLauncher t110}
+    mViewVisibility=0x0 mHaveFrame=true mObscured=false
+    mHasSurface=true isReadyForDisplay()=true
+    Frames: parent=[0,95][1080,2400] display=[0,95][1080,2400] frame=[0,95][1080,2400] last=[0,95][1080,2400]
+     surface=[0,0][0,0]
+      mSurface=Surface(name=QuickstepLauncher#59)/@0x1
+      Surface: shown=true      mDrawState=HAS_DRAWN       mLastHidden=false
+    isOnScreen=true
+    isVisible=true

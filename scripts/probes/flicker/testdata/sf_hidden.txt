@@ -1,0 +1,30 @@
+@@1000
+Active Layers - layers with client handles (count = 2)
+Composition list (top to bottom)
+LayerStack=0
+  Layer [86] StatusBar#86
+    visible reason= buffer=11 frame=2
+    bounds={0,0,105,1080}
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) touchableRegion={0,0,105,1080}}
+Input list
+LayerStack=0
+  Layer [86] StatusBar#86
+    visible reason= buffer=11 frame=2
+    bounds={0,0,105,1080}
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) touchableRegion={0,0,105,1080}}
+  Layer [10474] #10474
+    invisible reason=hidden by parent or layer flag
+    bounds={959,425,524,1058}
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) canOccludePresentation touchableRegion={959,425,1058,524}}
+Layer Hierarchy
+LayerStack=0
+└─ #10474 requestedFrameRate pid=21666 uid=10278
+Display 1 HWC layers (top to bottom):
+ Layer name
+Displays (1 entries)
+Display 1 (physical, "")
+   Composition Display State:
+   isEnabled=true isSecure=true usesDeviceComposition=true
+   usesClientComposition=false flipClientTarget=false reusedClientComposition=false
+   Composition RenderSurface State:
+        default-size=[1080x2400] default-format=1         transform-hint=00 frame-counter=26220
