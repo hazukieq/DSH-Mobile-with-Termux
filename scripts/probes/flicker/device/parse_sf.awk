@@ -23,7 +23,9 @@
 
 BEGIN {
   OFS = ","
-  print "ts_ms,sample_no,dumpsys_ok,seen,comp_vis,comp_reason,buffer,bounds,xform,inp_flags,touchable_sf,input_vis,input_reason,hwc_present,hwc_z,hwc_wintype,hwc_comptype,hwc_transform,hwc_dispframe,dispframe,srccrop,comp_type,hwc_layer,vis_cnt,vis_bbox,nt_cnt,nt_bbox,reused_client,uses_client,flip_client,fbcounter,render_rate,is_secure"
+  if (nm == "") nm = "Sys20(32|38):com\\.termux"
+  cur = tid; switched = 0
+  print "ts_ms,sample_no,layer_id,switched,dumpsys_ok,seen,comp_vis,comp_reason,buffer,bounds,xform,inp_flags,touchable_sf,input_vis,input_reason,hwc_present,hwc_z,hwc_wintype,hwc_comptype,hwc_transform,hwc_dispframe,dispframe,srccrop,comp_type,hwc_layer,vis_cnt,vis_bbox,nt_cnt,nt_bbox,reused_client,uses_client,flip_client,fbcounter,render_rate,is_secure"
   reset(); ts = ""
 }
 
@@ -39,7 +41,8 @@ BEGIN {
   n = $0
   match(n, /\[[0-9]+\]/)
   lid = substr(n, RSTART + 1, RLENGTH - 2)
-  hit = (lid == tid)
+  hit = (lid == cur)
+  if (!hit && nm != "" && n ~ ("\\] " nm)) { cur = lid; switched = 1; hit = 1 }  # 层重建后按稳定名认领新 id  # 层重建后按稳定名认领新 id
   if (hit) seen = 1
   next
 }
@@ -158,10 +161,10 @@ function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
 function clean(s) { gsub(/,/, ";", s); gsub(/ +$/, "", s); return s }
 
 function emit() {
-  print ts, ++sample_no, (nlines > 1 ? 1 : 0), seen, comp_vis, clean(comp_reason), buffer, bounds, xform, inp_flags, touchable_sf, input_vis, clean(input_reason), hwc_present, hwc_z, hwc_wintype, hwc_comptype, hwc_transform, hwc_dispframe, dispframe, srccrop, comp_type, hwc_layer, vis_cnt, vis_bbox, nt_cnt, nt_bbox, reused_client, uses_client, flip_client, fbcounter, render_rate, is_secure
+  print ts, ++sample_no, cur, switched, (nlines > 1 ? 1 : 0), seen, comp_vis, clean(comp_reason), buffer, bounds, xform, inp_flags, touchable_sf, input_vis, clean(input_reason), hwc_present, hwc_z, hwc_wintype, hwc_comptype, hwc_transform, hwc_dispframe, dispframe, srccrop, comp_type, hwc_layer, vis_cnt, vis_bbox, nt_cnt, nt_bbox, reused_client, uses_client, flip_client, fbcounter, render_rate, is_secure
 }
 function reset() {
-  sec = ""; lid = ""; hit = 0; seen = 0; nlines = 0; hid = ""; oid = ""; inout = 0; pend = ""; rc = ""
+  sec = ""; lid = ""; hit = 0; seen = 0; nlines = 0; switched = 0; hid = ""; oid = ""; inout = 0; pend = ""; rc = ""
   comp_vis = ""; comp_reason = ""; input_vis = ""; input_reason = ""
   bounds = ""; xform = ""; buffer = ""; inp_flags = ""; touchable_sf = ""; inp_flags_in = ""; touchable_in = ""
   hwc_present = 0; hwc_z = ""; hwc_wintype = ""; hwc_comptype = ""; hwc_transform = ""; hwc_dispframe = ""

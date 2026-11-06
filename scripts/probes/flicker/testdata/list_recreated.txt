@@ -1,0 +1,8 @@
+@@1000
+RequestedLayerState{WindowToken{ecc77f5 type=2038 android.os.BinderProxy@b4de12c}#10670 parentId=11 z=1}
+RequestedLayerState{619e98a Sys2038:com.termux/app.dsh.mobile.MainActivity#10671 parentId=10670}
+RequestedLayerState{Sys2038:com.termux/app.dsh.mobile.MainActivity#10672 parentId=10671}
+@@1500
+RequestedLayerState{WindowToken{ecc77f5 type=2038 android.os.BinderProxy@b4de12c}#10670 parentId=11 z=1}
+RequestedLayerState{619e98a Sys2038:com.termux/app.dsh.mobile.MainActivity#10671 parentId=10670}
+RequestedLayerState{Sys2038:com.termux/app.dsh.mobile.MainActivity#10786 parentId=10671}

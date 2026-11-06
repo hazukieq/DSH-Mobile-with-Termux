@@ -1,0 +1,43 @@
+@@1000
+  Window #6 Window{619e98a u0 Sys2038:com.termux/app.dsh.mobile.MainActivity}:
+    mOwnerUid=10278 showForAllUsers=false package=com.termux appop=SYSTEM_ALERT_WINDOW
+    mAttrs={(959,330)(99x99) gr=TOP START CENTER sim={adjust=pan} ty=APPLICATION_OVERLAY fmt=TRANSLUCENT
+      fl=NOT_FOCUSABLE NOT_TOUCH_MODAL HARDWARE_ACCELERATED
+      pfl=INSET_PARENT_FRAME_BY_IME
+      dvrrWindowFrameRateHint=true}
+    Requested w=99 h=99 mLayoutSeq=14136
+    mBaseLayer=111000 mSubLayer=0    mToken=WindowToken{ecc77f5 type=2038 android.os.BinderProxy@b4de12c}
+    mViewVisibility=0x4 mHaveFrame=true mObscured=false
+    mHasSurface=true isReadyForDisplay()=true mWindowRemovalAllowed=false
+    Frames: parent=[0,105][1080,2400] display=[0,105][1080,2400] frame=[959,435][1058,534] last=[959,435][1058,534] insetsChanged=false
+     surface=[0,0][0,0]
+    WindowStateAnimator{34e2c96 Sys2038:com.termux/app.dsh.mobile.MainActivity}:
+      mSurface=Surface(name=Sys2038:com.termux/app.dsh.mobile.MainActivity#10672)/@0xbe2e017
+      Surface: shown=false      mDrawState=HAS_DRAWN       mLastHidden=false
+    isOnScreen=true
+    isVisible=true
+    mBufferSeqId=0
+  Window #7 Window{ff9cd67 u0 ShellDropTarget}:
+    mOwnerUid=10168 showForAllUsers=true package=com.android.systemui appop=SYSTEM_ALERT_WINDOW
+    mAttrs={(0,0)(fillxfill) sim={adjust=pan} ty=APPLICATION_OVERLAY fmt=TRANSLUCENT
+      fl=NOT_FOCUSABLE HARDWARE_ACCELERATED}
+    mToken=WindowToken{54bd903 type=2038 android.os.BinderProxy@4177351}
+    mViewVisibility=0x4 mHaveFrame=true mObscured=false
+    mHasSurface=false isReadyForDisplay()=false
+    Frames: parent=[0,0][1080,2400] display=[0,0][1080,2400] frame=[0,0][1080,2400] last=[0,0][1080,2400]
+     surface=[0,0][0,0]
+    isOnScreen=true
+    isVisible=false
+  Window #9 Window{2d7f59f u0 com.termux/app.dsh.mobile.MainActivity}:
+    mOwnerUid=10278 showForAllUsers=false package=com.termux appop=NONE
+    mAttrs={(0,0)(fillxfill) sim={adjust=resize forwardNavigation} ty=BASE_APPLICATION wanim=0x103030d
+      fl=HARDWARE_ACCELERATED}
+    mToken=ActivityRecord{93629660 u0 com.termux/app.dsh.mobile.MainActivity t394}
+    mViewVisibility=0x4 mHaveFrame=true mObscured=false
+    mHasSurface=true isReadyForDisplay()=true
+    Frames: parent=[0,105][1080,2400] display=[0,105][1080,2400] frame=[0,105][1080,2400] last=[0,105][1080,2400]
+     surface=[0,0][0,0]
+      mSurface=Surface(name=com.termux/app.dsh.mobile.MainActivity#10664)/@0x1
+      Surface: shown=false      mDrawState=HAS_DRAWN       mLastHidden=false
+    isOnScreen=true
+    isVisible=true

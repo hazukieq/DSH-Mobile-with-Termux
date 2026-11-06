@@ -52,6 +52,7 @@ flicker_check() {
 
 flicker_push() {
   adb_ push "$HERE/device/parse_list.awk"      "$DEV/" >/dev/null
+  adb_ push "$HERE/device/parse_discover.awk"  "$DEV/" >/dev/null
   adb_ push "$HERE/device/parse_sf.awk"        "$DEV/" >/dev/null
   adb_ push "$HERE/device/parse_win.awk"       "$DEV/" >/dev/null
   adb_ push "$HERE/device/parse_input.awk"     "$DEV/" >/dev/null
@@ -61,19 +62,39 @@ flicker_push() {
   log "pushed -> $DEV"
 }
 
-# 解析目标 layer id：--list 里 `... com.termux#<tokenId>` 是 WindowToken 层，
-# 而 surface 层名是空的，只能用它 parentId=<tokenId> 反查。
-# 输出: "TID TKN"（写进 $EVID/meta.env）
+# 解析目标 layer id / token layer id。**判据：package=com.termux 且 window type ∈ {2032,2038}**
+#   —— 有 SYSTEM_ALERT_WINDOW 权限时 app 用 TYPE_APPLICATION_OVERLAY(2038)，否则 2032
+#   （StatusOverlay.kt:167-198）。只认 2032 会把 2038 全判成 GONE（实测假阳性 300/300）。
+# 2038 的 token 层名是 `WindowToken{ecc77f5 type=2038 ...}`（不含包名），所以：
+#   1) 先用 WMS dump 认出悬浮窗 → 拿 mSurface 里的 surface layer id；
+#   2) 再在 --list 里沿 parentId 向上走到名字以 `WindowToken{` 开头的层 = token layer。
+# 输出: "TID TKN"（同时写 $EVID/meta.env）
 flicker_discover() {
-  local list tkn tid
-  list=$(root_ dumpsys SurfaceFlinger --list | tr -d '\r')
-  tkn=$(printf '%s\n' "$list" | awk -v p="$PKG" '
-    index($0, p "#") > 0 { s = substr($0, index($0, p "#") + length(p) + 1); sub(/[^0-9].*/, "", s); print s; exit }')
-  if [ -z "$tkn" ]; then warn "没找到 $PKG 的 WindowToken 层（悬浮窗当前不在？）"; echo "  " > "$EVID/meta.env"; return 1; fi
-  tid=$(printf '%s\n' "$list" | awk -v t="$tkn" 'index($0, "parentId=" t "}") > 0 { s = substr($0, 21); sub(/#.*/, "", s); if (s == "") { match($0, /#[0-9]+/); print substr($0, RSTART + 1, RLENGTH - 1); exit } }')
-  printf 'TID=%s\nTKN=%s\nPKG=%s\nSERIAL=%s\n' "$tid" "$tkn" "$PKG" "$SERIAL" > "$EVID/meta.env"
-  log "target: surface_layer=$tid token_layer=$tkn"
-  echo "$tid $tkn"
+  local wlist list tid tkn line
+  wlist=$(root_ "dumpsys window windows" | tr -d '\r')
+  line=$(printf '%s\n' "$wlist" | awk -f "$HERE/device/parse_discover.awk" -v pkg="$PKG" | head -1)
+  tid=$(printf '%s' "$line" | cut -d, -f1); [ "$tid" = "-" ] && tid=""
+  list=$(root_ "dumpsys SurfaceFlinger --list" | tr -d '\r')
+  if [ -z "$tid" ]; then
+    # 回退：2032 时 surface 层名空、token 层名 `73085c8 com.termux`，只能按名字+parentId 反查
+    tkn=$(printf '%s\n' "$list" | awk -v p="$PKG" '
+      index($0, p "#") > 0 { s = substr($0, index($0, p "#") + length(p) + 1); sub(/[^0-9].*/, "", s); print s; exit }')
+    [ -n "$tkn" ] || { warn "没认出 $PKG 的悬浮窗（2032/2038 都不在？先用 dumpsys window windows | grep termux 看）"; : > "$EVID/meta.env"; return 1; }
+    tid=$(printf '%s\n' "$list" | awk -v t="$tkn" 'index($0, "parentId=" t "}") > 0 { s = substr($0, 21); sub(/#.*/, "", s); if (s == "") { match($0, /#[0-9]+/); print substr($0, RSTART + 1, RLENGTH - 1); exit } }')
+  else
+    tkn=$(printf '%s\n' "$list" | awk -v t="$tid" '
+      { p = index($0, "#"); if (p > 0) {
+          id = substr($0, p + 1); sub(/[^0-9].*/, "", id)
+          nm = (p > 21) ? substr($0, 21, p - 21) : ""
+          par = ""; if (match($0, /parentId=[0-9]+/)) par = substr($0, RSTART + 9, RLENGTH - 9)
+          name[id] = nm; parent[id] = par } }
+      END { cur = t; for (i = 0; i < 6 && cur != ""; i++) {
+              if (index(name[cur], "WindowToken{") == 1) { print cur; exit }
+              cur = parent[cur] } }')
+  fi
+  printf 'TID=%s\nTKN=%s\nPKG=%s\nSERIAL=%s\nWDATA=%s\n' "$tid" "$tkn" "$PKG" "$SERIAL" "$(printf '%s' "$line" | cut -d, -f2-4)" > "$EVID/meta.env"
+  log "target: surface_layer=$tid token_layer=${tkn:-?} window=$(printf '%s' "$line" | cut -d, -f4)"
+  printf '%s %s\n' "$tid" "${tkn:-}"
 }
 
 flicker_target() {   # 读 meta.env 拿 TID/TKN

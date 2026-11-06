@@ -19,7 +19,7 @@ flicker_env; flicker_check
 secs=${1:-$DUR}
 bbox=${2:-}
 W=540; H=1200
-rmp4="$EVID/rec-$TS_RUN.mp4"; fdir="$EVID/frames-$TS_RUN"; out="$EVID/recframes-$TS_RUN.csv"
+rmp4="$EVID/rec-$TS_RUN.mp4"; fdir="$EVID/frames-$TS_RUN"; out="${RECFRAMES_OUT:-$EVID/recframes.csv}"
 mkdir -p "$fdir"
 root_ "screenrecord --size ${W}x${H} --bit-rate 8M --time-limit $secs /data/local/tmp/flicker/rec.mp4" || warn "screenrecord 失败（DRM/权限？）"
 adb_ pull /data/local/tmp/flicker/rec.mp4 "$rmp4" >/dev/null 2>&1 || die "拉不到录像"

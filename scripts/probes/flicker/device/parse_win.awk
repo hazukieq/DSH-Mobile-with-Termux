@@ -29,8 +29,8 @@
 
 BEGIN {
   OFS = ","
-  print "ts_ms,sample_no,found,idx,match_n,name,win_hash,ty,token_type,package,view_visibility,have_frame,obscured,has_surface,ready_for_display,draw_state,surface_shown,last_hidden,on_screen,is_visible,frame,last_frame,surface_rect,alpha,buf_seq,layout_seq,req_w,req_h,touch_insets,touchable_region,layer_id,attrs_xywh"
-  if (ty_re == "") ty_re = "ACCESSIBILITY_OVERLAY|2032"
+  print "ts_ms,sample_no,found,idx,match_n,name,win_hash,ty,token_type,package,view_visibility,have_frame,obscured,has_surface,ready_for_display,draw_state,surface_shown,last_hidden,on_screen,is_visible,frame,last_frame,surface_rect,alpha,buf_seq,layout_seq,req_w,req_h,touch_insets,touchable_region,layer_id,attrs_xywh,appop"
+  if (ty_re == "") ty_re = "ACCESSIBILITY_OVERLAY|APPLICATION_OVERLAY|2032|2038"
   if (pkg   == "") pkg   = "com.termux"
   ts = ""; sample_no = 0; nmatch = 0; inblk = 0; blk = ""
 }
@@ -56,16 +56,16 @@ function settle(   ) {
   if (blocks_seen == 0)      placeholder("DUMP_EMPTY")
   else if (nmatch == 0)      placeholder("NO_MATCH")
 }
-function placeholder(lbl,   i, s) {   # 32 列占位行：lbl=DUMP_EMPTY / NO_MATCH
+function placeholder(lbl,   i, s) {   # 33 列占位行：lbl=DUMP_EMPTY / NO_MATCH
   s = ts OFS sample_no OFS 0 OFS 0 OFS 0 OFS lbl
-  for (i = 7; i <= 32; i++) s = s OFS ""
+  for (i = 7; i <= 33; i++) s = s OFS ""
   print s
 }
 function reset_blk() {
   ty=""; tok_type=""; package=""; view_vis=""; have_frame=""; obscured=""; has_surface=""; ready=""
   draw_state=""; shown=""; last_hidden=""; on_screen=""; is_visible=""; frame=""; last_frame=""
   surface_rect=""; alpha=""; buf_seq=""; layout_seq=""; req_w=""; req_h=""
-  touch_insets=""; touch_region=""; layer_id=""; attrs_xywh=""
+  touch_insets=""; touch_region=""; layer_id=""; attrs_xywh=""; appop=""
 }
 function grab(tag) {          # tag 含 "="，返回其后的值
   if (match(blk, tag "[^ \n]+")) return substr(blk, RSTART + length(tag), RLENGTH - length(tag))
@@ -78,6 +78,7 @@ function flush(   r, wwh, ab) {
   ty        = grab("ty=")
   tok_type  = grab("type=")
   package   = grab("package=")
+  appop     = grab("appop=")
   view_vis  = grab("mViewVisibility=")
   have_frame= grab("mHaveFrame=")
   obscured  = grab("mObscured=")
@@ -121,14 +122,17 @@ function flush(   r, wwh, ab) {
     }
   }
   # 目标判定
+  # 判据：id 命中 > 名字命中 > （包名 == pkg 且 window type 是 overlay）
+  # 注意顺序：**不能**先用 ty 门槛把 2038 挡掉（曾因此 300/300 假阳性 GONE）
   cand = 0
   if (any) cand = 1
-  else if (ty ~ ty_re || tok_type ~ ty_re) {
-    if (tid != "" && layer_id == tid) cand = 1
-    else if (name ~ name_re || package == pkg || name == pkg) cand = 1
-  }
+  else if (tid != "" && layer_id == tid) cand = 1
+  else if (name_re != "" && name ~ name_re) cand = 1
+  else if (name == pkg) cand = 1
+  else if (package == pkg && (ty ~ ty_re || tok_type ~ ty_re) && \
+           (appop ~ /^(SYSTEM_ALERT_WINDOW|CREATE_ACCESSIBILITY_OVERLAY)$/ || appop == "")) cand = 1
   if (!cand) return
   nmatch++
   gsub(/,/, ";", name); if (touch_region == "") touch_region = "empty"
-  print ts, sample_no, 1, nmatch, nmatch, name, win_hash, ty, tok_type, package, view_vis, have_frame, obscured, has_surface, ready, draw_state, shown, last_hidden, on_screen, is_visible, frame, last_frame, surface_rect, alpha, buf_seq, layout_seq, req_w, req_h, touch_insets, touch_region, layer_id, attrs_xywh
+  print ts, sample_no, 1, nmatch, nmatch, name, win_hash, ty, tok_type, package, view_vis, have_frame, obscured, has_surface, ready, draw_state, shown, last_hidden, on_screen, is_visible, frame, last_frame, surface_rect, alpha, buf_seq, layout_seq, req_w, req_h, touch_insets, touch_region, layer_id, attrs_xywh, appop
 }

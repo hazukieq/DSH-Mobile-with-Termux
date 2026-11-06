@@ -35,7 +35,7 @@ BEGIN {
   print "ts_ms,sample_no,found,idx,match_n,name,id,display_id,input_config,alpha,frame,touchable_region,owner_pid,owner_uid,touch_occlusion,not_touchable,not_visible,covers_point,stack_at_point,focused_window,touch_active,touch_state,win_count,dumpsys_ok,layer_id,pt"
   ts = ""; sample_no = 0; nmatch = 0; nout = 0; win_count = 0
   pt_s = (pt == "" ? "-" : pt); gsub(/,/, ";", pt_s)
-  if (name_re == "") name_re = "com\\.termux$"
+  if (name_re == "") name_re = "com\\.termux"
 }
 /^@@/ { settle(); sample_no++; nmatch = 0; nout = 0; win_count = 0; stack = ""; ts = substr($0, 3) + 0; next }
 /^ *FocusedWindows:/ { infocus = 1; next }

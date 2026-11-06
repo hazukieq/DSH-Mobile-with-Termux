@@ -34,6 +34,52 @@ o=$(run parse_sf.awk sf_transparent.txt -v tid=10474); chk "transparent: nt_cnt"
 o=$(run parse_sf.awk sf_moved.txt -v tid=10474); chk "moved: dispframe" "959 900 1058 999" "$(field "$o" dispframe)"
 o=$(run parse_sf.awk sf_visible.txt -v tid=99999); chk "未命中: seen" 0 "$(field "$o" seen)"
 
+echo "== parse_discover.awk（2032/2038 双判据）"
+o=$(run parse_discover.awk win_2038.txt -v pkg=com.termux)
+chk "discover 2038: layer" 10672 "$(cut -d, -f1 "$o")"
+chk "discover 2038: tok_type" 2038 "$(cut -d, -f2 "$o")"
+chk "discover 2038: appop" SYSTEM_ALERT_WINDOW "$(cut -d, -f5 "$o")"
+chk "discover 2038: 只 1 条（不匹配 ShellDropTarget/主 Activity）" 1 "$(wc -l < "$o")"
+o=$(run parse_discover.awk win_visible.txt -v pkg=com.termux); chk "discover 2032: layer" 10474 "$(cut -d, -f1 "$o")"
+o=$(run parse_win.awk win_2038.txt -v tid=10672); chk "win 2038: found" 1 "$(field "$o" found)"
+chk "win 2038: ty" APPLICATION_OVERLAY "$(field "$o" ty)"; chk "win 2038: token_type" 2038 "$(field "$o" token_type)"
+chk "win 2038: appop" SYSTEM_ALERT_WINDOW "$(field "$o" appop)"; chk "win 2038: frame" "[959 435][1058 534]" "$(field "$o" frame)"
+o=$(run parse_win.awk win_2038.txt); chk "win 2038 无 tid（包名+类型）: found" 1 "$(field "$o" found)"
+chk "win 2038 无 tid: 不误匹配 systemui" "Sys2038:com.termux/app.dsh.mobile.MainActivity" "$(field "$o" name)"
+o=$(run parse_win.awk win_2038_hidden.txt -v tid=10672); chk "win 2038 hidden: view_visibility" 0x4 "$(field "$o" view_visibility)"
+chk "win 2038 hidden: shown" false "$(field "$o" surface_shown)"
+
+echo "== layer id 重建（id 不是稳定标识：10672 → 10786）"
+o=$(run parse_list.awk list_recreated.txt -v tid=10672 -v tkn=10670)
+chk "list 重建: 第1帧 layer_id" 10672 "$(awk -F, 'NR==2{print $11}' "$o")"
+chk "list 重建: 第2帧 layer_id 自愈" 10786 "$(awk -F, 'NR==3{print $11}' "$o")"
+chk "list 重建: 第2帧 switched" 1 "$(awk -F, 'NR==3{print $12}' "$o")"
+chk "list 重建: exists 两帧都在" "1 1" "$(awk -F, 'NR>1{printf "%s ", $5}' "$o" | sed 's/ $//')"
+o=$(run parse_sf.awk sf_recreated.txt -v tid=10672)
+chk "sf 重建: 第2帧 layer_id 自愈" 10786 "$(awk -F, 'NR==3{print $3}' "$o")"
+chk "sf 重建: 第2帧 switched" 1 "$(awk -F, 'NR==3{print $4}' "$o")"
+chk "sf 重建: 第2帧 seen" 1 "$(awk -F, 'NR==3{print $6}' "$o")"
+
+echo "== analyze.py 假阳性守门（判据不匹配 ≠ GONE）"
+FP=$(mktemp -d)
+{
+  printf 'ts_ms,sample_no,found,idx,match_n,name,win_hash,ty,token_type,package,view_visibility,have_frame,obscured,has_surface,ready_for_display,draw_state,surface_shown,last_hidden,on_screen,is_visible,frame,last_frame,surface_rect,alpha,buf_seq,layout_seq,req_w,req_h,touch_insets,touchable_region,layer_id,attrs_xywh,appop\n'
+  for t in 1000 1001 1002; do printf '%s,%s,0,0,0,NO_MATCH,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,\n' "$t" "$t"; done
+} > "$FP/window.csv"
+python3 "$HERE/analyze.py" "$FP" > "$FP/report.md" 2>&1
+grep -q '判据不匹配' "$FP/report.md" && chk "假阳性守门: 报判据不匹配" 1 1 || chk "假阳性守门: 报判据不匹配" 1 0
+grep -q '^| (a) GONE |' "$FP/report.md" && chk "假阳性守门: 不输出 GONE 判定表" 1 0 || chk "假阳性守门: 不输出 GONE 判定表" 1 1
+# (e) 层重建：layers 里同一窗口换了 id → analyze 应判 RECREATED 而不是 OK/GONE
+FP2=$(mktemp -d)
+awk -f "$D/parse_list.awk" -v tid=10672 -v tkn=10670 < "$T/list_recreated.txt" > "$FP2/layers.csv"
+awk -f "$D/parse_win.awk" -v tid=10672 < "$T/win_2038.txt" > "$FP2/window.csv"
+python3 "$HERE/analyze.py" "$FP2" > "$FP2/report.md" 2>&1
+grep -q '^| (e) RECREATED | 1 |' "$FP2/report.md" && chk "analyze: 层重建判 RECREATED" 1 1 || chk "analyze: 层重建判 RECREATED" 1 0
+grep -q '^| (a) GONE | 0 |' "$FP2/report.md" && chk "analyze: 重建不误判 GONE" 1 1 || chk "analyze: 重建不误判 GONE" 1 0
+command -v trash >/dev/null && trash "$FP2" 2>/dev/null || true
+
+command -v trash >/dev/null && trash "$FP" 2>/dev/null || true
+
 echo "== parse_list.awk"
 o=$(run parse_list.awk list_visible.txt -v tid=10474 -v tkn=10473)
 chk "list: exists" 1 "$(field "$o" exists)"; chk "list: parent" 10473 "$(field "$o" parent_id)"

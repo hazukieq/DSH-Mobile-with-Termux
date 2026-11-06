@@ -13,6 +13,15 @@ cd scripts/probes/flicker
 
 产物在 `/tmp/flicker-evidence/run-<时间戳>/`：四路 CSV + `logcat.txt` + `report.md`。
 
+**窗口类型两种都认**：有 `SYSTEM_ALERT_WINDOW` 权限时 app 用 `TYPE_APPLICATION_OVERLAY`(2038)，否则回落
+`TYPE_ACCESSIBILITY_OVERLAY`(2032)。识别判据是「`package=com.termux` 且 `type ∈ {2032,2038}`」，
+不看窗口名（2038 的窗口名是 `Sys2038:com.termux/app.dsh.mobile.MainActivity`，2032 是裸包名）。
+
+**判定里最容易搞错的一条**：`(a) GONE` 只认 **WMS 窗口块消失**（`window.found=0`）。
+View.INVISIBLE 时 layer 会退出 `--list`、`has_surface=false`，但窗口块还在 → 那是 **(b) NO_CONTENT**。
+若四路数据里窗口一直没被识别到（比如判据不匹配），`analyze.py` 会直接输出「⛔ 判据不匹配，本次结论不可用」，
+不会给你一张全 GONE 的假表。
+
 ## 单独用
 
 ```bash
@@ -27,7 +36,7 @@ cd scripts/probes/flicker
 ## 不需要设备也能验证解析器
 
 ```bash
-./selftest.sh    # 37 个断言，跑 testdata/ 里的合成 fixture
+./selftest.sh    # 62 个断言，跑 testdata/ 里的合成 fixture
 ```
 
 ## 目录

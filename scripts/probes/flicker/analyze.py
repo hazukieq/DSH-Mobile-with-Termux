@@ -2,7 +2,7 @@
 """analyze.py — 把 capture.sh 的四路 CSV + logcat + 逐帧统计合成一份判定报告（markdown 到 stdout）。
 
 四类「闪」的判定（每条都可回指到具体 CSV 列，不猜）：
-  (a) GONE        : layers.exists=0（层对象消失）或 window.found=0（WMS 里窗口块没了）
+  (a) GONE        : window.found=0（WMS 里窗口块没了 = 真摘窗）。layer 不在 --list 不算 (a)，那是 (b)
   (b) NO_CONTENT  : 层对象在但没内容 —— frames.seen=0（--list 有 / 完整 dump 无），
                     或 comp_vis=visible 且 nt_cnt=0（区域在但全透明），
                     或 input_reason ∈ {nothing to draw, hidden by parent or layer flag}
@@ -82,18 +82,58 @@ def main(run):
         p("**没有任何采样数据** —— 先确认悬浮窗在场、root 可用。")
         print("\n".join(out)); return
 
+    # ── 假阳性守门：一帧都没认出目标窗口时，绝不能把「识别失败」说成「窗口被摘掉」。
+    #    实测事故：2.9.74 起窗口类型变成 TYPE_APPLICATION_OVERLAY(2038)，旧判据只认 2032，
+    #    capture.sh 15 给出 300/300 的 (a) GONE —— 全部是误判（窗口一直 HAS_DRAWN）。
+    identified = any(r.get("found") == "1" for r in win) or any(r.get("exists") == "1" for r in layers)
+    if not identified:
+        p("## ⛔ 判据不匹配：本次结论不可用")
+        p("")
+        p("这次采样里**没有任何一帧认到目标窗口**（`window.found` 全 0 且 `layers.exists` 全 0）。")
+        p("最常见原因：窗口类型不是 2032 而是 **2038**（app 有 SYSTEM_ALERT_WINDOW 权限时用")
+        p("`TYPE_APPLICATION_OVERLAY`，见 `StatusOverlay.kt:167-198`；无权限才回落 2032），")
+        p("而判据只认 2032 → 会把「一直 HAS_DRAWN 的窗口」全量误判成 (a) GONE（实测 300/300 假阳性）。")
+        p("")
+        p("**不要**把这张表当作闪烁证据。先确认窗口身份：")
+        p("")
+        p("```")
+        p("adb shell su -c 'dumpsys window windows' | grep -A3 -i termux   # 看 package= 与 ty=")
+        p("adb shell su -c 'dumpsys SurfaceFlinger --list' | grep -i termux")
+        p("```")
+        p("")
+        p("判据：`package=com.termux` 且 window type ∈ {2032, 2038}（`ty=` 是符号名，")
+        p("`ACCESSIBILITY_OVERLAY`/`APPLICATION_OVERLAY`；数值在 `mToken=WindowToken{... type=<n> ...}`）。")
+        p("本工具已按此判据实现（`device/parse_discover.awk`），若仍报不匹配，说明窗口此刻不在场。")
+        print("\n".join(out)); return
+
     # ── 统一时间轴
     ts_all = sorted({num(r["ts_ms"]) for r in layers + frames + win + inp if num(r.get("ts_ms"))})
     prev_disp = None
+    base_lid = None
     verdicts = Counter()
     events = []      # (ts, verdict, detail)
     for ts in ts_all:
         L, F, W, I = state_at(layers, ts), state_at(frames, ts), state_at(win, ts), state_at(inp, ts)
         v, why = None, []
-        if L is not None and L.get("exists") == "0":
-            v = "GONE"; why.append("layers.exists=0")
+        # (a) 真摘除只认 WMS：窗口块从 `dumpsys window windows` 消失。
+        #     ⚠ layer 从 --list 消失**不等于**摘窗 —— View.INVISIBLE 时窗口块还在、has_surface=false、
+        #     layer 退出 requested 列表（实测 2.9.74 的 capture avoid 就是这样），那属于 (b)。
         if W is not None and W.get("found") == "0":
-            v = "GONE"; why.append(f"window.found=0({W.get('name','')})")
+            v = "GONE"; why.append(f"window.found=0({W.get('name','')}) 窗口块消失=真摘除")
+        # (e) 层重建：layer id 变了（surface 被销毁重建）。id 不是稳定标识，只能靠「同一窗口换了 id」认。
+        lid = (L or {}).get("layer_id") or ""
+        if (L or {}).get("exists") == "1" and lid:
+            if base_lid is None:
+                base_lid = lid
+            elif lid != base_lid:
+                v = v or "RECREATED"; why.append(f"layer_id {base_lid}->{lid}")
+                base_lid = lid
+        if F is not None and F.get("switched") == "1" and F.get("layer_id"):
+            v = v or "RECREATED"; why.append(f"sf layer_id ->{F['layer_id']}")
+        # (b) 窗口在、但没画出来。三种真机形态分别归因（同一现象，不同成因）：
+        if v is None and W is not None and W.get("found") == "1" and L is not None and L.get("exists") == "0":
+            v = "NO_CONTENT"; why.append("window 在但 layer 不在 --list（surface 挂起 / View.INVISIBLE）")
+            if W.get("has_surface") == "false": why.append("has_surface=false")
         if F is not None:
             if F.get("seen") == "0" and (L is None or L.get("exists") == "1"):
                 v = v or "NO_CONTENT"; why.append("frames.seen=0（层在 --list，但未进合成）")
@@ -134,10 +174,11 @@ def main(run):
     p("| 结论 | 采样点数 | 含义 |")
     p("|---|---|---|")
     p(f"| OK | {ok_n} | 窗口在、内容在、位置稳定、无复用 |")
-    p(f"| (a) GONE | {verdicts['GONE']} | 层/窗口真的被摘掉了 |")
-    p(f"| (b) NO_CONTENT | {verdicts['NO_CONTENT']} | 层在但没画出来（无 buffer / 全透明 / hidden by parent） |")
+    p(f"| (a) GONE | {verdicts['GONE']} | 窗口真的被摘掉了（WMS 窗口块消失） |")
+    p(f"| (b) NO_CONTENT | {verdicts['NO_CONTENT']} | 窗口在但没画出来（layer 挂起 / 无 buffer / 全透明 / hidden by parent） |")
     p(f"| (c) MOVED | {verdicts['MOVED']} | 内容在但位置/尺寸跳变 |")
     p(f"| (d) STALE | {verdicts['STALE']} | 合成器复用了上一帧（陈旧帧） |")
+    p(f"| (e) RECREATED | {verdicts['RECREATED']} | surface 层被销毁后重建（layer id 变了）→ 硬件级真闪 |")
     p("")
 
     if events:
@@ -176,9 +217,19 @@ def main(run):
         p("")
 
     # ── logcat 事件
-    hid = [l for l in logl if "hide(" in l or "show(" in l or "capture avoid" in l or "torn down" in l or "overlay hidden" in l]
+    # 只看本次 run 的时间窗（logcat -v epoch 行首是 epoch 秒），避免把历史事件当成本次证据
+    t0, t1 = min(ts_all) / 1000.0 - 1.0, max(ts_all) / 1000.0 + 1.0
+    def inwin(line):
+        head = line.strip().split(" ")[0]
+        try:
+            return t0 <= float(head) <= t1
+        except ValueError:
+            return False
+    hid = [l for l in logl
+           if ("hide(" in l or "show(" in l or "capture avoid" in l or "torn down" in l or "overlay hidden" in l)
+           and inwin(l)]
     if hid:
-        p("## 4. logcat 事件（Tier0 时钟）")
+        p("## 4. logcat 事件（Tier0 时钟，已按本次采样时间窗过滤）")
         p("")
         p("```")
         for l in hid[:60]:

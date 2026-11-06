@@ -25,14 +25,23 @@ flicker_env
 FILT='StatusOverlay:V DshA11y:V EngineService:V AndroidRuntime:E ActivityManager:I WindowManager:I ActivityTaskManager:I *:S'
 case "${1:-dump}" in
   start)
-    out="$EVID/logcat-$TS_RUN.txt"; : > "$out"
+    out="${LOGCAT_OUT:-$EVID/logcat-$TS_RUN.txt}"; : > "$out"
     adb_ logcat -v epoch $FILT > "$out" 2>&1 &
-    echo $! > "$EVID/.logcat.pid"; echo "$out"; log "logcat recording -> $out" ;;
+    echo $! > "$EVID/.logcat.pid"
+    # adb logcat 启动会先把整个历史缓冲重放一遍；如果采样期间还没追上"现在"，
+    # 抓到的全是历史事件、正好漏掉本次的 hide/show（实测踩过）。这里等它追上再返回。
+    now=$(date +%s)
+    for i in $(seq 1 60); do
+      last=$(tail -1 "$out" 2>/dev/null | awk '{print int($1)}')
+      [ -n "$last" ] && [ "$last" -ge $((now - 2)) ] && break
+      sleep 0.2
+    done
+    log "logcat live (catch-up ${i} ticks) -> $out"; echo "$out" ;;
   stop)
     if [ -f "$EVID/.logcat.pid" ]; then kill "$(cat "$EVID/.logcat.pid")" 2>/dev/null || true; rm -f "$EVID/.logcat.pid"; fi
     log "logcat stopped" ;;
   dump)
-    secs=${2:-10}; out="$EVID/logcat-$TS_RUN.txt"
+    secs=${2:-10}; out="${LOGCAT_OUT:-$EVID/logcat-$TS_RUN.txt}"
     timeout "$((secs + 2))" "$ADB" -s "$SERIAL" logcat -v epoch $FILT > "$out" 2>&1 || true
     log "logcat $secs s -> $out ($(wc -l < "$out") lines)"; echo "$out" ;;
   clear)

@@ -29,6 +29,7 @@ done
 flicker_env; flicker_check; flicker_push
 EVID_RUN="$EVID/run-$TS_RUN"; mkdir -p "$EVID_RUN"
 export EVID="$EVID_RUN"
+export LOGCAT_OUT="$EVID_RUN/logcat.txt"   # logcat.sh 里 TS_RUN 会重新生成，必须显式指定落点
 read -r tid tkn <<<"$(flicker_discover)" || true
 [ -n "${tid:-}" ] || warn "悬浮窗不在场：只能采到 GONE 基线（先让 lead 触发一个 turn）"
 pt=""

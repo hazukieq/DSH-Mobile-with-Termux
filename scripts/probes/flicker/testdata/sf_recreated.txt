@@ -1,0 +1,12 @@
+@@1000
+Composition list (top to bottom)
+  Layer [10672] Sys2038:com.termux/app.dsh.mobile.MainActivity#10672
+    visible reason= buffer=93054761435173 frame=1
+    bounds={959,435,534,1058} toDisplayTransform={ tx=959.0000 ty=435.0000 }
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) canOccludePresentation touchableRegion={959,435,534,1058}}
+@@1500
+Composition list (top to bottom)
+  Layer [10786] Sys2038:com.termux/app.dsh.mobile.MainActivity#10786
+    visible reason= buffer=93054761435777 frame=1
+    bounds={959,435,534,1058} toDisplayTransform={ tx=959.0000 ty=435.0000 }
+    input{(NOT_FOCUSABLE | TRUSTED_OVERLAY) canOccludePresentation touchableRegion={959,435,534,1058}}

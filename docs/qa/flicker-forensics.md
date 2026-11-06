@@ -1,7 +1,10 @@
 # 悬浮窗闪烁 / 输入可达性：真机取证判据
 
 > 真机：`5f08bc20` / M2012K11AC（alioth）/ **LineageOS 23.2 = Android 16 (SDK 36)** / build `BP4A.251205.006` / userdebug / Magisk root（`su -c id` → `uid=0(root) context=u:r:magisk:s0`）。
-> 被测：`com.termux`（基线 2.9.64/635）。悬浮窗 = `TYPE_ACCESSIBILITY_OVERLAY`（type 2032）。
+> 被测：`com.termux`（本轮覆盖 2.9.64/635 → 2.9.74/643）。悬浮窗 type **两种都可能**：
+> **`TYPE_APPLICATION_OVERLAY`（2038）** 当 app 已获 `SYSTEM_ALERT_WINDOW`（重装后通常已在）——
+> 现场实测 2.9.74 就是 2038；只有没权限时才回落 `TYPE_ACCESSIBILITY_OVERLAY`（2032）。
+> 判据与脚本必须**两者都认**，否则会把一直 HAS_DRAWN 的窗口全量误判成「窗口被摘掉」（实测踩过：一次 15s 采样 300/300 全假）。
 > 工具：`scripts/probes/flicker/`。**所有耗时/频率均为本机 `date +%s%3N` 前后取差实测**，不是估计。
 
 ---
@@ -10,20 +13,23 @@
 
 | 类型 | 一句话判据 | 权威命令 / 字段 | 采样上限 |
 |---|---|---|---|
-| **(a) 窗口真被摘掉** | `--list` 里该 layer **不存在**（`exists=0`）**且** `dumpsys window windows` 里没有 `ty=ACCESSIBILITY_OVERLAY` 块（`found=0`） | `dumpsys SurfaceFlinger --list` + `dumpsys window windows` | 17~23Hz / 14Hz |
-| **(b) 窗口在但没内容** | `--list` 有 layer，但完整 SF dump 里 **`seen=0`**（没进 Composition list、没有 Output Layer）；或 Input list 给出 **`invisible reason=nothing to draw`** / **`hidden by parent or layer flag`**；或 `visibleRegion` 非空而 **`visibleNonTransparentRegion count=0`** | `dumpsys SurfaceFlinger` | 12Hz |
+| **(a) 窗口真被摘掉** | **唯一权威：`window.found=0`** —— `dumpsys window windows` 里连窗口块都没了。**`--list` 里 layer 消失不算 (a)**（View.INVISIBLE 时 layer 会退出 requested 列表，但窗口块还在） | `dumpsys window windows`（+ `--list` 作旁证） | 14Hz / 17~23Hz |
+| **(b) 窗口在但没内容** | 窗口块在（`found=1`），而下列任一成立：① `has_surface=false` + **layer 不在 `--list`**（View.INVISIBLE 真机形态）；② `--list` 有 layer 但完整 dump **`seen=0`**；③ Input list 给 **`invisible reason=nothing to draw`** / **`hidden by parent or layer flag`**；④ `visibleRegion` 非空而 **`visibleNonTransparentRegion count=0`** | `dumpsys window windows` + `dumpsys SurfaceFlinger` | 14Hz / 12Hz |
 | **(c) 内容在但位置/尺寸跳变** | 相邻采样 `displayFrame` 变；或 WMS `frame≠last_frame` | 完整 SF dump 的 `displayFrame=` / `dumpsys window windows` 的 `Frames:` | 12Hz / 14Hz |
 | **(d) 陈旧帧（复用旧 buffer）** | `reusedClientComposition=true`；或 `clientCompositionReusedFrames` 单调递增；或帧内容没变而状态变了 | 完整 SF dump `Composition Display State` / `dumpsys SurfaceFlinger --timestats -dump` | 12Hz |
+| **(e) surface 被销毁重建** | 同一窗口的 **layer id 变了**（`--list`/SF 的 `#id` 换了；恢复显示瞬间必现）。id 不是稳定标识，按名自愈才能看出来 | `--list`/完整 SF 的层 id 序列 | 17~23Hz |
 | **点不到** | inputConfig 含 `NOT_TOUCHABLE`/`NOT_VISIBLE`；或 `touchableRegion=<empty>`；或诊断点不在 region；或点上 z 序首位不是它 | `dumpsys input` 的 `Windows:` 行 | 12Hz |
 
 **判别顺序**（一步否决，不用全跑）：
 ```
---list exists=0 ────────────────► (a) 真摘除
-  exists=1
-    └ 完整 SF dump seen=1 且 nt_cnt>0 ─► 在画 → 位置变? (c) : OK
-    └ 完整 SF dump seen=0 ─────────────► (b) 无内容（再看 input list 的 reason 细分）
-    └ comp_vis=visible 但 nt_cnt=0 ────► (b) 全透明
-另有 reusedClientComposition=true ──► (d) 陈旧帧（可与上面任一并存）
+window.found=0 ──────────────────────► (a) 真摘除（WMS 窗口块消失）
+window.found=1
+  └ layer 不在 --list / has_surface=false ─► (b) 挂起（View.INVISIBLE / hideNow 主路径）
+  └ 完整 SF dump seen=0 ─────────────────► (b) 没进合成（再看 input list 的 reason 细分）
+  └ comp_vis=visible 而 nt_cnt=0 ────────► (b) 全透明
+  └ 一切都在画 → displayFrame 变? (c) : OK
+layer id 换了（恢复显示瞬间） ────────► (e) surface 销毁重建（可与 (b) 相邻出现）
+另有 reusedClientComposition=true ────► (d) 陈旧帧（可与上面任一并存）
 ```
 
 ---
@@ -56,6 +62,9 @@
 | Perfetto | `/system/bin/perfetto` v51.2 有 `android.surfaceflinger.layers/frame/frametimeline`；**没有** transactions/windowmanager/input 数据源；设备与宿主都**无 trace_processor** | 仅作可选存档；主判据不依赖 |
 | `mViewVisibility` / `ty=` 的数值 | `ty=` 打的是**符号名** `ACCESSIBILITY_OVERLAY`，2032 只在 `mToken=WindowToken{... type=2032 ...}` | 两种都匹配 |
 | `mAttrs=(x,y)` 当屏幕坐标 | 它是**相对 parent frame**；本机 status bar 高 95px → `mAttrs y=330` ↔ `frame y=425` | 一律用 `Frames: ... frame=[l,t][r,b]` |
+| **判据只认 2032** | 窗口是 2038 时 `found` 恒 0 → 一次 15s 采样给出 **300/300 假 GONE** | 认 `type ∈ {2032,2038}` **或** `package==com.termux && appop ∈ {SYSTEM_ALERT_WINDOW, CREATE_ACCESSIBILITY_OVERLAY}`；`capture.sh` 已内置**假阳性守门**（全 0 时输出「判据不匹配」而不是 GONE 表） |
+| **layer id 当稳定标识** | surface 重建后 id 变（`#10672`→`#10786`→…）→ 假 GONE/假 NO_CONTENT | 按稳定层名自愈 id（2038：`Sys2038:com.termux/...`）；id 变化本身记 `(e) RECREATED` |
+| `adb logcat` 直接流式抓 | 启动会**重放整个历史缓冲**；采样结束还没追上「现在」→ 只抓到旧事件，漏掉本次 `hide/show`（实测踩过：报告里全是上一轮的日志） | `logcat.sh start` 已加**追赶等待**（等到文件末行时间戳 ≥ now-2s 才返回） |
 | `bounds={...}` 当 `[l,t][r,b]` | 实际顺序是 **`{left, top, bottom, right}`**，如 `{0,0,218,1080}` = 宽 1080 高 218 | 按 4 个整数解析：l,t,b,r |
 
 ---
@@ -81,7 +90,25 @@ RequestedLayerState{#10474 parentId=10473}                     ← surface 层�
 5: name=73085c8 com.termux, id=10474, ..., touchableRegion=[959,425][1058,524], ownerPid=21666, ...
 ```
 
+### 2.1 2038（TYPE_APPLICATION_OVERLAY）现场形态 —— 与 2032 不同，脚本必须同时认
+
+```
+# WMS：窗口名不是裸包名，而是 Sys2038:<pkg>/<activity>
+Window #6 Window{619e98a u0 Sys2038:com.termux/app.dsh.mobile.MainActivity}:
+  package=com.termux appop=SYSTEM_ALERT_WINDOW          ← 2032 时 appop=CREATE_ACCESSIBILITY_OVERLAY
+  mAttrs={(959,330)(99x99) ... ty=APPLICATION_OVERLAY fmt=TRANSLUCENT
+  mToken=WindowToken{ecc77f5 type=2038 android.os.BinderProxy@b4de12c}
+  Frames: ... frame=[959,435][1058,534]
+  mSurface=Surface(name=Sys2038:com.termux/app.dsh.mobile.MainActivity#10672)
+
+# --list：三层链（2032 只有两层，且 surface 层无名字）
+RequestedLayerState{WindowToken{ecc77f5 type=2038 ...}#10670 parentId=11 z=1}   ← token 层（名不含包名！）
+RequestedLayerState{619e98a Sys2038:com.termux/...#10671 parentId=10670}        ← 中间层
+RequestedLayerState{Sys2038:com.termux/...#10672 parentId=10671}                ← surface 层（有名字！）
+```
+
 **要点**
+0. **layer id 不是稳定标识**：一次 15s 采样中途 surface 层就被重建过（实测 `#10672`→`#10786`，之后又一次 `#10804`→`#10844`→`#10845`，parentId 不变）。只按 `#<id>` 匹配会把「重建」判成 `exists=0` → 468 个假 GONE。**正确做法：id 未命中时按稳定层名自愈**（2038 用 `Sys2038:com.termux/...`；2032 的 surface 层无名，只能重新 discover）。这类「同一窗口换了 id」本身就是 **(e) 证据**，不是噪声。
 1. `--list` 是「层对象是否存在」的唯一权威，且包含**完全不可见**的层 → 它证明对象在，不证明在画。
 2. 完整 SF dump 的 `Composition list` / `Display N HWC layers` / `- Output Layer` 段**只含真正参与合成的层**；不在里面 = 没画（(b) 的核心）。
 3. `Input list` 段列出**带 input 信息的全部层**（含不可见），并给 `invisible reason=...` ——这句话是 (b) 的直接字符串证据，务必捞。
@@ -126,6 +153,36 @@ RequestedLayerState{#10474 parentId=10473}                     ← surface 层�
 | 视觉真值 | screenrecord 逐帧 ink_ratio | 状态说「可见」但画面几帧不更新 = 显示链路延迟 |
 
 **本项目的设计内佐证**：`StatusOverlay.beginCaptureAvoid()` 在 `hideNow()` 之后 `Thread.sleep(120L)`，源码注释写的就是「让合成器吃掉这一帧，双缓冲陈旧帧由截图侧 warmup 处理」——即代码自己承认存在 (d) 这一档，且它正是「截图里还看得到悬浮窗」的根因。取证时把 logcat 的 `capture avoid: begin` 时间戳与录像帧时间戳对齐，就能证明某次截图拿到的是陈旧帧。
+
+---
+
+### (e) surface 被销毁重建（恢复显示瞬间的真实「闪」机制）
+**证据**：同一窗口的 layer id 变了（`--list` 出现新 `#id`；完整 SF dump 的 `Layer [N] ...#N` 换号），伴随 `switched=1`。
+
+为什么它算一类「闪」：surface 销毁后重建，恢复首帧的 buffer 供给与合成时序都可能错拍——要么首帧空白（与 (b) 相邻），要么拿到上一轮残留（与 (d) 相邻）。所以它总是以「(b) 若干帧 +(e) 一两帧」的成对形态出现。
+
+### 3.6 真机实证：一次 capture avoid 的完整信号链（2.9.74 / 2038）
+一段 15s 采样里抓到的两组投影（`run-20261106-170000`）：
+
+```
+# Tier0 事件时钟（logcat -v epoch）
+1793955628.861 StatusOverlay: capture avoid: begin (...) type=2038 hideRefs=0
+1793955628.862 StatusOverlay: hide(capture): visibility=4 (...) hideRefs=1
+1793955631.105 StatusOverlay: show(capture): visibility=0 (...) hideRefs=0
+
+# Tier1/2 状态见证（同一次采样，dumpsys 每路 12~17Hz）
+5628.871–5631.074（2203ms，94 个采样点）：
+  window.found=1  has_surface=false          ← 窗口在，但 surface 被挂起
+  layers.exists=0                            ← layer 退出 requested 列表
+  frames.seen=0                              ← 未进 Composition list
+  → 判定 (b) NO_CONTENT（View.INVISIBLE 形态）
+5631.086 恢复瞬间：layer_id 10804 → 10844（1 帧）
+5631.176–5631.272：layer_id 10844 / input list reason=hidden by parent or layer flag
+5634.424 / 5634.467：layer_id 10844 → 10845（再次重建）
+  → 判定 (e) RECREATED
+```
+
+**结论（可直接写进结论报告）**：2.9.74 的「显示/隐藏」在应用层只是 `root.visibility=INVISIBLE/VISIBLE`，但到 WMS/SF 层看是 **surface 挂起 + layer 从 requested 列表摘除 + 恢复时重建新 layer**。因此每次 `capture avoid`（截图避让）都必然产生 2~3s 的 (b) 段和至少一次 (e)；用户可见的「闪」若发生在**隐藏/恢复的边界帧**，成因就在 (e)+(d)，而不是窗口被摘掉。
 
 ---
 
@@ -195,12 +252,14 @@ adb -s $S shell "su -c 'sh /data/local/tmp/flicker/sampler.sh input 10 <tid> \"\
 
 ---
 
-## 7. 已知缺口（下一轮实测补）
+## 7. 已知缺口
 
-1. **隐藏期间 layer 是否仍留在 `--list`**：现有判据来自「本来就不可见的层（Taskbar/NotificationShade/Dim layer）不在完整 dump、但从不出现在 Composition list」+ 合成 fixture 推演；**尚未在真实 `hideNow()` 期间同时抓 `--list` 与完整 dump**。这是唯一需要现场补的经验点（用 `./capture.sh 20` 在 `capture avoid` 期间抓一次即可闭环）。
-2. `TouchStatesByDisplay` 在真实按住期间的完整格式（需要一次人为长按 + 采样，当前纪律下未做）。
-3. 空名 layer 的 `--latency` 无数据（替代已给：timestats/frame-counter）。
-4. 无 `trace_processor`，Perfetto 只能留原始 trace 存档。
+1. **2032 现场未复测**：本轮真机一直是 2038。2032 分支靠合成 fixture（`testdata/win_visible.txt` 等）与代码逻辑保证；若要现场补，只能撤掉设备上的悬浮窗权限（属改系统状态，需用户授权）。
+2. **`has_surface=false` 的 WMS 成因**：真机上看不出是 WM 主动销毁 surface，还是 view 不可见导致。判据只用它作 (b) 的佐证，不依赖成因。
+3. `TouchStatesByDisplay` 在真实按住期间的完整格式（需一次人为长按 + 采样，当前纪律下未做）。
+4. 空名 layer 的 `--latency` 无数据（替代已给：`--timestats` / FramebufferSurface 的 `frame-counter`）。
+5. 无 `trace_processor`，Perfetto 只能留原始 `.pftrace` 存档。
+6. ~~隐藏期间 layer 是否仍留在 `--list`~~ **已闭环**：不留（退出 requested 列表），窗口块仍在、`has_surface=false` → 归 (b)；见 §3.6。
 
 ---
 

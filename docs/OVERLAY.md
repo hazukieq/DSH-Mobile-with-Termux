@@ -77,7 +77,11 @@
 
 
 
-### 3.y 截图 / 读屏时怎么让悬浮窗不出现在图里（现行实现：**只隐藏，不摘窗口**）
+### 3.y 截图 / 读屏时怎么让悬浮窗不出现在图里（**2.9.72 及以前**：只隐藏、不摘窗口）
+
+> **2.9.75 起重写，见 [§3.s](#3s-显式截图彻底不闪2-9-75--646takeScreenshotOfWindow-组合窗口)。**
+> 本节保留作为**回退路径**与历史根因记录：`INVISIBLE` 会真的销毁 surface（闪 2.3s + 期间点不到），
+> 只在 API<34 / 窗口截图不可用时才会用到。
 
 流程（`DshAccessibilityService.screenshotBase64` + `StatusOverlay.begin/endCaptureAvoid`）：
 
@@ -112,6 +116,57 @@
 排障日志：`DshA11y: screenshot: begin avoid=… / warmup1=… / warmup2=… / attempt=N ok=…` 与
 `StatusOverlay: capture avoid: hidden=… ` / `capture restore: shown …`，`debugState()` 里带
 `root/attached/live/level/pos/size/flags/touchable/opsAvoid/hiddenForCapture/type`。
+
+### 3.s 显式截图彻底不闪（2.9.75 / 646：takeScreenshotOfWindow 组合窗口）
+
+**核心事实**：`root.visibility = INVISIBLE` 对 2032/2038 窗口不是「不画」，而是让 WMS 走
+`performSurfacePlacement` → `WindowStateAnimator` 的 destroy 路径（`mDrawState: HAS_DRAWN →
+NO_SURFACE`，layer 从 SF 摘掉、BufferQueue 释放）。恢复时重建 layer **必然闪**，重建期间窗口
+**不可触摸**。所以「藏起来再拍」这条路本身就是错的方向，只能让**截图不含悬浮窗**。
+
+实现（`DshAccessibilityService.kt`）：
+
+| 函数 | 作用 |
+|---|---|
+| `screenshotCompositeBase64()` | **首选**。`windows` 按 `layer` 升序取 ≤6 个窗口，逐个 `takeScreenshotOfWindow(id, exec, cb)`，按 `getBoundsInScreen()` 贴回 `realScreenSize()` 画布 |
+| `screenshotWindowBase64()` | 退路一：只截单个前台应用窗口 |
+| `screenshotBase64(avoidOverlay=true)` | 退路二（会闪）：整屏 + `INVISIBLE` 避让 |
+| `screenshotBase64NoFlash()` | 上面三条的编排：composite → window → display+avoid，`lastShotVia` 记录实际路径 |
+| `realScreenSize()` | `WindowManager.maximumWindowMetrics`；**不要用 `resources.displayMetrics`**（服务里是去导航栏的可用区，1080x2400 报 1080x2305，坐标差 95px） |
+
+三条硬规则：
+
+1. **排除自己的悬浮窗只能按 bounds**：不能按包名（主 WebView 也是 `com.termux`），也不能按
+   a11y `type`（application overlay 在 a11y 里报 `TYPE_SYSTEM`，与状态栏撞型）。用
+   `StatusOverlay.currentFrameRect()` 逐边比对（±2px）。
+2. **窗口本地坐标 ≠ 屏幕坐标**：窗口截图给的是窗口 buffer（CTS 断言等于 decorView 尺寸），
+   必须加 `boundsInScreen` 平移才能当整屏图用，否则点击整体偏移。
+3. **节流按 windowId 分桶**（AOSP `AccessibilityInteractionController`，窗口版 `SparseArray`、
+   display 版单字段），所以一次合成里连拍多个窗口**不会**互相消耗 333ms 额度；
+   但「相邻两次同窗截图」仍要 ≥333ms。
+
+验收（`scripts/probes/flicker/capture.sh` 四路判据 + `(e) RECREATED`）：
+
+```
+composite（新）: 663 采样点 全 OK；GONE 0 / NO_CONTENT 0 / RECREATED 0
+?flash=1（旧）: GONE 205 / NO_CONTENT 3 / RECREATED 10
+```
+
+**别再做**：用 `INVISIBLE`/`GONE`/`removeView`/`alpha` 去「让截图里没有悬浮窗」——
+都会闪，且期间点不到。`?flash=1` 只作为逃生舱与回归负对照保留。
+
+**窗口类型必须收敛到 2032（2.9.76）**：App 先起、无障碍后连时，窗口是按
+`TYPE_APPLICATION_OVERLAY`(2038)+Activity token 建的，这种窗口 App 一退后台就被 WMS 置
+hidden（小米还叠 `mIsForceHiddenNonSystemOverlayWindow`），表现「切个 App 就没了」。所以
+`show(svc)` 在无障碍就绪时会把 2038 热切换成 2032，并保留坐标/展开档位：
+
+```
+I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y ready)
+```
+
+排查时注意：`dumpsys window windows` 里两者的名字不同（2032 为 `Window{… u0 com.termux}` 且
+`appop=CREATE_ACCESSIBILITY_OVERLAY`；2038 为 `Sys2038:com.termux/…` 且
+`appop=SYSTEM_ALERT_WINDOW`），判据不要只看 `ty=`。
 
 ## 4. 状态机速查
 
