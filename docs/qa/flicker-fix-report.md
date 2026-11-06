@@ -168,6 +168,19 @@ GET /frame-diff（静置）  → {"changed":false,"changedRatio":0.0029,"costMs"
 展开通知栏后            → {"changed":true ,"changedRatio":0.8228,"costMs":107, hotRegions:[...]}
 ```
 
+### 5.1 独立工具链交叉验证（device-forensics 的四路判据）
+
+用 `scripts/probes/flicker/capture.sh`（同时采 `SF --list` 层存在性、完整 SurfaceFlinger 合成真值、
+WMS 窗口状态、`dumpsys input` 可达性四路）在 643 上跑 20s，把每一次采样点判进四类异常：
+
+| 场景 | 采样点 | OK | (a) 层被摘 | (b) 层在但无内容 | (c) 位置/尺寸跳变 | (d) 陈旧帧复用 |
+|---|---|---|---|---|---|---|
+| 静置 20s | **905** | **905** | 0 | 0 | 0 | 0 |
+| 同场景 + `POST /frame-wait` 持续轮询 | **925** | **925** | 0 | 0 | 0 | 0 |
+
+这条证据比单一 `dumpsys window` 更硬：它同时覆盖「层还在不在」「有没有真的合成出来」「位置有没有跳」
+「有没有复用旧帧」四个维度，避免把「窗口在但没画面」误判成「没问题」。
+
 ---
 
 ## 6. 残留风险与后续建议
