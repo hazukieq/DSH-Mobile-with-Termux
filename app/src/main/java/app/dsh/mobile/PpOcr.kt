@@ -148,10 +148,31 @@ object PpOcr {
         crc.value
     }.getOrDefault(0L)
 
+    /** 位图内容指纹：降采样到 64×64 后 CRC（缓存键，比整幅像素便宜两个数量级）。 */
+    private fun bitmapHash(bitmap: Bitmap): Long = runCatching {
+        val small = Bitmap.createScaledBitmap(bitmap, 64, 64, false)
+        val px = IntArray(64 * 64)
+        small.getPixels(px, 0, 64, 0, 0, 64, 64)
+        if (small !== bitmap) small.recycle()
+        val crc = java.util.zip.CRC32()
+        val buf = java.nio.ByteBuffer.allocate(px.size * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        px.forEach { buf.putInt(it) }
+        crc.update(buf.array())
+        crc.value
+    }.getOrDefault(0L)
+
     @Volatile private var depsOk: Boolean? = null
 
-    /** python3 + onnxruntime + numpy/PIL/scipy 是否可用（缓存结果）。 */
-    fun ready(ctx: Context): Boolean {
+    /**
+     * 是否可以跑 PP-OCR。
+     *
+     * v2.9.78 起**原生优先**：模型随包 + 内置 `onnxruntime-android` 即可推理，不再需要 Termux 的
+     * python/onnxruntime（历史路径见 [pythonReady]）。模型缺失时仍返回 false。
+     */
+    fun ready(ctx: Context): Boolean = PpOcrNative.available(ctx) || pythonReady(ctx)
+
+    /** 老路：Termux python3 + onnxruntime + numpy/PIL/scipy 是否可用（缓存结果）。 */
+    private fun pythonReady(ctx: Context): Boolean {
         depsOk?.let { return it }
         if (!deployed(ctx) || !python(ctx).isFile) { depsOk = false; return false }
         fun probe(extraPythonPath: String?): Boolean = runCatching {
@@ -190,6 +211,8 @@ object PpOcr {
      * python-pip, onnxruntime），必须走 `pkg install`；pip 在 bionic 上没有可用 wheel。
      */
     fun ensureDeps(ctx: Context): String? {
+        // v2.9.78：原生 ORT 可用时不再需要 python 运行时
+        if (PpOcrNative.available(ctx)) return null
         val bash = File(EngineConfig.engineRoot(ctx), "bin/bash")
         if (!bash.isFile) return "engine bash missing"
         return runCatching {
@@ -294,6 +317,24 @@ object PpOcr {
         useCache: Boolean = true, ifChanged: Boolean = false, trackFull: Boolean = true,
     ): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
+        // v2.9.78：原生 ORT 优先——不落 PNG、不起进程、不依赖 python。
+        if (PpOcrNative.available(ctx)) {
+            val hash = if (useCache) bitmapHash(bitmap) else 0L
+            if (useCache) {
+                cache[tier]?.let { c ->
+                    if (c.hash == hash && (ifChanged || System.currentTimeMillis() - c.at <= 5_000L)) {
+                        return Result(true, blocks = c.blocks, costMs = 0L, cached = true, changed = false)
+                    }
+                }
+            }
+            val nr = PpOcrNative.recognize(ctx, bitmap, tier)
+            if (nr.ok) {
+                if (useCache) cache[tier] = CacheEntry(hash, System.currentTimeMillis(), nr.blocks)
+                if (trackFull) lastBlocks = nr.blocks
+                return nr
+            }
+            android.util.Log.w("PpOcr", "native failed, falling back to python: ${nr.reason}")
+        }
         val png = File(ctx.cacheDir, "ppocr6-${System.currentTimeMillis()}.png")
         runCatching { png.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
             .onFailure { return Result(false, reason = "write png failed: ${it.message}") }
@@ -308,7 +349,25 @@ object PpOcr {
         useCache: Boolean = true, ifChanged: Boolean = false, trackFull: Boolean = true,
     ): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
-        if (!ready(ctx)) return Result(false, unavailable = true, reason = "python/onnxruntime not installed (call /ocr?engine=ppocr6&ensure=1)")
+        // v2.9.78：原生推理（PNG 直接解码，无需 python）
+        if (PpOcrNative.available(ctx)) {
+            val nHash = if (useCache) fileHash(png) else 0L
+            if (useCache) {
+                cache[tier]?.let { c ->
+                    if (c.hash == nHash && (ifChanged || System.currentTimeMillis() - c.at <= 5_000L)) {
+                        return Result(true, blocks = c.blocks, costMs = 0L, cached = true, changed = false)
+                    }
+                }
+            }
+            val nr = PpOcrNative.recognizeFile(ctx, png, tier)
+            if (nr.ok) {
+                if (useCache) cache[tier] = CacheEntry(nHash, System.currentTimeMillis(), nr.blocks)
+                if (trackFull) lastBlocks = nr.blocks
+                return nr
+            }
+            android.util.Log.w("PpOcr", "native file failed, falling back to python: ${nr.reason}")
+        }
+        if (!pythonReady(ctx)) return Result(false, unavailable = true, reason = "python/onnxruntime not installed (call /ocr?engine=ppocr6&ensure=1)")
         if (!isTierDeployed(ctx, tier)) {
             return Result(false, unavailable = true, reason = "models for tier '$tier' missing (call /ocr?engine=ppocr6&download=$tier)")
         }

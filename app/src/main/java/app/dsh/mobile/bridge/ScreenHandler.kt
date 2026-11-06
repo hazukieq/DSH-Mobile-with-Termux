@@ -18,6 +18,7 @@ import app.dsh.mobile.OrientationMode
 import app.dsh.mobile.OrientationPrefs
 import app.dsh.mobile.R
 import app.dsh.mobile.PpOcr
+import app.dsh.mobile.PpOcrNative
 import app.dsh.mobile.ScreenOcr
 import app.dsh.mobile.StatusOverlay
 import org.json.JSONArray
@@ -333,7 +334,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             )
         }
         // 2) 观测：同一屏的 OCR 文本块
-        val shot = svc.screenshotBase64()
+        val shot = svc.screenshotBase64NoFlash()
             ?: return 503 to """{"ok":false,"error":"screenshot_failed","reason":"accessibility screenshot unavailable"}"""
         val bw = shot.first
         val bh = shot.second
@@ -826,10 +827,25 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 list.put(JSONObject().put("tier", t).put("deployed", PpOcr.isTierDeployed(ctx, t))
                     .put("sizes", JSONObject(PpOcr.tierSizes(ctx, t).toMap())))
             }
-            return 200 to JSONObject().put("ok", true).put("tiers", list).toString()
+            return 200 to JSONObject().put("ok", true).put("tiers", list)
+                .put("runtime", if (PpOcrNative.available(ctx)) "onnxruntime-android" else "termux-python")
+                .put("native", PpOcrNative.available(ctx)).toString()
         }
         // v1.9.4：装 OCR 依赖不需要无障碍（只需 pkg/context），放在 svc 判空之前。
         if (params["engine"]?.lowercase() == "ppocr6" && params["ensure"] in listOf("1", "true", "yes")) {
+            // v2.9.78：模型随包 + 内置 onnxruntime-android 已能直接推理，python 运行时不再是必需项。
+            if (PpOcrNative.available(ctx) && params["legacy"] !in listOf("1", "true", "yes")) {
+                return 200 to JSONObject()
+                    .put("ok", true)
+                    .put("engine", "ppocr6")
+                    .put("deps", false)
+                    .put("native", true)
+                    .put("runtime", "onnxruntime-android")
+                    .put("deployed", PpOcr.deployed(ctx))
+                    .put("tiers", JSONObject().put("tiny", PpOcr.isTierDeployed(ctx, "tiny")))
+                    .put("hint", "native runtime in use: python/onnxruntime install is not needed (pass &legacy=1 to install the old termux-python path)")
+                    .toString()
+            }
             val err = PpOcr.ensureDeps(ctx)
             if (err != null) {
                 return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
@@ -844,6 +860,30 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 .put("realBinding", PpOcr.realBindingReady(ctx))
                 .put("hint", "deps installed; OCR itself still needs the accessibility screenshot (or call /a11y/enable)")
                 .toString()
+        }
+        // 回归/取证用：直接识别一张已存在的 PNG（不经截图），并可临时覆盖检测输入上限。
+        // 仅本机 bridge 可达（127.0.0.1 + token），用于「同一张图 python vs native」对照。
+        if (params["engine"]?.lowercase() == "ppocr6" && params["file"] != null) {
+            params["detmax"]?.toIntOrNull()?.let { PpOcrNative.detMaxSide = it }
+            val f = java.io.File(params["file"]!!)
+            if (!f.isFile) {
+                return 400 to JSONObject().put("ok", false).put("reason", "file not found: ${f.absolutePath}").toString()
+            }
+            val r = PpOcr.recognizeFile(ctx, f, tier, useCache = false)
+            val arr = JSONArray()
+            r.blocks.forEach { b ->
+                arr.put(JSONObject().apply {
+                    put("text", b.text); put("x", b.cx); put("y", b.cy)
+                    put("left", b.left); put("top", b.top); put("right", b.right); put("bottom", b.bottom)
+                    put("conf", b.conf)
+                })
+            }
+            return if (r.ok) 200 to JSONObject().put("ok", true).put("engine", "ppocr6-$tier")
+                .put("via", "file").put("file", f.absolutePath)
+                .put("runtime", if (PpOcrNative.available(ctx)) "onnxruntime-android" else "termux-python")
+                .put("detMaxSide", PpOcrNative.detMaxSide)
+                .put("costMs", r.costMs).put("lines", r.blocks.size).put("blocks", arr).toString()
+            else 503 to JSONObject().put("ok", false).put("reason", r.reason).toString()
         }
         val svc = DshAccessibilityService.instance
         if (svc == null) {
@@ -890,10 +930,10 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             if (!PpOcr.ready(ctx)) {
                 return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
                     .put("unavailable", true)
-                    .put("reason", "ppocr6 deps missing: run /ocr?engine=ppocr6&ensure=1 (installs python + onnxruntime)")
+                    .put("reason", "ppocr6 models/runtime missing: models ship with the APK; if a tier was never downloaded use /ocr?engine=ppocr6&download=tiny|medium")
                     .put("deployed", PpOcr.deployed(svc)).toString()
             }
-            val shot = svc.screenshotBase64()
+            val shot = svc.screenshotBase64NoFlash()
                 ?: return 503 to """{"ok":false,"error":"screenshot_failed","reason":"accessibility screenshot unavailable"}"""
             val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -917,6 +957,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 })
             }
             return if (r.ok) 200 to JSONObject().put("ok", true).put("engine", "ppocr6-$tier")
+                .put("runtime", if (PpOcrNative.available(ctx)) "onnxruntime-android" else "termux-python")
                 .put("costMs", r.costMs).put("cached", r.cached).put("changed", r.changed)
                 .apply { r.region?.let { rg -> put("region", JSONArray().put(rg.left).put(rg.top).put(rg.right).put(rg.bottom)) } }
                 .put("lines", r.blocks.size).put("blocks", arr).toString()
@@ -1230,12 +1271,12 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             val boxes = ArrayList<Box>()
             val enginePref = params["engine"]?.lowercase()
             val tier = (params["tier"] ?: "tiny").lowercase()
-            // v2.1.6：默认走 PP-OCRv6 的区域增量（region=1），agent 无感享受增量；
-            // engine=mlkit 可强制 ML Kit，region=0 关闭增量。
-            val usePp = enginePref == "ppocr6" ||
-                (enginePref == null && PpOcr.ready(ctx) && PpOcr.isTierDeployed(ctx, tier))
+            // v2.9.78：PP-OCR 现在能原生跑（不再依赖 python），但整屏 det+rec 约 1.2s，是 ML Kit 的
+            // 4 倍；点击链路是热路径，所以**保持 ML Kit 为默认**，只在显式 engine=ppocr6 时用 PP-OCR
+            // （要精度/中文细节时由调用方点名）。
+            val usePp = enginePref == "ppocr6"
             if (usePp) {
-                val shot = runCatching { svc.screenshotBase64() }.getOrNull()
+                val shot = runCatching { svc.screenshotBase64NoFlash() }.getOrNull()
                 if (shot != null) {
                     val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
                     val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)

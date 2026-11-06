@@ -113,3 +113,17 @@ curl -s -H "X-DSH-Token: $TOK" 'http://127.0.0.1:3083/log?n=20' | grep prefetch
   预计单次降到 300–600ms；或用已内置的 `onnxruntime-android`（`com.microsoft.onnxruntime:onnxruntime-android:1.31.1`，
   `ScreenHandler` 的图标模型 `iconSession` 正在用）在 Kotlin 里直接跑 det/rec，彻底去掉 python 依赖，
   代价是 DB 后处理 + CTC 解码约 600 行。
+
+---
+
+## 9. 后续（2.9.78 / 2.9.79 已落地）
+
+Python 运行时不再是必需项：`app/src/main/java/app/dsh/mobile/PpOcrNative.kt` 用 APK 里已有的
+`onnxruntime-android` 直接跑 det/rec，`PpOcr.ready()` 因此恒为 true（无需 python）。
+本报告的 ensure 步骤退化为**可选回退**（`&legacy=1` 才会装包）。
+
+- 精度：同图对照 python，框位中位差 0 px、28/29 在 15 px 内；
+- 速度：整屏 1.05–1.31 s（python 路径 2.2–2.4 s，脚本直跑 1.56 s）；
+- 进程：native 调用期间 `python3`/`ppocr6` 进程数为 0。
+
+详见 `docs/qa/ppocr-native-report.md`。

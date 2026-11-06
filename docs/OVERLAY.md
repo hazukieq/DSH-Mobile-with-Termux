@@ -305,3 +305,34 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 
 实测（643）：静置 / prefetch 高压 / `frame-wait` 3 轮 / `/ocr` 四条路径 **0 次窗口状态跳变、0 次无谓隐藏**；
 仅显式 `/screenshot`（1 次，2.32s，截图成品中悬浮窗区域为纯白、标准差 0）与 `/act`（1 次，0.72s）各隐藏一次。
+
+### 3.r 2.9.79：连 OCR/校准类截图也免闪 —— 「需要干净画面」不再等于「藏悬浮窗」
+
+2.9.79 之前剩下的闪点只有一个来源：**显式截图类调用**还在用 `screenshotBase64()`（默认
+`avoidOverlay=true` → 隐藏 2.3s）。现在显式截图默认走 `screenshotBase64NoFlash()`
+（composite：`takeScreenshotOfWindow` 逐窗合成，见 §3.s），只有 `?flash=1` 才回旧路。
+
+调用点清单（`bridge/ScreenHandler.kt`）：
+
+| 位置 | 用途 | 现状 |
+|---|---|---|
+| `:1125` 附近 | `/screenshot` 默认 | `screenshotBase64NoFlash()`（composite） |
+| `:1127` | `/screenshot?flash=1`（负对照/需要完整画面） | `screenshotBase64()` —— **唯一的避让入口** |
+| `:337` | `/calib`（OCR 框 ↔ a11y 真值对齐） | `screenshotBase64NoFlash()` |
+| `:936` | `/ocr?engine=ppocr6` 主路径 | `screenshotBase64NoFlash()` |
+| `:1279` | 点击链路（`/act` 里的 OCR 定位） | `screenshotBase64NoFlash()` |
+
+**硬规则**：新增任何「截一张图给 OCR/模型看」的代码，一律用 `screenshotBase64NoFlash()`；
+只有「要拿干净画面做像素级证据」这一种场景才允许 `?flash=1` 那种避让路径。
+
+实测（650，每次操作期间 10 次 `dumpsys window windows` 采样）：
+
+| 操作 | 悬浮窗可见 |
+|---|---|
+| `/screenshot`（composite） | 10/10 `HAS_DRAWN` |
+| `/screenshot?flash=1`（负对照） | 1/10（9 次 `NO_SURFACE`） |
+| `/ocr?engine=ppocr6`（native PP-OCR，改前会隐藏 2.3s） | **10/10** |
+| `/ocr`（ML Kit） | 10/10 |
+| `/calib` | 12/12 |
+
+四路判据边采样边跑 3 次 native OCR：**475 采样点全 OK**（GONE/NO_CONTENT/MOVED/STALE/RECREATED 全 0）。
