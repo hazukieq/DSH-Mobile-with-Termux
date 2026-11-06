@@ -67,8 +67,25 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 var lines: MutableList<Pair<String, android.graphics.Rect>>? = null
 
                 val nowMs = System.currentTimeMillis()
-                val ppocrWanted = PpOcr.deployed(svc) && PpOcr.python(svc).isFile &&
-                    nowMs > ppocr6BrokenUntil
+
+                // v2.9.77 顺序反转：prefetch 先走内置 ML Kit（~300ms），PP-OCR 只作兜底。
+                // 实测（645，deps 装好后）：ppocr6-tiny 每次 prefetch 需要 2.8–4.1s——因为它
+                // 每次都新起 python 进程 + 重新加载 det/rec 两个 onnx 模型，而 prefetch 是
+                // 「每个 HTTP 请求预热一次」的高频路径，用 PP-OCR 会把 CPU 烧满还赶不上下一帧。
+                // PP-OCR 精度更好，但那是**显式** `/ocr?engine=ppocr6` 才需要的，不该进预热。
+                val r = app.dsh.mobile.ScreenOcr.recognize(svc, force = false)
+                // 用整屏尺寸（displayMetrics 是去掉导航栏的可用区，坐标会差一截）
+                val (rw, rh) = svc.realScreenSize()
+                w = rw
+                h = rh
+                engine = if (r.unavailable) "mlkit(unavailable)" else "mlkit"
+                lines = r.blocks.mapTo(ArrayList()) {
+                    it.text to android.graphics.Rect(it.left, it.top, it.right, it.bottom)
+                }
+
+                // ML Kit 不可用/零结果时才回退 PP-OCR（慢，但至少能出字）
+                val ppocrWanted = (lines == null || lines!!.isEmpty()) &&
+                    PpOcr.deployed(svc) && PpOcr.python(svc).isFile && nowMs > ppocr6BrokenUntil
                 if (ppocrWanted) {
                     val shot = svc.screenshotBase64(2500L, avoidOverlay = false)
                     val bmp = shot?.let {
@@ -76,32 +93,20 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                         android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size)
                     }
                     if (shot != null && bmp != null) {
-                        val r = PpOcr.recognize(svc, bmp, tier, useCache = true, regionOnly = false)
+                        val pr = PpOcr.recognize(svc, bmp, tier, useCache = true, regionOnly = false)
                         bmp.recycle()
-                        if (r.ok && r.blocks.isNotEmpty()) {
+                        if (pr.ok && pr.blocks.isNotEmpty()) {
                             w = shot.first
                             h = shot.second
                             engine = "ppocr6-$tier"
-                            lines = r.blocks.mapTo(ArrayList()) {
+                            lines = pr.blocks.mapTo(ArrayList()) {
                                 it.text to android.graphics.Rect(it.left, it.top, it.right, it.bottom)
                             }
                         } else {
                             ppocr6BrokenUntil = nowMs + 5 * 60_000L
                             app.dsh.mobile.DshLog.d("prefetch",
-                                "ppocr6 unusable (${r.reason.ifBlank { "empty result" }}) — mlkit for 5min")
+                                "ppocr6 unusable (${pr.reason.ifBlank { "empty result" }}) — mlkit for 5min")
                         }
-                    }
-                }
-                if (lines == null) {
-                    // 内置 ML Kit：随 APK 分发、不依赖 python/网络；同屏结果缓存 3s
-                    val r = app.dsh.mobile.ScreenOcr.recognize(svc, force = false)
-                    // 用整屏尺寸（displayMetrics 是去掉导航栏的可用区，坐标会差一截）
-                    val (rw, rh) = svc.realScreenSize()
-                    w = rw
-                    h = rh
-                    engine = if (r.unavailable) "mlkit(unavailable)" else "mlkit"
-                    lines = r.blocks.mapTo(ArrayList()) {
-                        it.text to android.graphics.Rect(it.left, it.top, it.right, it.bottom)
                     }
                 }
 
