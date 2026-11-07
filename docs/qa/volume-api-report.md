@@ -118,6 +118,39 @@
 `{"openPanel":true}` 在该 ROM 上打开的是「提示音和振动」底部面板（不是滑杆面板）——可用于铃声/振动相关操作，
 **不适合**当媒体音量兜底；媒体音量兜底建议 `POST /media/play`（占媒体焦点）后重试，或让用户按一次音量键。
 
+### 4.4 为什么「之前测试时可以调节」——时间线证据
+
+同一版本（670）、同一进程（pid 不变）、同一前台（MainActivity），`dumpsys audio` 的事件日志把两种结果分得很干净：
+
+| 时间段 | 事件日志 | 结果 |
+|---|---|---|
+| 01:04:12 – 01:05:36 | `setStreamVolume(... index:80 oldIndex:60) from com.termux` **紧跟** `sending VOLUME_CHANGED stream:STREAM_MUSIC index:80` | ✅ 真的生效（连续 11 次） |
+| 01:06:01 起 | `setStreamVolume(... oldIndex:106) from com.termux`，**没有** `sending VOLUME_CHANGED` | ❌ 调用到达 AudioService，被丢弃 |
+
+即：**不是我们代码的问题，也不是「随机抽风」——是 ROM 侧把媒体流写入在应用前丢掉了**，且丢的时候连日志都不打。
+
+已逐项排除（都在现场做过对照）：
+
+| 怀疑项 | 实测 | 结论 |
+|---|---|---|
+| 权限缺失 | `dumpsys package com.termux` → `MODIFY_AUDIO_SETTINGS: granted=true` | 排除 |
+| DND / 铃声模式 | `zen_mode=ZEN_MODE_OFF`；`ringer:normal/vibrate` 都成功 | 排除 |
+| 「应用独立音量」`app_volume_adjust_individual` | 1→0→1 切换 | 排除 |
+| 前台 Activity / 应用前后台 | MainActivity、TerminalActivity 都试过 | 排除 |
+| 音频焦点 / 正在播放 | 用 `/media/play` 播 3 秒音后立刻写 | 排除 |
+| **别的 App 占着媒体会话** | 发现 `tv.danmaku.bili` `state=PLAYING` → `am force-stop tv.danmaku.bili` 后重试 | 排除 |
+| 屏幕/锁屏 | `mWakefulness=Awake`、`mScreenOn=true` | 排除 |
+| uid 不是我们 | `adb shell cmd media_session volume --stream 3 --set 60`（uid 2000）同样无效 | 排除（不是 app 身份问题） |
+| 硬件音量键 | `input keyevent 24/25` 永远有效 | 说明系统通路本身正常 |
+
+**唯一还能复现的规律：重装/升级 APK 之后会短暂恢复。**
+- 第 1 次重装后：连写 11 次全部 `changed:true`（t+0s … t+72s），**t+80s 起全部失败**；
+- 紧接第 2 次重装后：同样条件 16 次连写 **0/16 成功**。
+
+⇒ 结论：**「之前能调」= 恰好落在重装后的恢复窗口里**（窗口约 1–2 分钟、且不是每次都出现）；窗口关闭后同一进程、同一前台也写不进去。ROM 内部状态机（OriginOS 闭源）无法用公开 API 控制，本仓库只能如实标记 `changed` / `blocked_by_rom`。
+
+附带证据：该 ROM 的 `dumpsys audio` 里 `STREAM_ALARM` 显示 `Min: 0 w/o perm:29` —— 说明 vivo 在 AudioService 里按「调用方有没有某种权限」做了分档，这正是第三方写入被差别对待的痕迹。
+
 ---
 
 ## 5. agent 侧使用建议
