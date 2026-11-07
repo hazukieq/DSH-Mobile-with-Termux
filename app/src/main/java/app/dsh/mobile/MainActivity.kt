@@ -523,9 +523,19 @@ class MainActivity : Activity() {
         loadLocalUrl(url)
     }
 
+    @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        // WebView 有历史则先回退，保持类原生浏览体验
-        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
+        // 1) WebView 有历史 → 先回退，保持类原生浏览体验
+        if (webView.canGoBack()) {
+            webView.goBack()
+            return
+        }
+        // 2) 没有网页历史 → 退到桌面（后台），**不 finish、不杀进程**。
+        //    旧实现走 super.onBackPressed() = finish()：Activity 销毁后 WebView 也被回收，
+        //    再从桌面点进来要重新建 WebView + 重新加载整个 SPA + 重连引擎（用户实测「又从头加载」）。
+        //    moveTaskToBack 只把任务退到后台，进程/WebView/会话状态全保留，回来即热。
+        Log.i("MainActivity", "back at web root: moveTaskToBack instead of finish")
+        moveTaskToBack(true)
     }
 
     /**

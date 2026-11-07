@@ -48,8 +48,17 @@ restart: the engine will stop/start by itself; do not run another restart
 - 引擎每次启动生成新 token，supervisor 从本次启动的 stdout/log 提取 `dsh web: …?token=…`；
 - `MainActivity` 检测 URL 变化后清 cookie/缓存并加载新地址；
 - **返回栈同时清空**：重启后第一次 `onPageFinished` 会 `clearHistory()`，否则按 BACK 会退回上一个 token
-  的引擎页或预览页（那些页面连的是已死的引擎，只有白屏）；此时按 BACK 直接退出应用；
+  的引擎页或预览页（那些页面连的是已死的引擎，只有白屏）；清空后网页没有历史时 BACK 退到桌面（见 §3.1）；
 - 若 WebView 显示 `ERR_CONNECTION_REFUSED`，先确认受管引擎是否健康，而不是反复点重启。
+
+### 3.1 原生返回键（2.9.97 / 668 起）
+
+- `webView.canGoBack()` 为真 → `goBack()`（先回上一页）；
+- 否则 → `moveTaskToBack(true)`：**App 退到桌面，不 `finish()`、不杀进程**。旧实现会销毁 Activity，
+  WebView 随之回收，再从桌面进来要重建 WebView + 重载整个 SPA（用户观感「又从头加载」）。
+- 实测（vivo / Android 17）：BACK 后焦点变桌面、`pidof com.termux` 不变，再进 App 整屏像素差 0.02%。
+- 本 App 的 SPA 是状态驱动、不写 URL/hash（打开会话后地址仍是 `/`），所以 `canGoBack()` 实际基本恒为 false；
+  「回会话列表」是网页左上角 `←` 的职责，不是系统返回键的。
 
 ## 4. Agent 应该怎么做
 

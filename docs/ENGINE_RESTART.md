@@ -48,8 +48,30 @@ restart: the engine will stop/start by itself; do not run another restart
 - 引擎每次启动生成新 token，supervisor 从本次启动的 stdout/log 提取 `dsh web: …?token=…`；
 - `MainActivity` 检测 URL 变化后清 cookie/缓存并加载新地址；
 - **返回栈同时清空**：重启后第一次 `onPageFinished` 会 `clearHistory()`，否则按 BACK 会退回上一个 token
-  的引擎页或预览页（那些页面连的是已死的引擎，只有白屏）；此时按 BACK 直接退出应用；
+  的引擎页或预览页（那些页面连的是已死的引擎，只有白屏）；清空后网页没有可回退的历史时，BACK 的行为见 §3.1；
 - 若 WebView 显示 `ERR_CONNECTION_REFUSED`，先确认受管引擎是否健康，而不是反复点重启。
+
+### 3.1 原生返回键（2.9.97 / 668 起）
+
+Android 的返回键/返回手势只做两件事，**都不销毁 App**：
+
+| 条件 | 行为 | 理由 |
+|---|---|---|
+| `webView.canGoBack()` | `webView.goBack()` | 类原生浏览体验：先回上一页 |
+| 没有网页历史 | `moveTaskToBack(true)`：App 退到桌面 | 保住热状态 |
+
+旧实现（≤2.9.96）第二分支走 `super.onBackPressed()` = `finish()`：Activity 被销毁，WebView 跟着回收，
+再从桌面点进来要重新建 WebView、重新加载整个 SPA、重新连引擎——用户看到的是「又从头加载一遍」。
+
+`moveTaskToBack` 只把任务退到后台：进程、WebView、滚动位置、当前会话全保留。真机实测
+（vivo V2520A / Android 17，`input keyevent 4`）：焦点从 `MainActivity` 变为 `com.bbk.launcher2`，
+`pidof com.termux` 前后都是 26416（进程未重启），日志 `I/MainActivity: back at web root: moveTaskToBack instead of finish`；
+再从桌面启动，整屏像素差 `0.02%`（只有状态栏时钟/电量变化），即**没有重新加载**。
+
+注意：本 App 的 SPA 是**状态驱动、不写 URL/hash**（`/json` 里打开会话后地址仍是 `http://127.0.0.1:3080/`），
+所以 `canGoBack()` 在实际使用中基本恒为 false；回到「会话列表」是网页内部左上角 `←` 的职责，不是系统返回键的。
+若将来需要「返回 = 回会话列表」，应让网页侧注册历史（`history.pushState`）或由 App 调 CDP 点那个箭头，
+不要把状态塞进 `onBackPressed` 里猜。
 
 ## 4. Agent 应该怎么做
 
