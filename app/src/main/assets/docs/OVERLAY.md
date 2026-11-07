@@ -61,11 +61,13 @@
 8. **颜色只走 `tintDots()`**：球态点、展开态图标都由它上色，避免两处颜色不一致。
 6. **不要用 margin 魔数做居中**：球态靠 `layout_gravity=center`，展开态靠行内 `layout_gravity` 与固定 `layout_marginTop`（图标对齐首行）。
 7. **绝不 removeView/addView 来「改外观」**：摘挂窗口会重建 surface，用户看到的就是「一闪一闪」。
-   - 截图/读屏避让：改成 `root.visibility = GONE`（不参与绘制、命中测试、无障碍树，窗口不动），结束后 VISIBLE。
+   - 截图/读屏现在**根本不碰窗口**（见 §3.s 窗口合成截图）；只有回退路径才用 `INVISIBLE` 躲一下。
    - 档位切换：只 `safeUpdateLayout(wm, view, params)` + `requestLayout()`。
    - 例外只有一种：窗口首次创建（`show()`）时 `addView` 一次。
 8. **窗口初值必须是「折叠球尺寸」**：用 `WRAP_CONTENT` 初始化时，首帧会按 XML 自然尺寸（实测 178×79 横条）画出来再变成 99×99 → 每次显示都闪一下。
-9. **展开态整张卡片可点，但正文滚动优先**：`root / statusRow / statusTv / statusScroll / footRow / a11yText / ballDot / elapsedText` 都挂 `collapseToBall()`；ScrollView 仍负责滚动（不滚动的点击视为「收起」）。不要为了「只让图标可点」而把其它子 View 的 clickable 关掉——用户会点空白处然后说「点不动」。
+9. **展开态只有状态圆点收起，正文空白不收起**：`overlayDot` 绑 `collapseToBall()`（热区外扩 12dp）；
+   root 的点击只在「档位说展开、实际渲染是球」这种脱钩状态下自愈成展开（见 §3.aa）。正文区交给 ScrollView。
+   这样设计是为了**防误触**：卡片上滑动/点正文时不会被判成「收起」。
 
 ### 3.x 两条硬不变量（2026-11 踩过）
 
@@ -77,7 +79,63 @@
 
 
 
-### 3.y 截图 / 读屏时怎么让悬浮窗不出现在图里（现行实现：**只隐藏，不摘窗口**）
+### 3.y 截图避让：2.9.72 及以前的回退路径（现行见 §3.s）
+
+### 3.s 截图不再需要「藏悬浮窗」（2.9.75 起：窗口合成截图，零闪烁）
+
+> **现行机制（2.9.75 / 2.9.79 起）**：`/screenshot`、`/ocr`、`/calib`、`/frame-*`、`/act` 步内截图一律走
+> `screenshotBase64NoFlash()` → `screenshotCompositeBase64()`：用 `takeScreenshotOfWindow(windowId)`
+> 逐个抓「目标 App + 输入法 + 状态栏」等窗口，再按 `boundsInScreen` 贴回整屏画布。
+> **自己的悬浮窗按 bounds 精确排除，窗口本身既不隐藏也不重建** ⇒ 截图期间球不会消失。
+
+- 回执带 `via`：`composite`（正常）/ `window`（单窗回退）/ `display`（回退，会躲藏窗口）/ `display-forced`（`?flash=1` 取证用）。
+- 回执同时带 `capturedAt`（毫秒时间戳）与 `latencyMs`——判断「这张图是不是动作之后拍的」看 `capturedAt`，不要靠猜。
+- 三条硬规则：
+  1. **排除自己只能按 bounds 比对**（`StatusOverlay.currentFrameRect()`，逐边 ±2px）：主 WebView 的包名也是
+     `com.termux`，按包名排除会把自己的界面也切掉；按无障碍 type 排除也不可靠（2038 会报 `TYPE_SYSTEM`）。
+  2. `takeScreenshotOfWindow` 给的是**窗口本地坐标**，贴回整屏必须加 `boundsInScreen`。
+  3. 333ms 节流**按 windowId 分桶**，一次合成连拍多个窗口不会互相消耗额度。
+- 什么时候才需要 `?flash=1`（走旧的「藏窗口 + 整屏截图」）：只用于要**像素级证据**的取证（例如验证
+  「截图里确实没有悬浮窗」）。它会隐藏悬浮窗 2s 左右，**日常调用绝不要用**。
+- 已知限制：API < 34 无窗口截图；`FLAG_SECURE` 窗口截不到；半透明窗口背后是黑；一次最多合 6 个窗口。
+
+### 3.u 谁可以碰悬浮窗的可见性（2.9.72 起的调用分工）
+
+| 调用方 | 是否避让 | 原因 |
+|---|---|---|
+| 帧轮询 `Framer.captureAndDiff`（`/frame-wait`、`/frame-diff`、verify/settle） | ❌ 不避让 | 250–300ms 一次，避让=持续闪；改为在 64×64 差值图上**抹平悬浮窗矩形** |
+| 读屏/OCR（`/ocr`、点击链路、图标识别） | ❌ 不避让 | 同样高频；改为**丢弃落在悬浮窗矩形内的 block**（回执 `dropped=`） |
+| `screenshotBase64`（旧显式截图） | ✅ 避让（已基本被 §3.s 取代） | 只有回退路径才走到 |
+| 自动化注入（`/gesture`、点击/滑动/长按） | 仅**轨迹与悬浮窗相交**时避让 | 见 §3.p；相交才藏，藏完立刻恢复 |
+
+引用计数铁律：`hideRefs` 只由 `hideNow/showNow` 增减，**恢复失败必须回滚计数**（`mainSync` 返回 false =
+主线程 800ms 内没跑到，此时若不动计数，计数与真实可见性永久脱钩 → 「有时候再也点不到」）。
+`reassertVisible()` 在 `hideRefs > 0` 时必须让位（否则避让期间被强行捞回来 = 加倍闪）。
+
+### 3.p 端点语义：谁能碰悬浮窗可见性（2.9.91 起）
+
+**请求级避让已整条删除**。现在只有两种隐藏来源：
+
+1. **手势层**：注入手势的轨迹与悬浮窗矩形相交 → `beginOpsAvoidIfHit()`（`dispatchGestureAvoided` 包裹 6 处注入点）；
+2. **显式**：请求 body 里写 `"avoid":true`（或 `/act` 的 `hideOverlay`）。
+
+事故记忆（别再犯）：
+- `/act` 曾无条件避让 → agent 连续操作时占空比 35%，用户看到的就是「一直闪、点不到」；
+- `/overlay` 是 **agent 的思考进度推送通道**（`ProgressHub.update`，思考时每 ~250ms 一条），曾被列进避让表
+  → 30s 内隐藏 1159 次、3–4Hz 闪烁。它**绝不能进任何避让逻辑**。
+
+### 3.aa 「点不开」的两个真根因（2.9.95 定案）
+
+1. **档位与渲染态脱钩**：窗口重建（hide→show、2032↔2038 类型切换）后 `expandLevel` 被 `rememberedLevel`
+   恢复成 1，但视图按折叠态 inflate；若点击逻辑只看 `expandLevel`（空 onClick / `if (expandLevel == 1) return`），
+   点击就被吞掉 → **球永远点不开**。判据必须看**渲染态**（`statusRow.visibility`），并在脱钩时自愈。
+2. **展开卡片漏锚定**：锚定若只在「档位值变了」时做，重建后就不锚定；`x` 还用着球坐标（948），
+   720 宽卡片 588px 出屏 → 用户只看到一条竖边。**每次应用档位都要重新锚定，并夹取 `x` 使右边不出屏。**
+
+排查备忘（vivo 实测）：`debugState()` 的 `level` 只是字段，不代表当前外观；悬浮窗 `params.y` 与屏幕像素 y
+差 92px（`Frames: parent=[0,92]`），`adb shell input tap` 要用视觉坐标。
+
+### 3.y 截图 / 读屏时怎么让悬浮窗不出现在图里（历史实现，保留作对照）
 
 流程（`DshAccessibilityService.screenshotBase64` + `StatusOverlay.begin/endCaptureAvoid`）：
 
