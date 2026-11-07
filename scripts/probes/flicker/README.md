@@ -22,6 +22,27 @@ View.INVISIBLE 时 layer 会退出 `--list`、`has_surface=false`，但窗口块
 若四路数据里窗口一直没被识别到（比如判据不匹配），`analyze.py` 会直接输出「⛔ 判据不匹配，本次结论不可用」，
 不会给你一张全 GONE 的假表。
 
+## 免 root：bridge.sh（2.9.89 / 660 起）
+
+`layers/frames/capture` 依赖 root + SurfaceFlinger；**没有 root 的设备（vivo / OriginOS）只能用这一条**：
+
+```bash
+./bridge.sh token            # 自动取 bridge token（provider → /sdcard 兜底）
+./bridge.sh ping             # /diag → HTTP 200
+./bridge.sh state            # 版本 / pid / a11y / engine / 悬浮窗 debugState
+./bridge.sh overlay          # 自家悬浮窗窗口块（不依赖 root）
+./bridge.sh shot /tmp/x.png  # 截图（免闪 composite）落地
+./bridge.sh tap 540 1200     # 注入点击（走手势层避让，不会让悬浮窗闪）
+./bridge.sh get  /ocr        # 任意 GET
+./bridge.sh post /act '{"steps":[{"op":"skip"}]}'
+```
+
+token 来源优先级：`$DSH_TOKEN` → `content://com.termux.adb/token`（App 自带 provider，
+需要 2.9.89+，并受 `settings global dsh_adb_bridge` 开关控制）→ `/sdcard/dsh-token.txt`（老版本兜底）。
+取不到会打印可照做的手工步骤，不会静默走空值。
+
+`SERIAL` 未指定时自动取唯一在线的设备（多设备必须显式给）。
+
 ## 单独用
 
 ```bash
@@ -42,7 +63,8 @@ View.INVISIBLE 时 layer 会退出 `--list`、`has_surface=false`，但窗口块
 ## 目录
 
 ```
-lib.sh                 公共层（adb/root/push/discover/采样封装）
+lib.sh                 公共层（adb/root/push/discover/采样封装 + bridge token/forward/api）
+bridge.sh              免 root：bridge token / 请求 / 截图 / 注入
 layers.sh frames.sh window.sh input.sh logcat.sh record.sh capture.sh
 analyze.py             四路 CSV + logcat + 逐帧统计 → report.md
 selftest.sh            离线自测
@@ -55,4 +77,5 @@ testdata/              合成 fixture（无设备信息）
 
 - 只读：不注入输入、不装 APK、不 force-stop、不改设置。`logcat.sh clear` 会动系统状态，需显式 `--yes`。
 - 采样必须 root；`dumpsys SurfaceFlinger` 非 root 会裁掉 Output Layer / buffer 句柄 / reuse 计数。
+  无 root 设备改用 `bridge.sh`（bridge 通道本身只要 adb）+ `window.sh`（`dumpsys window` 不需要 root）。
 - 目标 layer id 每次装机都会变，脚本每次都重新 `discover`，不要写死。

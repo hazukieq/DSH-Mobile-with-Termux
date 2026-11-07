@@ -15,7 +15,11 @@
 set -uo pipefail
 
 ADB=${ADB:-adb}
-SERIAL=${SERIAL:-5f08bc20}
+# 未指定 SERIAL 时自动取唯一在线的设备（多设备必须显式指定）
+SERIAL=${SERIAL:-}
+if [ -z "$SERIAL" ]; then
+  SERIAL=$("$ADB" devices 2>/dev/null | awk 'NR>1 && $2=="device"{print $1}' | head -1)
+fi
 PKG=${PKG:-com.termux}
 EVID=${EVID:-/tmp/flicker-evidence}
 DEV=${DEV:-/data/local/tmp/flicker}
@@ -30,6 +34,66 @@ adb_() { "$ADB" -s "$SERIAL" "$@"; }
 sh_()  { "$ADB" -s "$SERIAL" shell "$@"; }
 # root：Magisk 上 `su -c '...'` 是实测可用的形式；不要用 `su 0`（本机 su 是 Magisk applet）
 root_() { "$ADB" -s "$SERIAL" shell "su -c '$*'"; }
+
+# ── bridge 通道（2.9.89 / 660 起自带 adb 豁免通道，免 root）───────────────────
+#
+# 真机调试 bridge（读屏/点击/截图/OCR）需要两样东西：token 与 127.0.0.1:3083 转发。
+# 以前只能「设置→终端→手打 cp $PREFIX/.bridge-token /sdcard」再读回来，四五步且不能脚本化。
+# 现在 App 自己暴露 ContentProvider：`content://<pkg>.adb/token`（DUMP 权限 + 全局开关）。
+#
+# 解析顺序：$DSH_TOKEN（外部已注入）→ provider → /sdcard/dsh-token.txt（老版本兜底）
+# 失败时会打印可照做的手工步骤，不会静默继续。
+
+dsh_bridge_port() { echo "${DSH_BRIDGE_PORT:-3083}"; }
+
+dsh_token() {
+  if [ -n "${DSH_TOKEN:-}" ]; then printf '%s' "$DSH_TOKEN"; return 0; fi
+  local tok
+  tok=$(sh_ content query --uri "content://$PKG.adb/token" 2>/dev/null \
+        | sed -n 's/.*key=token, value=\([0-9a-f]\{16,\}\).*/\1/p' | head -1 | tr -d '\r')
+  if [ -z "$tok" ]; then
+    tok=$(sh_ cat /sdcard/dsh-token.txt 2>/dev/null | tr -d '\r\n ')
+  fi
+  if [ -z "$tok" ]; then
+    warn "取不到 bridge token。二选一："
+    warn "  a) 升到 2.9.89+，用 provider：adb shell content query --uri content://$PKG.adb/token"
+    warn "  b) 老版本：设置→扩展→终端里执行"
+    warn "     cp \$PREFIX/.bridge-token /sdcard/dsh-token.txt"
+    warn "     然后重跑本脚本"
+    return 1
+  fi
+  printf '%s' "$tok"
+}
+
+# 确保 adb forward 指向本机 bridge 端口；返回 0 表示可用
+dsh_forward() {
+  local port; port=$(dsh_bridge_port)
+  "$ADB" -s "$SERIAL" forward "tcp:$port" "tcp:$port" >/dev/null 2>&1 || \
+    die "adb forward tcp:$port 失败"
+  return 0
+}
+
+# 带鉴权的 bridge 调用：dsh_api GET /diag | dsh_api POST /act '{"steps":[...]}'
+dsh_api() {
+  local method=$1 path=$2 body=${3:-}
+  local tok; tok=$(dsh_token) || return 1
+  local port; port=$(dsh_bridge_port)
+  dsh_forward
+  if [ "$method" = "POST" ]; then
+    curl -sS -m "${DSH_TIMEOUT:-60}" -H "X-DSH-Token: $tok" \
+         -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:$port$path"
+  else
+    curl -sS -m "${DSH_TIMEOUT:-60}" -H "X-DSH-Token: $tok" "http://127.0.0.1:$port$path"
+  fi
+}
+
+# 悬浮窗窗口块（不需要 root；vivo/Android 17 上是 `Window #0 Window{... type=2032}` 形态）
+overlay_block() {
+  sh_ dumpsys window windows 2>/dev/null | awk -v pkg="$PKG" '
+    $0 ~ "Window #[0-9]+ Window\\{" && index($0, pkg) { f=1 }
+    f { print }
+    f && /isVisible=/ { exit }'
+}
 
 flicker_env() {
   command -v "$ADB" >/dev/null || die "找不到 adb"
