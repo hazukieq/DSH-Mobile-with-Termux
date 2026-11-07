@@ -24,7 +24,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cmd=${1:-help}; shift || true
 
 case "$cmd" in
-  token)   dsh_token; echo ;;
+  token)   dsh_token || exit 1; echo ;;
   forward) dsh_forward; echo "forward tcp:$(dsh_bridge_port) ok" ;;
   ping)
     dsh_forward
