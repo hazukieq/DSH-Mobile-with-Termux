@@ -43,31 +43,34 @@ import app.dsh.mobile.engine.SceneMemory
 internal class Router(private val bridge: AgentBridge) {
 
     /**
-     * v2.9.90：**请求级避让全部取消**。
+     * **不存在「路径级避让表」，也不要再加回来。**
      *
-     * `/overlay` 不是「注入输入」，而是 agent 的**进度推送**（`ActionHandler.overlay` →
-     * `ProgressHub.update` / `setA11yAction`）。agent 思考时每 ~250ms 推一条，一旦它落进
-     * 这张表就变成 3–4Hz 的 hide(ops)/show(ops) 循环：真机 logcat 实测 30s 内
-     * `ops avoid: /overlay` 1154 次、`hide(ops)` 1159 次，窗口反复 INVISIBLE。
-     * 用户说的「还是在闪烁」就是它（2.9.86 把 /act 修掉后剩下的最后一条）。
+     * v2.9.91：上一版把 `OPS_AVOID_PATHS` 清成空集但保留了这张表本身——仍是隐患（有人看到空表
+     * 就会「顺手补两个」）。这里直接删掉机制，只留下显式 opt-in。
      *
-     * `/open/file`、`/open/folder`、`/open/share` 唤起系统选择器，请求内藏那几十毫秒毫无意义（选择器出现时请求早已返回）。
+     * 历史事故（两次，同一个错误）：
+     *   * `/act` 无差别避让 → agent 连续操作时 3Hz 闪烁（2.9.86 修）；
+     *   * `/overlay` 被当成「注入端点」→ 但它是 **agent 的思考进度推送通道**
+     *     （`ActionHandler.overlay` → `ProgressHub.update` / `setA11yAction`），思考时每 ~250ms
+     *     一条，于是每条进度都把窗口 INVISIBLE 一次：真机 30s 内 1154 次 `ops avoid: /overlay`。
      *
-     * 现在只剩两条避让通道：
-     *   1. **手势层**：真实注入的触摸轨迹与悬浮窗矩形相交才临时隐藏
-     *      （`DshAccessibilityService.dispatchGestureAvoided`）；
-     *   2. **显式要求**：请求体带 `"avoid": true`（调用方自己知道要整段藏）。
+     * 判断一个端点能不能碰悬浮窗可见性，只看**它会不会注入触摸**，不看名字：
+     *
+     * | 端点 | 性质 | 避让 |
+     * |---|---|---|
+     * | `/act` `/gesture` `/tap` `/tap-id` `/key` `/input` `/scroll-*` `/vision/tap` `/vision/drag` `/pick` `/loop/run` | 注入触摸 | **手势层判**（`DshAccessibilityService.dispatchGestureAvoided`） |
+     * | `/overlay` | 思考进度推送（250ms 级） | **否** |
+     * | `/screenshot` `/ocr` `/frame-wait` `/frame-diff` `/calib` | 截图/识别（已走免闪 composite） | **否** |
+     * | `/open/file` `/open/folder` `/open/share` `/launch` `/notify` `/say` | hand-off / 提示 | **否** |
+     *
+     * 唯一保留：调用方在 body 里显式写 `"avoid": true`（它自己知道为什么要整段藏）。
      */
-    private val OPS_AVOID_PATHS = emptySet<String>()
-
-    /** 只认显式 opt-in，避免再次出现「某个高频端点被误塞进避让表」的事故。 */
-    private fun wantsExplicitAvoid(method: String, body: String) =
+    private fun explicitAvoid(method: String, body: String) =
         method == "POST" && body.contains("\"avoid\":true")
 
     internal fun route(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
-        // 请求级避让已停用（见 OPS_AVOID_PATHS 注释）：正常请求不碰悬浮窗可见性，
-        // 只有调用方显式写 "avoid":true 才整段隐藏。
-        val avoid = method == "POST" && (path in OPS_AVOID_PATHS || wantsExplicitAvoid(method, body))
+        // 正常请求不碰悬浮窗可见性；只有调用方显式写 "avoid":true 才整段隐藏。
+        val avoid = explicitAvoid(method, body)
         // 诊断用：谁在让悬浮窗隐藏（vivo 实测出现过 3Hz 的 hide/show 循环，靠这条定位来源）
         if (avoid) Log.i("AgentBridge", "ops avoid: $path")
         if (avoid) runCatching { StatusOverlay.beginOpsAvoid() }

@@ -180,7 +180,7 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 
 | 层 | 旧 | 新 |
 |---|---|---|
-| `Router.route` | `POST /act` → 无条件 `beginOpsAvoid()` | 只对 `"/overlay"`, `"/open/file"`, `"/open/folder"`, `"/open/share"` 避让（改窗口自身 / 拉起系统选择器） |
+| `Router.route` | `POST /act` → 无条件 `beginOpsAvoid()` | **请求级避让整条删除**（2.9.91）：正常请求一律不碰悬浮窗可见性，只剩手势层 + 显式 `"avoid":true`。见 §3.p |
 | `DshAccessibilityService` | 直接 `dispatchGesture(...)` | 统一走 `dispatchGestureAvoided(...)`：`gestureBounds()`（所有 stroke 的 `path.computeBounds` 并集，±2px）→ `StatusOverlay.beginOpsAvoidIfHit(bounds)` → 相交才 `beginOpsAvoid()`，手势回调（或 1200ms 兜底）里 `endOpsAvoid()` |
 
 关键点：
@@ -336,7 +336,8 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 | `screenshotArgb(Framer / 帧轮询 / verify / settle)` | ❌ **不避让** | 只要「变没变」；悬浮窗矩形用 `Framer.maskOverlayRegion()` 抹平 |
 | `ScreenOcr` / prefetch / dump 图标识别 | ❌ **不避让** | 只要文字/图标；落在悬浮窗矩形里的结果直接剔掉 |
 | `screenshotBase64`（显式 `/screenshot`、视觉模型） | ✅ 避让 | 需要干净画面给用户/模型看 |
-| `beginOpsAvoid`（`/act`、`/batch`、`/pick`、`/overlay`、`/open/*`） | ✅ 避让 | 注入手势需要触摸穿透 |
+| `beginOpsAvoidIfHit`（手势层，`dispatchGestureAvoided` 调用） | ✅ 仅当注入轨迹与窗口相交 | 注入手势需要触摸穿透；不在轨迹上的点击一律不藏 |
+| `beginOpsAvoid`（显式 `"avoid":true` 或 `/act` 的 `hideOverlay:true`） | ✅ 调用方自选 | 批量动作期间怕被自己的卡片吃掉手势 |
 
 计数加固（否则「球没了 / 再也点不到」）：
 
@@ -380,48 +381,46 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 
 四路判据边采样边跑 3 次 native OCR：**475 采样点全 OK**（GONE/NO_CONTENT/MOVED/STALE/RECREATED 全 0）。
 
-## §3.p 请求级避让全部取消（2.9.90 / 661）
+## §3.p 端点语义：谁能碰悬浮窗可见性（2.9.91 / 662）
 
-### 症状
+> **这一节是唯一的权威表。** 改 Router / 加端点前先看它，不要凭端点名字猜。
 
-2.9.86 之后 `/act` 已经不避让了，但用户仍报「还是在闪烁」。真机 logcat：
+### 事故：两次踩同一个坑
 
-```text
-30s 内 `AgentBridge: ops avoid: /overlay` × 1154
-      `StatusOverlay: hide(ops): visibility=4` × 1159
-      `StatusOverlay: show(ops): visibility=0` × 1159
-```
-
-`/overlay` 是 **agent 的进度推送通道**（`ActionHandler.overlay` → `ProgressHub.update` /
-`setA11yAction`），思考时每 ~250ms 一条。它落在 `OPS_AVOID_PATHS` 里 ⇒ 每条进度都把窗口
-INVISIBLE 一次 ⇒ 3–4Hz 闪烁 + 那几十毫秒点不到。
-
-### 结论
-
-**任何「高频、非注入」的端点都不能进避让表。** 判断标准不是「它叫什么名字」，而是
-「它会不会注入触摸/改窗口可见性」：
-
-| 端点 | 性质 | 是否需要避让 |
+| 版本 | 错误 | 真机表现 |
 |---|---|---|
-| `/act`、`/gesture`、`/tap`、`/vision/*` | 注入触摸 | **手势层**判（轨迹与窗口相交才藏） |
-| `/overlay` | 进度推送，每 250ms | 否 |
-| `/open/*` | 唤起系统选择器，请求内藏几十 ms 无意义 | 否 |
-| `/screenshot`、`/ocr`、`/frame-wait` | 截图/识别，已走免闪 composite | 否 |
+| 2.9.72 及以前 | `POST /act` 无差别 `beginOpsAvoid()` | agent 连续操作 = 3Hz 闪烁，占空比 35%（40 采样 14 次不可见） |
+| 2.9.90 及以前 | `/overlay` 也在避让表里 | `/overlay` 是 **agent 的思考进度推送**（`ActionHandler.overlay` → `ProgressHub.update` / `setA11yAction`），思考时每 ~250ms 一条 ⇒ 每条进度都把窗口 INVISIBLE 一次：30s 内 1154 次 `ops avoid: /overlay`、1159 次 `hide(ops)` |
 
-### 现状（2.9.90）
+两次都不是「避让机制坏了」，而是**把不该避让的端点塞进了避让表**。更难看的是：`/overlay` 这件事
+在 `docs/A11Y-SCOPE.md` §5 里写着「更新/显示进度条不依赖 a11y」——文档早就说清它是进度通道，
+代码里的路径级避让表却把它当动作端点，两边各说各话，没人对账。
 
-- `Router.OPS_AVOID_PATHS` = 空集，`wantsExplicitAvoid()` 只认请求体里的 `"avoid":true`；
-- 手势层：`DshAccessibilityService.dispatchGestureAvoided` → `StatusOverlay.beginOpsAvoidIfHit`；
-- `/act` 的 `"hideOverlay":true` 仍可显式整批隐藏（复盘用途）。
+### 现在的规则（2.9.91 起，机制已删除）
 
-### 验证（661，vivo 10CG1C1M1H0021Z）
+**代码里不再存在「路径级避让表」**——`OPS_AVOID_PATHS` 整条删除（不是清空成空集，留着空表
+就会有人「顺手补两个」）。避让只剩两条通道：
+
+1. **手势层**：`DshAccessibilityService.dispatchGestureAvoided` → `StatusOverlay.beginOpsAvoidIfHit(bounds)`
+   —— 注入的触摸轨迹与悬浮窗矩形相交才藏，抬手立刻恢复。
+2. **显式 opt-in**：请求体带 `"avoid": true`（`Router.explicitAvoid`），或 `/act` 带 `"hideOverlay": true`。
+
+判断一个端点会不会碰可见性，只问一句：**它注入触摸吗？**
+
+| 端点 | 性质 | 避让 |
+|---|---|---|
+| `/act` `/gesture` `/tap` `/tap-id` `/key` `/input` `/scroll-*` `/vision/tap` `/vision/drag` `/pick` `/loop/run` | 注入触摸 | **手势层判**（轨迹相交才藏） |
+| `/overlay` | **思考进度推送**（250ms 级，高频） | **绝不** |
+| `/screenshot` `/ocr` `/frame-wait` `/frame-diff` `/calib` | 截图/识别，已走免闪 composite（§3.s） | **绝不** |
+| `/open/file` `/open/folder` `/open/share` `/launch` `/notify` `/say` | hand-off / 提示 | **绝不**（请求内藏几十 ms 毫无意义） |
+
+### 验证（662，vivo 10CG1C1M1H0021Z）
 
 | 场景 | 采样 | 隐藏 |
 |---|---|---|
 | `/overlay` 进度推送 ×40（250ms 间隔） | 40 | **0** |
-| `/screenshot` | 10 | 0 |
-| `/ocr` | 10 | 0 |
-| 注入 tap 压在球上 (1000,506) | 注入后 `level` 仍 =0（未展开，穿透生效） | — |
+| `/overlay` 结构化 `detail` 推送 ×24 | 24 | **0** |
+| `/screenshot` / `/ocr` | 10 / 10 | 0 / 0 |
+| 注入 tap 压在球上 `(1000,506)` | — | 球仍收起（避让 + 穿透生效） |
 
-`ops avoid` / `hide(ops)` 计数均为 0（修复前同场景 1154/1159）。
-
+`ops avoid` 与 `hide(ops)` 计数均为 **0**（2.9.90 之前同场景 1154 / 1159）。

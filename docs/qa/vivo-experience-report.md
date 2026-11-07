@@ -123,12 +123,18 @@ private fun dispatchGestureAvoided(g: GestureDescription, cb, h): Boolean {
   解析的，Router 读 body 时根本不知道会点到哪。
 - 节点级 `ACTION_CLICK` 不经过输入通道，**本来就不会被悬浮窗吞掉**，旧逻辑把它也避让了，纯属自伤。
 
-### 3.2 Router 只保留「改窗口自身 / 系统选择器」的避让
+### 3.2 Router 的请求级避让（已被 2.9.91 整条删除）
+
+2.9.86 当时保留的是下面这段——**其中 `/overlay` 是错的**（它是 agent 的思考进度推送，
+每 ~250ms 一条，等于 3–4Hz 闪烁，见 §5.5）：
 
 ```kotlin
+// 2.9.86（已废弃）
 private val OPS_AVOID_PATHS = setOf("/overlay", "/open/file", "/open/folder", "/open/share")
 val avoid = method == "POST" && path in OPS_AVOID_PATHS
 ```
+
+2.9.91 起机制删除，只剩手势层与显式 `"avoid":true`，见 `docs/OVERLAY.md` §3.p。
 
 ## 4. 验证（2.9.88 / 659，vivo 真机）
 
@@ -221,5 +227,5 @@ StatusOverlay: show(ops): visibility=0（1159 次）
 思考时每 ~250ms 一条；它被塞在 `OPS_AVOID_PATHS` 里 ⇒ 每条进度都把悬浮窗藏一次 ⇒
 3–4Hz 闪烁 + 期间点不到。
 
-修法：`OPS_AVOID_PATHS` 清空，只保留两条通道（手势轨迹相交、请求体 `"avoid":true` 显式 opt-in）。
+修法：`OPS_AVOID_PATHS` 机制**整条删除**（2.9.91/662，留空集会被人补回），只保留两条通道（手势轨迹相交、请求体 `"avoid":true` 显式 opt-in）。
 验证见 `docs/OVERLAY.md` §3.p；661 实测 40 次进度推送 0 次隐藏，截图/OCR 各 10 次 0 次隐藏。

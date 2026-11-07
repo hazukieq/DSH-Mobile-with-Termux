@@ -76,7 +76,7 @@ SAF/DocumentsProvider 文件访问、读写本 App 设置。
 | `GET /ocr` | 默认路径用无障碍截图做 OCR | `engine=ppocr6` 可走特权 `screencap`（Shizuku/root）；`ensure`/`download`/`models` 分支完全不需要 a11y |
 | `POST /wait-app` | 等**别的** App 的前台状态 | 目标是本 App 时走 Activity 生命周期，无需 a11y；等第三方才 503 `a11y_unavailable` |
 | `POST /memory/lookup`、`POST /memory/store` | 需要用当前屏幕算场景指纹 | body 带 `dump`（调用方自己给节点树）时完全不读屏；指纹里的包名可空 |
-| `POST /overlay` | `hide=true` 时顺手收掉悬浮窗 | 更新/显示进度条不依赖；`StatusOverlay.hide(svc)` 接受 null |
+| `POST /overlay` | `hide=true` 时顺手收掉悬浮窗 | **这是 agent 的思考进度推送通道**（`ProgressHub.update` / `setA11yAction`），思考时每 ~250ms 一条；更新/显示进度条完全不依赖 a11y，`StatusOverlay.hide(svc)` 接受 null。**因此它绝不能进任何「避让」逻辑**——否则每条进度都会让悬浮窗闪一下（真机事故见 `docs/OVERLAY.md` §3.p） |
 | `POST /activity` | 只影响回执里的 `bal_exempt.accessibility` 提示 | 启动走 `startActivity`，照常 200 |
 | `POST /open` | 只用于读跳转前后的前台包名做「是否真的切过去了」验证 | 服务关着仍 200，回执带 `hint` 说明未验证 |
 

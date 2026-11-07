@@ -144,7 +144,12 @@ haswin=1 vis=1 surf=1 draw=mDrawState=HAS_DRAWN  view=mViewVisibility=0x0   ← 
 | 7 | `StatusOverlay.kt` | `hideInternal()` 归零 `hideRefs` | 窗口被摘掉后计数不归零 → 此后每个 `showNow()` 只减到 1 就 return → **「有时候再也点不到（球没了）」** |
 | 8 | `StatusOverlay.kt` | `hideNow/showNow` 检查 `mainSync` 是否真的执行/生效，未生效则回滚计数 | `mainSync` 有 800ms 超时且静默返回，主线程忙（WebView 高负载）时计数与真实可见性脱钩 |
 
-显式截图（`/screenshot`、视觉模型）与自动化（`/act`、`/batch`、`/pick`、`/overlay`、`/open/*`）的避让**保持不变**：这两类场景要么需要干净画面，要么需要触摸穿透，避让是功能需求，用户也认可。
+显式截图（`/screenshot`、视觉模型）与自动化（`/act`、`/batch`、`/pick`）的避让**保持不变**：这两类场景要么需要干净画面，要么需要触摸穿透。
+
+> **勘误（2026-11-07）**：本节当时把 `/overlay`、`/open/*` 也算进「需要避让的自动化」，这是错的。
+> `/overlay` 是 agent 的**思考进度推送**（每 ~250ms 一条），放进避让表等于 3–4Hz 闪烁；
+> `/open/*` 藏那几十毫秒也毫无意义。两者已在 2.9.90/2.9.91 移出，机制（`OPS_AVOID_PATHS`）已删除。
+> 权威表见 `docs/OVERLAY.md` §3.p。
 
 ---
 
