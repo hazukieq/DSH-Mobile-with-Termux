@@ -143,6 +143,9 @@ class MainActivity : Activity() {
             runCatching {
                 app.dsh.mobile.service.EngineService.setUserExited(this, false)
                 (application as DshApp).supervisor.clearUserStop("user opened the app")
+                // v2.9.104：退出时被抑制的悬浮窗，用户重开 App 要立刻回来
+                // （否则要等无障碍看门狗 60s 心跳，用户以为"球没了"）。
+                if (StatusOverlay.resumeAfterExit()) StatusOverlay.show(this)
             }
         }
 
@@ -315,6 +318,7 @@ class MainActivity : Activity() {
                 android.util.Log.i("MainActivity", "user reopened app ($why): clearing userExited and starting engine")
                 EngineService.setUserExited(this, false)
                 (application as DshApp).supervisor.clearUserStop("user reopened the app ($why)")
+                if (StatusOverlay.resumeAfterExit()) StatusOverlay.show(this)
             }
         }
     }

@@ -85,6 +85,11 @@ object StatusOverlay {
     /** 展开档位：0=折叠(仅圆点) / 1=状态+麦克风 / 2=再加动作+会话列表 */
     @Volatile private var expandLevel = 0
     @Volatile private var hidden = false
+    /**
+     * 「窗口是被用户退出流程抑制掉的」而不是用户长按隐藏的。
+     * 2.9.104：退出后用户再打开 App，必须把球恢复回来；而长按隐藏是显式选择，不该被覆盖。
+     */
+    @Volatile private var hiddenByExit = false
     @Volatile private var rememberedLevel = 0
     /** 上一次应用过的档位：档位变化时窗口尺寸必须重建，否则 WMS 保留旧 frame。 */
     @Volatile private var lastAppliedLevel = -1
@@ -248,6 +253,13 @@ object StatusOverlay {
     }
 
     private fun startOverlay(ctx: Context, w: WindowManager, windowType: Int) {
+        // v2.9.104：用户已退出（通知栏「退出」/划掉任务）就别再把窗口挂回去。
+        // 退出后无障碍服务仍被系统绑着、进程还活着，各种保活/进度通路都会走到这里，
+        // 结果就是"App 已经销毁，悬浮球却还在"（用户反馈）。
+        if (runCatching { app.dsh.mobile.service.EngineService.userExited(ctx) }.getOrDefault(false)) {
+            Log.i(TAG, "overlay suppressed: user exited")
+            return
+        }
         main {
             if (root != null || hidden) return@main
             try {
@@ -415,15 +427,15 @@ object StatusOverlay {
             attachGesture(
                 view, p, ctx,
                 onClick = { if (statusRow?.visibility != View.VISIBLE) expandPanel() },
-                onLongPress = { hide(DshAccessibilityService.instance) },
                 scrollChild = sScroll,
             )
         } else {
-            // 折叠态：整颗球都能点/拖；长按 = 隐藏
+            // 折叠态：整颗球都能点/拖。
+            // v2.9.106（用户要求）：长按隐藏已彻底移除——它只会让人误触把球弄丢，
+            // 想隐藏请在设置里关掉「显示悬浮窗」。
             attachGesture(
                 view, p, ctx,
                 onClick = { expandPanel() },
-                onLongPress = { hide(DshAccessibilityService.instance) },
             )
         }
     }
@@ -447,7 +459,6 @@ object StatusOverlay {
         p: WindowManager.LayoutParams,
         ctx: Context,
         onClick: () -> Unit,
-        onLongPress: (() -> Unit)? = null,
         /**
          * 展开态传 statusScroll：手指落在「可滚动的正文区」里时**不吃事件**，
          * 交给 ScrollView 自己滚。不传的话根容器会把 DOWN 吞掉 → 正文滚不动。
@@ -510,10 +521,6 @@ object StatusOverlay {
                 MotionEvent.ACTION_CANCEL -> { dragging = false; true }
                 else -> false
             }
-        }
-        // 长按隐藏（View 自带的长按不会与拖动冲突：拖动会先触发 MOVE 取消长按）
-        if (onLongPress != null) {
-            target.setOnLongClickListener { onLongPress(); true }
         }
     }
 
@@ -818,7 +825,7 @@ object StatusOverlay {
             // 把 refs 减到 1 就 return，悬浮窗永久不再出现（用户报「有时候再也点不到」）。
             synchronized(refLock) { hideRefs = 0 }
             hidden = userHidden
-            Log.i(TAG, if (userHidden) "overlay hidden by user" else "overlay hidden (auto)")
+            Log.i(TAG, if (userHidden) "overlay hidden (sticky)" else "overlay hidden (auto)")
         }
     }
 
@@ -833,12 +840,27 @@ object StatusOverlay {
             expandLevel = 0
             autoExpanded = false
             hide(svc)
+            hiddenByExit = true
             Log.i(TAG, "overlay torn down (engine exited)")
         }
     }
 
     /** 用户隐藏后重新允许显示（引擎重启等场景调用） */
     fun resetHidden() { hidden = false }
+
+    /**
+     * 用户重新打开 App（MainActivity 已清掉 userExited）时调用：
+     * 把「退出流程抑制掉的窗口」恢复回来。
+     * 设置里关掉悬浮窗属于另一条路径（`setOverlayEnabled(false)`），不走这里。
+     * @return true 表示确实恢复了一次（调用方可以顺手 show）
+     */
+    fun resumeAfterExit(): Boolean {
+        if (!hiddenByExit) return false
+        hiddenByExit = false
+        hidden = false
+        Log.i(TAG, "overlay resumed after user exited")
+        return true
+    }
 
     // ── 显示/隐藏：唯一机制就是 view 级 visibility ─────────────────────────────
     // 铁律（用户定调 + 实测，别再动）：

@@ -14,7 +14,6 @@
 | --- | --- |
 | 点击（位移 < 10dp） | 折叠球 → 展开卡片；展开卡片（点图标/正文区）→ 收起 |
 | 拖动 | 移动窗口，松手吸附到最近屏幕边缘（竖屏左右、横屏左右；贴边实时读取屏幕尺寸） |
-| 长按 | 隐藏悬浮窗 |
 
 ## 2. 两种核心形态（尺寸稳定定宽，零尺寸跳变）
 
@@ -25,7 +24,7 @@
 - 尺寸：`COLLAPSED_BALL_DP = 36dp` 的正方形。
 - 内容：只有 `overlayBallDot`（14dp 圆点，`layout_gravity=center`），其余子 View 全部 GONE。
 - 圆点颜色：`tintDots()`（空闲灰 / 执行中蓝 / 完成红）。
-- 交互：点击展开卡片；拖动移位松手吸边；长按隐藏。
+- 交互：点击展开卡片；拖动移位松手吸边。**长按隐藏已于 2.9.106 移除**（用户要求：过时功能，只会误触把球弄丢）。
 
 ### 2.2 展开卡片（恒定定宽 240dp）
 
@@ -191,7 +190,7 @@
 - [ ] 长正文滚动到底部，最后一行可见。
 - [ ] 一轮对话结束，圆点变红；再次发消息变蓝。
 - [ ] 旋转屏幕 / 分屏后贴边仍然正确。
-- [ ] 长按能隐藏，隐藏后没有残留的常驻通知。
+- [ ] 长按**不再**隐藏窗口（2.9.106 起）；要隐藏请在设置里关掉「显示悬浮窗」。
 - [ ] **空闲态是自适应的**（宽度贴着「图标 + 空闲」，右边没有 240dp 空白；也不是 34dp 细条）。
 - [ ] **工作态是 240dp 定宽 + 92dp 固定滚动区**，正文长短不改变窗口高度。
 - [ ] 空闲 ↔ 工作切换时只看得到内容变化，**没有窗口重挂/闪白**（可通过 `[win] level=... 尺寸` 日志确认没有尺寸跳变或重挂）。
@@ -208,6 +207,29 @@
   （`warmup1`/`warmup2` 各打一行日志），再取真图。
 - **opsAvoid 去抖**：`beginOpsAvoid/endOpsAvoid` 400ms 内重复切换直接忽略（`opsAvoid on/off debounced`），
   避免每 250ms 翻一次导致状态栏/窗口抖动。
+
+### 3.ab 「App 彻底销毁后悬浮球还在」：退出即闭环（2.9.104 / 2.9.105 定案）
+
+- 现象：通知栏「退出」或划掉任务后，约 60s 悬浮球又出现；再次打开 App 时球可能不见。
+- 原因：无障碍服务被系统绑着 → 进程不死 → 60s 保活心跳无条件 `show()` 并重启引擎；
+  同时 `MainActivity.onDestroy` 的 `hideAuto()` 把 `hidden` 复位成 false，解开了退出抑制。
+- 修复：① 心跳判断 `EngineService.userExited()`，为真跳过引擎与悬浮窗；
+  ② `startOverlay()` 入口同样拦掉（日志 `overlay suppressed: user exited`）；
+  ③ `hiddenByExit` + `resumeAfterExit()`：只有"退出抑制"会在重开 App 时恢复（设置开关关闭不恢复）。
+- 真机（vivo / 2.9.105 / 676）：退出后 `root=null`；70s 仍为 null（日志 `keepalive: user exited, skip …`）；
+  重开 App → `overlay resumed after user exited`，球回到 `948,360 108x108`。
+- 硬规则：a11y 保活通路必须尊重 `userExited`；「退出抑制」与「设置开关关闭」是两种 hidden，语义不同。
+
+### 3.ac 2.9.106：长按隐藏已移除（用户要求）
+
+- 决策：悬浮球「长按 = 隐藏」是过时功能，且是误触把球弄丢的主要来源（用户原话「彻底移除…根本不需要」）。
+- 改动：`StatusOverlay.attachGesture()` 删掉 `onLongPress` 形参、`bindHandle()` 两处调用不再传长按、
+  折叠态/展开态都不再 `setOnLongClickListener`；`hideInternal()` 的日志改为
+  `overlay hidden (sticky)` / `overlay hidden (auto)`（不再有 "by user" 语义）。
+- 现在还能让悬浮窗消失的入口（仅两个，都是显式而非手势）：
+  1. 设置 → 「显示悬浮窗」开关关掉 → `DshAccessibilityService.setOverlayEnabled(false)` → `hide(svc)`；
+  2. 退出 App（通知栏「退出」/划掉任务）→ 引擎退出 → `teardown()`，见 §3.ab。
+- 回归清单新增一条：**长按不再隐藏窗口**（`input swipe x y x y 1500` 模拟长按，窗口应保持可见）。
 
 ### 3.z 为什么 OCR prefetch 绝不能摘悬浮窗（抖动 / flicker）
 

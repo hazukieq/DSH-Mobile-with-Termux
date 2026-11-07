@@ -14,7 +14,6 @@
 | --- | --- |
 | 点击（位移 < 10dp） | 折叠球 → 展开卡片；展开卡片（点图标/正文区）→ 收起 |
 | 拖动 | 移动窗口，松手吸附到最近屏幕边缘（竖屏左右、横屏左右；贴边实时读取屏幕尺寸） |
-| 长按 | 隐藏悬浮窗 |
 
 ## 2. 两种核心形态（尺寸稳定定宽，零尺寸跳变）
 
@@ -25,7 +24,7 @@
 - 尺寸：`COLLAPSED_BALL_DP = 36dp` 的正方形。
 - 内容：只有 `overlayBallDot`（14dp 圆点，`layout_gravity=center`），其余子 View 全部 GONE。
 - 圆点颜色：`tintDots()`（空闲灰 / 执行中蓝 / 完成红）。
-- 交互：点击展开卡片；拖动移位松手吸边；长按隐藏。
+- 交互：点击展开卡片；拖动移位松手吸边。**长按隐藏已于 2.9.106 移除**（用户要求：过时功能，只会误触把球弄丢）。
 
 ### 2.2 展开卡片（恒定定宽 240dp）
 
@@ -231,7 +230,7 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 - [ ] 长正文滚动到底部，最后一行可见。
 - [ ] 一轮对话结束，圆点变红；再次发消息变蓝。
 - [ ] 旋转屏幕 / 分屏后贴边仍然正确。
-- [ ] 长按能隐藏，隐藏后没有残留的常驻通知。
+- [ ] 长按**不再**隐藏窗口（2.9.106 起）；要隐藏请在设置里关掉「显示悬浮窗」。
 - [ ] **空闲态是自适应的**（宽度贴着「图标 + 空闲」，右边没有 240dp 空白；也不是 34dp 细条）。
 - [ ] **工作态是 240dp 定宽 + 92dp 固定滚动区**，正文长短不改变窗口高度。
 - [ ] 空闲 ↔ 工作切换时只看得到内容变化，**没有窗口重挂/闪白**（可通过 `[win] level=... 尺寸` 日志确认没有尺寸跳变或重挂）。
@@ -283,6 +282,49 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
     `adb shell input tap` 要用视觉坐标（= `params.y + 92`）。
   - `debugState()` 的 `level` 读的是 `expandLevel` 字段，**不代表"现在长什么样"**；判断渲染态看
     `statusRow.visibility` 或直接截图。
+
+### 3.ab 2.9.104/2.9.105「App 彻底销毁后悬浮窗还在」：退出语义必须闭环（vivo 实测定案）
+
+- 现象（用户原话「app彻底销毁后，悬浮窗还在」）：从通知栏点「退出」/把 App 从最近任务划掉后，
+  通知没了、引擎也停了，但**过一分钟左右悬浮球又自己冒出来**；再打开 App 时球反而可能不见。
+- 为什么进程死了却没有窗口泄漏：`am force-stop`、划掉任务都会让进程退出，WMS 随进程销毁窗口
+  （实测 `dumpsys window windows | grep com.termux` 为 0 条）——**泄漏只发生在进程还活着的退出路径**：
+  无障碍服务被系统绑着，App 进程不会被杀，于是保活心跳仍会去 `show()`。
+- 根因（两处，缺一不可）：
+  1. `DshAccessibilityService.startKeepAliveWatchdog()` 的 60s 心跳**无条件**重启引擎 +
+     `StatusOverlay.show()`，不看 `EngineService.userExited`；
+  2. `MainActivity.onDestroy()`（`isFinishing`）会 `StatusOverlay.hideAuto()`，而它把 `hidden`
+     **复位成 false**（本意"下次能自动显示"），正好解开 `teardown()` 设的抑制 ⇒ 随后任何 `show()` 都能重建窗口。
+- 修复：
+  1. 心跳先判 `EngineService.userExited()`，为真则只记一条
+     `keepalive: user exited, skip engine restart + overlay re-show` 并跳过引擎与悬浮窗；
+  2. `StatusOverlay.startOverlay()` 入口再兜一层：`userExited` 为真直接 `return`
+     （日志 `overlay suppressed: user exited`），杜绝任何通路把窗口挂回去；
+  3. 新增 `hiddenByExit` 标志 + `resumeAfterExit()`：区分「退出抑制」与「设置里关掉悬浮窗」，
+     只有前者会在用户重新打开 App 时恢复（`MainActivity` 清 `userExited` 的两处调用），
+     日志 `overlay resumed after user exited`。
+- 真机验证（vivo 10CG1C1M1H0021Z / 2.9.105 / versionCode 676）：
+
+| 步骤 | 期望 | 实测 |
+|---|---|---|
+| 通知栏点「退出」 | 引擎停、窗口拆掉 | `engineRunning=false`、`overlay root=null live=0` |
+| 静置 70s（跨过 60s 心跳） | 球不再出现 | 仍 `root=null`；日志 `keepalive: user exited, skip engine restart + overlay re-show` |
+| 重新打开 App | 引擎重启、球立刻回来 | `engineRunning=true`、`root!=null pos=948,360 size=108x108`；日志 `overlay resumed after user exited` |
+
+- 两条硬规则（改保活/退出相关代码前先读）：
+  - **a11y 保活通路必须尊重 `userExited`**：无障碍被系统绑着 ≠ 用户还想让 App 活着；
+  - **两种 hidden 要分开**：退出抑制（可自动恢复）vs 设置开关关闭（用户显式选择，不得自动恢复）。
+
+### 3.ac 2.9.106：长按隐藏已移除（用户要求）
+
+- 决策：悬浮球「长按 = 隐藏」是过时功能，且是误触把球弄丢的主要来源（用户原话「彻底移除…根本不需要」）。
+- 改动：`StatusOverlay.attachGesture()` 删掉 `onLongPress` 形参、`bindHandle()` 两处调用不再传长按、
+  折叠态/展开态都不再 `setOnLongClickListener`；`hideInternal()` 的日志改为
+  `overlay hidden (sticky)` / `overlay hidden (auto)`（不再有 "by user" 语义）。
+- 现在还能让悬浮窗消失的入口（仅两个，都是显式而非手势）：
+  1. 设置 → 「显示悬浮窗」开关关掉 → `DshAccessibilityService.setOverlayEnabled(false)` → `hide(svc)`；
+  2. 退出 App（通知栏「退出」/划掉任务）→ 引擎退出 → `teardown()`，见 §3.ab。
+- 回归清单新增一条：**长按不再隐藏窗口**（`input swipe x y x y 1500` 模拟长按，窗口应保持可见）。
 
 ### 3.z 为什么 OCR prefetch 绝不能摘悬浮窗（抖动 / flicker）
 

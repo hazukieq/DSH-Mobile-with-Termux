@@ -232,20 +232,31 @@ class DshAccessibilityService : AccessibilityService() {
         stopKeepAliveWatchdog()
         val r = object : Runnable {
             override fun run() {
-                runCatching {
-                    // 引擎前台服务不在 → 拉起来（除非用户显式退出过）
-                    if (!app.dsh.mobile.service.EngineService.isRunning()) {
-                        Log.i("DshA11y", "keepalive: engine service not running, restarting")
-                        app.dsh.mobile.service.EngineService.start(this@DshAccessibilityService)
-                    }
-                }.onFailure { Log.w("DshA11y", "keepalive check failed: ${it.message}") }
-                runCatching {
-                    // v2.9.83（vivo 实测）：无障碍被系统撤销后，onAccessibilityLost 会先用
-                    // 应用悬浮窗(2038)顶上保命；服务重连时若 onServiceConnected 没重跑
-                    // （OriginOS 会跨撤销保持绑定），窗口就一直是 2038 —— 它依赖 SAW 权限、
-                    // 在部分界面会被系统强制隐藏。看门狗每次心跳顺手把类型收敛回 2032。
-                    StatusOverlay.show(this@DshAccessibilityService)
-                }.onFailure { Log.w("DshA11y", "keepalive overlay type check failed: ${it.message}") }
+                // v2.9.104（用户反馈「app 彻底销毁后悬浮窗还在」）：用户主动退出后
+                // （通知栏「退出」/从最近任务划掉），无障碍服务仍被系统绑着、进程还活着，
+                // 看门狗 60s 后照样把引擎拉起并 show() —— 于是"已经关掉的 App"又冒出个悬浮球。
+                // 退出语义必须闭环：userExited 为真时，引擎不自启、悬浮窗也不再回来。
+                val exited = runCatching {
+                    app.dsh.mobile.service.EngineService.userExited(this@DshAccessibilityService)
+                }.getOrDefault(false)
+                if (exited) {
+                    Log.i("DshA11y", "keepalive: user exited, skip engine restart + overlay re-show")
+                } else {
+                    runCatching {
+                        // 引擎前台服务不在 → 拉起来
+                        if (!app.dsh.mobile.service.EngineService.isRunning()) {
+                            Log.i("DshA11y", "keepalive: engine service not running, restarting")
+                            app.dsh.mobile.service.EngineService.start(this@DshAccessibilityService)
+                        }
+                    }.onFailure { Log.w("DshA11y", "keepalive check failed: ${it.message}") }
+                    runCatching {
+                        // v2.9.83（vivo 实测）：无障碍被系统撤销后，onAccessibilityLost 会先用
+                        // 应用悬浮窗(2038)顶上保命；服务重连时若 onServiceConnected 没重跑
+                        // （OriginOS 会跨撤销保持绑定），窗口就一直是 2038 —— 它依赖 SAW 权限、
+                        // 在部分界面会被系统强制隐藏。看门狗每次心跳顺手把类型收敛回 2032。
+                        StatusOverlay.show(this@DshAccessibilityService)
+                    }.onFailure { Log.w("DshA11y", "keepalive overlay type check failed: ${it.message}") }
+                }
                 keepAliveHandler.postDelayed(this, KEEPALIVE_INTERVAL_MS)
             }
         }
