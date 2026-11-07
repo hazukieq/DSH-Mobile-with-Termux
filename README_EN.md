@@ -3,6 +3,13 @@
 > **This is the upstream README kept for reference.** This repository is the fork
 > DSH Mobile with Termux - see [README.md](README.md) for the fork README, feature list and
 > license attribution.
+>
+> **Current fork release: `3.0-alpha-1` (versionCode 686).** The 3.0-alpha line adds
+> transactional screenshots (`/act` + `{"shot":true}`, `capturedAt`), zero-flash
+> `takeScreenshotOfWindow` compositing, in-process PP-OCRv6 via `onnxruntime-android`,
+> `/volume`, `/install` (user confirms in the system installer), a root-free adb debug
+> channel, and a batch of overlay fixes (no flicker / tappable / closable). This repo ships
+> **no CI workflows** — build with Gradle and publish by hand. See README.md for details.
 
 <p align="center">
   <img src="docs/promo/dsh-mobile-github.png" alt="DSH Mobile — DeepSeek Harness for Android" width="100%">

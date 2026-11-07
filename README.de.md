@@ -12,6 +12,12 @@
 ![Plattform](https://img.shields.io/badge/platform-Android%208.0%2B-green)
 ![Lizenz](https://img.shields.io/badge/license-MIT-brightgreen)
 
+> **Aktueller Fork-Release: `3.0-alpha-1` (versionCode 686).** Die 3.0-alpha-Linie bringt
+> transaktionale Screenshots (`/act` + `{"shot":true}`, `capturedAt`), flackerfreie
+> `takeScreenshotOfWindow`-Komposition, PP-OCRv6 im App-Prozess über `onnxruntime-android`,
+> `/volume`, `/install` (Bestätigung durch den Nutzer im System-Installer) und einen
+> ADB-Debug-Kanal ohne Root. Maßgeblich ist [README.md](README.md).
+
 <p align="center">
   <img src="docs/promo/dsh-mobile-github.png" alt="DSH Mobile — DeepSeek Harness. Jetzt in deiner Hosentasche." width="100%">
 </p>
