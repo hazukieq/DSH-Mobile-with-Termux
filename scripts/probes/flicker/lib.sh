@@ -89,8 +89,11 @@ dsh_api() {
 
 # 悬浮窗窗口块（不需要 root；vivo/Android 17 上是 `Window #0 Window{... type=2032}` 形态）
 overlay_block() {
+  # 只认悬浮窗（type=2032/2038），别把 MainActivity（type=1）也匹配进来：
+  #   Android 16: `Window #2 Window{... u0 com.termux}:`（裸包名）
+  #   Android 17: `Window #0 Window{com.termux:xxxx u0 com.termux type=2032}:`
   sh_ dumpsys window windows 2>/dev/null | awk -v pkg="$PKG" '
-    $0 ~ "Window #[0-9]+ Window\\{" && index($0, pkg) { f=1 }
+    /Window #[0-9]+ Window\{/ && index($0, pkg) && ($0 ~ /type=203[28]/ || $0 ~ / u0 com\.termux\}/) { f=1 }
     f { print }
     f && /isVisible=/ { exit }'
 }

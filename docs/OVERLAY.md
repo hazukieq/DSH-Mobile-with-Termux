@@ -379,3 +379,49 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 | `/calib` | 12/12 |
 
 四路判据边采样边跑 3 次 native OCR：**475 采样点全 OK**（GONE/NO_CONTENT/MOVED/STALE/RECREATED 全 0）。
+
+## §3.p 请求级避让全部取消（2.9.90 / 661）
+
+### 症状
+
+2.9.86 之后 `/act` 已经不避让了，但用户仍报「还是在闪烁」。真机 logcat：
+
+```text
+30s 内 `AgentBridge: ops avoid: /overlay` × 1154
+      `StatusOverlay: hide(ops): visibility=4` × 1159
+      `StatusOverlay: show(ops): visibility=0` × 1159
+```
+
+`/overlay` 是 **agent 的进度推送通道**（`ActionHandler.overlay` → `ProgressHub.update` /
+`setA11yAction`），思考时每 ~250ms 一条。它落在 `OPS_AVOID_PATHS` 里 ⇒ 每条进度都把窗口
+INVISIBLE 一次 ⇒ 3–4Hz 闪烁 + 那几十毫秒点不到。
+
+### 结论
+
+**任何「高频、非注入」的端点都不能进避让表。** 判断标准不是「它叫什么名字」，而是
+「它会不会注入触摸/改窗口可见性」：
+
+| 端点 | 性质 | 是否需要避让 |
+|---|---|---|
+| `/act`、`/gesture`、`/tap`、`/vision/*` | 注入触摸 | **手势层**判（轨迹与窗口相交才藏） |
+| `/overlay` | 进度推送，每 250ms | 否 |
+| `/open/*` | 唤起系统选择器，请求内藏几十 ms 无意义 | 否 |
+| `/screenshot`、`/ocr`、`/frame-wait` | 截图/识别，已走免闪 composite | 否 |
+
+### 现状（2.9.90）
+
+- `Router.OPS_AVOID_PATHS` = 空集，`wantsExplicitAvoid()` 只认请求体里的 `"avoid":true`；
+- 手势层：`DshAccessibilityService.dispatchGestureAvoided` → `StatusOverlay.beginOpsAvoidIfHit`；
+- `/act` 的 `"hideOverlay":true` 仍可显式整批隐藏（复盘用途）。
+
+### 验证（661，vivo 10CG1C1M1H0021Z）
+
+| 场景 | 采样 | 隐藏 |
+|---|---|---|
+| `/overlay` 进度推送 ×40（250ms 间隔） | 40 | **0** |
+| `/screenshot` | 10 | 0 |
+| `/ocr` | 10 | 0 |
+| 注入 tap 压在球上 (1000,506) | 注入后 `level` 仍 =0（未展开，穿透生效） | — |
+
+`ops avoid` / `hide(ops)` 计数均为 0（修复前同场景 1154/1159）。
+

@@ -206,3 +206,20 @@ curl -s -H "X-DSH-Token: $TOK" -H 'Content-Type: application/json' \
 | 2.9.86 / 657 | **避让下沉到手势层**（本次核心修复） |
 | 2.9.87 / 658 | working 卡死时 20s 强制切回 2032 |
 | 2.9.88 / 659 | 手势层判定加诊断日志（`ops avoid skip: overlay=… gesture=…`） |
+
+## 5.5 收尾：`/overlay` 进度推送导致的 3Hz 闪烁（2.9.90 / 661）
+
+2.9.88 把 `/act` 的避让下沉到手势层后，用户仍报「还是在闪烁」。复查日志发现真正的最后一条：
+
+```text
+AgentBridge: ops avoid: /overlay      （30s 内 1154 次）
+StatusOverlay: hide(ops): visibility=4（1159 次）
+StatusOverlay: show(ops): visibility=0（1159 次）
+```
+
+`/overlay` 不是注入端点，而是 agent 的**进度推送**（`ActionHandler.overlay` → `ProgressHub.update`），
+思考时每 ~250ms 一条；它被塞在 `OPS_AVOID_PATHS` 里 ⇒ 每条进度都把悬浮窗藏一次 ⇒
+3–4Hz 闪烁 + 期间点不到。
+
+修法：`OPS_AVOID_PATHS` 清空，只保留两条通道（手势轨迹相交、请求体 `"avoid":true` 显式 opt-in）。
+验证见 `docs/OVERLAY.md` §3.p；661 实测 40 次进度推送 0 次隐藏，截图/OCR 各 10 次 0 次隐藏。

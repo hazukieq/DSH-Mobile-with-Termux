@@ -43,29 +43,31 @@ import app.dsh.mobile.engine.SceneMemory
 internal class Router(private val bridge: AgentBridge) {
 
     /**
-     * v2.9.86：**注入输入的端点不再在这里避让**。
+     * v2.9.90：**请求级避让全部取消**。
      *
-     * 旧逻辑「POST /act 一律把悬浮窗藏起来」在真机（vivo / OriginOS 17）上表现为：
-     * agent 连续操作时悬浮窗以 3Hz 的频率 INVISIBLE→VISIBLE，实测占空比 35%（40 次采样
-     * 里 14 次不可见）——用户说的「不断闪烁 / 有时点不到」正是它。
+     * `/overlay` 不是「注入输入」，而是 agent 的**进度推送**（`ActionHandler.overlay` →
+     * `ProgressHub.update` / `setA11yAction`）。agent 思考时每 ~250ms 推一条，一旦它落进
+     * 这张表就变成 3–4Hz 的 hide(ops)/show(ops) 循环：真机 logcat 实测 30s 内
+     * `ops avoid: /overlay` 1154 次、`hide(ops)` 1159 次，窗口反复 INVISIBLE。
+     * 用户说的「还是在闪烁」就是它（2.9.86 把 /act 修掉后剩下的最后一条）。
      *
-     * 现在避让下沉到 [`DshAccessibilityService.dispatchGesture`] 覆盖函数：
-     * **只有真实注入的触摸轨迹与悬浮窗矩形相交时才临时隐藏**，注入结束立刻恢复。
-     * 无障碍的节点级点击（ACTION_CLICK）本来就不会被悬浮窗吞掉，完全不需要避让。
+     * `/open/file`、`/open/folder`、`/open/share` 唤起系统选择器，请求内藏那几十毫秒毫无意义（选择器出现时请求早已返回）。
      *
-     * 这里只剩「会改悬浮窗自身 / 唤起系统选择器」的端点，它们在整段请求期间保持不可见。
+     * 现在只剩两条避让通道：
+     *   1. **手势层**：真实注入的触摸轨迹与悬浮窗矩形相交才临时隐藏
+     *      （`DshAccessibilityService.dispatchGestureAvoided`）；
+     *   2. **显式要求**：请求体带 `"avoid": true`（调用方自己知道要整段藏）。
      */
-    private val OPS_AVOID_PATHS = setOf(
-        "/overlay",
-        "/open/file", "/open/folder", "/open/share",
-    )
+    private val OPS_AVOID_PATHS = emptySet<String>()
+
+    /** 只认显式 opt-in，避免再次出现「某个高频端点被误塞进避让表」的事故。 */
+    private fun wantsExplicitAvoid(method: String, body: String) =
+        method == "POST" && body.contains("\"avoid\":true")
 
     internal fun route(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
-        // 动作类请求：先让悬浮窗「不吃点击」，否则它盖住的那块区域永远点不中目标。
-        // v2.9.80（真机 vivo 反馈「不断闪烁」）：**只有注入的坐标真的压到悬浮窗上才避让**。
-        // 旧策略是「任何 /act 都藏一次」，agent 连续操作时悬浮窗每个请求闪一下（每次 /act
-        // 约 0.2–0.8s 不可见），用户看到的就是持续闪烁 + 期间点不到。
-        val avoid = method == "POST" && path in OPS_AVOID_PATHS
+        // 请求级避让已停用（见 OPS_AVOID_PATHS 注释）：正常请求不碰悬浮窗可见性，
+        // 只有调用方显式写 "avoid":true 才整段隐藏。
+        val avoid = method == "POST" && (path in OPS_AVOID_PATHS || wantsExplicitAvoid(method, body))
         // 诊断用：谁在让悬浮窗隐藏（vivo 实测出现过 3Hz 的 hide/show 循环，靠这条定位来源）
         if (avoid) Log.i("AgentBridge", "ops avoid: $path")
         if (avoid) runCatching { StatusOverlay.beginOpsAvoid() }
@@ -77,7 +79,6 @@ internal class Router(private val bridge: AgentBridge) {
     }
 
 
-    /** 除了 ACTING_PATHS，还要覆盖真正注入输入的批量/链式入口（见 OPS_AVOID_PATHS）。 */
     private fun routeInner(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
         with(bridge) {
         // 每次请求都顺手预取一次 OCR（TTL 防刷）：a11y 受限时可直接兜底
