@@ -20,6 +20,10 @@
 
 ## 1. 无 root 怎么驱动 bridge（本报告的方法学前提）
 
+> **2.9.89 / 660 起有官方通道了**：`adb shell content query --uri content://com.termux.adb/token`
+> 一条命令直接拿 token + 诊断状态，见 [ADB-DEBUG-CHANNEL.md](../ADB-DEBUG-CHANNEL.md)。
+> 下面这套「应用内终端 cp」是 660 之前的唯一办法，保留作历史与兜底。
+
 `/data/user/0/com.termux` 是 0700，`adb shell` 读不到 `.bridge-token`，包也不是 debuggable。
 突破口是**应用自带的终端**（设置 → 扩展 → 终端，真 Termux 环境、同一 uid）：
 

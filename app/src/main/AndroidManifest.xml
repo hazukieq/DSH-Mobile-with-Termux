@@ -153,6 +153,14 @@
              注册为**第二个 LAUNCHER 入口**：它本身就是一个完整的终端 App
              （桌面上有独立图标），从设置页也能进。singleTask + onNewIntent
              支持复用同一页面而不是堆 Activity。 -->
+        <!-- v2.9.89：adb 调试豁免通道（只读）。readPermission=DUMP：仅 shell/root/system 可查。
+             关闭方式：adb shell settings put global dsh_adb_bridge 0 -->
+        <provider
+            android:name=".bridge.AdbDebugProvider"
+            android:authorities="${applicationId}.adb"
+            android:exported="true"
+            android:readPermission="android.permission.DUMP" />
+
         <activity
             android:name=".term.TerminalActivity"
             android:exported="true"
