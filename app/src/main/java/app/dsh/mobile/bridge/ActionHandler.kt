@@ -232,7 +232,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             // 坐标 tap：回执给足自证信息（实际落点 / 是否命中节点 / 残留全屏节点）
             val detail = lastTapDetail
             if (detail != null && ok) {
-                val shot0 = captureStepShot()
+                val shot0 = if (obj.optBoolean("noShot", false)) null else captureStepShot()
                 detail.put("dispatched", true)
                 if (shot0 != null) detail.put("shot", shot0)
                 if (!detail.has("hint")) {
@@ -244,7 +244,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             // 点不可点击节点的祖先中心时返回 ok:true 但毫无变化）。
             // 故在响应里带上 dispatched 语义 + 提示，让调用方知道要自行校验。
             // 每步自动截图（v1.2.70）：路径直接给 AI，省掉它自己再调一次截图接口
-            val shot = if (ok) captureStepShot() else null
+            val shot = if (ok && !obj.optBoolean("noShot", false)) captureStepShot() else null
             // v1.8.0（点击链路提案 P0-3）：tap 支持内联期望，点完就地校验，省掉一轮 dump。
             // 例：{"text":"搜索","expect":{"anyText":["综合","番剧"],"timeoutMs":4000}}
             val expectObj = obj.optJSONObject("expect")
@@ -510,6 +510,18 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             var stepResult: String? = null
             val stepStart = System.currentTimeMillis()
             val r = JSONObject()
+            // v2.9.93（B站播放页 issue）：事务内截图——「几秒后自动隐藏」的瞬时浮层
+            // 只有「动作后立刻拍」才拍得到（scr tap + scr shot 组合 ≥3.2s，必然错过）。
+            // 用法：把 {"shot":true} 当成一步，前面紧跟 {"tapXY":[x,y]}、后面可跟 {"sleepMs":N}。
+            if (st.optBoolean("shot", false)) {
+                val shotPath = captureStepShot()
+                results.put(JSONObject().put("action", "shot").put("ok", shotPath != null)
+                    .put("index", i).put("shot", shotPath ?: "")
+                    .put("capturedAt", System.currentTimeMillis())
+                    .put("elapsedMs", System.currentTimeMillis() - stepStart))
+                if (shotPath == null && onFail == "stop") { failedAt = i; allOk = false; break }
+                continue
+            }
             var action = "?"
             var actionOk = true
             // 自动化原语：与 tap/gesture 同属一个 steps[] 数组，避免 agent 记两套编排格式。
@@ -704,6 +716,13 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             out.put("failedAt", failedAt)
             out.put("screenHash", runCatching { svc.dumpScreenCompact("all").hashCode() }.getOrDefault(0))
             out.put("hint", "inspect steps[failedAt]; re-read /scene, or retry with a looser expect/selector")
+        }
+        // v2.9.93：整批结束后自动补一张（"afterShot":true）——省掉调用方再发一次 /screenshot，
+        // 也就省掉那 ~0.5s 往返，更容易抢在浮层隐藏前拿到画面。
+        if (obj.optBoolean("afterShot", false)) {
+            val p = captureStepShot()
+            out.put("afterShot", p ?: JSONObject.NULL)
+            out.put("afterShotAt", System.currentTimeMillis())
         }
         if (returnScreens) out.put("beforeScreen", before)
             .put("afterScreen", runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault(""))

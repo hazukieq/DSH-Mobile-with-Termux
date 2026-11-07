@@ -52,6 +52,8 @@ object ScreenOcr {
         val cached: Boolean,
         /** 截图不可用（API<30 / 未授权 / 被节流）时为 true */
         val unavailable: Boolean = false,
+        /** 本次结果对应的**采帧时刻**（epoch ms）；cached=true 时是原始那张图的时刻 */
+        val capturedAt: Long = 0L,
     )
 
     // ---- 识别器（懒初始化、复用；ML Kit 客户端是线程安全的） ----
@@ -80,6 +82,8 @@ object ScreenOcr {
     private const val COOLDOWN_MS = 3000L
     private val lock = Any()
     private var lastAt = 0L
+    /** 采帧完成时刻（判定"这张图是哪一刻的屏幕"用；OCR 有缓存，光看回执时间会被骗） */
+    @Volatile private var lastShotAt = 0L
     private var last: List<Block>? = null
     private var cooldownUntil = 0L
 
@@ -109,12 +113,12 @@ object ScreenOcr {
         synchronized(lock) {
             val l = last
             if (!force && l != null && t0 - lastAt < CACHE_MS) {
-                return Result(l, System.currentTimeMillis() - t0, cached = true)
+                return Result(l, System.currentTimeMillis() - t0, cached = true, capturedAt = lastShotAt)
             }
             // 冷却期内（截图刚被节流）直接复用旧结果，不再采帧
             if (!force && t0 < cooldownUntil) {
                 return Result(l ?: emptyList(), System.currentTimeMillis() - t0,
-                    cached = true, unavailable = l == null)
+                    cached = true, unavailable = l == null, capturedAt = lastShotAt)
             }
         }
         // v2.9.72：OCR **不避让**悬浮窗（避让 = INVISIBLE = WMS 销毁并重建 surface = 闪），
@@ -122,6 +126,7 @@ object ScreenOcr {
         val shot = runCatching { svc.screenshotArgb(avoidOverlay = false) }.getOrNull()
             ?: return unavailable(t0)
         val tShot = System.currentTimeMillis()
+        lastShotAt = tShot
         val (pixels, w, h) = shot
         // 降采样（v1.2.123 实测）：全分辨率(1080p+)推理 ~1.5-2.5s（模拟器），
         // 半分辨率显著更快；文字在 540p 下对 OCR 仍清晰。
@@ -169,7 +174,7 @@ object ScreenOcr {
             lastAt = System.currentTimeMillis()
             cooldownUntil = 0L
         }
-        return Result(visible, System.currentTimeMillis() - t0, cached = false)
+        return Result(visible, System.currentTimeMillis() - t0, cached = false, capturedAt = tShot)
     }
 
     /**

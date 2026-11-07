@@ -126,6 +126,76 @@ page instead of the control. For anything with a time window:
 - verify **once at the end** (one `expect`/dump), not between every action;
 - measured baseline on a phone: `scr dump` ~0.22s, `scr tap` ~0.16s, `loop pick` exact ~11ms.
 
+### Transient overlays: screenshot timing is part of the plan (measured)
+
+Measured end-to-end on a phone (2026-11-07, v2.9.92):
+
+| call | latency | note |
+|---|---|---|
+| `scr shot --save` | **0.3–0.6s** | accessibility capture + PNG encode |
+| `scr tap x y` | **0.5–0.8s** (2.9.93+) | was 2.6s before: the receipt screenshot used the legacy display+hide path, which also flashed the overlay |
+| `scr tap --no-shot x y` | **0.03–0.1s** | v2.9.93: receipt screenshot skipped |
+| `POST /act` (tap + sleep 450) | **0.45–0.5s** | one transaction, no screenshot |
+| `/act` with a `{"shot":true}` step | **~0.55s** | this is the number that matters for overlays |
+
+A video seek bar or toast lives 2–4s, and the player control bar needs ~400–500ms to animate in
+after the tap. Therefore **`scr tap` followed by `scr shot` in two calls will miss it** (and the old
+2.6s `scr tap` made that certain) — a timing budget problem, not "it cannot be captured". Rules:
+
+- To capture something that auto-hides, NEVER tap and then screenshot in two calls. Put the shot
+  **inside** the same transaction and let the reply carry the path:
+  `POST /act {"steps":[{"tapXY":[540,420]},{"sleepMs":450},{"shot":true}]}`
+  -> `steps[2].shot` + `steps[2].capturedAt`; or add `"afterShot":true` to get one extra frame right
+  after the last step (path in `afterShot`).
+- Decide "did I capture it" with a **target feature** (progress-bar pixels in a known band, OCR text
+  of the timestamp), never with "the screen looks unchanged".
+- `/screenshot` returns `capturedAt` (epoch ms of the capture) and `latencyMs`; `/ocr` returns
+  `capturedAt` too, and `cached:true` means the blocks came from an **earlier** frame — check
+  `capturedAt` before using OCR output for a timing judgement.
+- If you only need to know "did the UI react", use `/screen-changed` or `scr changed`, not a
+  screenshot.
+
+### Self-drawn controls (the target area has no a11y node)
+
+Some apps draw their player controls / canvas widgets themselves, so `scr dump` shows nothing there
+(Bilibili 9.17 player: 0 player nodes in the tree, controls auto-hide). Do not assume a node exists,
+and do not conclude "the control is not rendered":
+
+1. confirm with `scr dump` that the region really has no node (do not assume);
+2. find a **stable state** that does expose nodes (paused player, mini/docked player bar, fullscreen
+   menu) and read geometry from there;
+3. calibrate geometry from one successful capture (which y is the control bar, x range of the seek
+   track, position of the "more" button) and write it into a case doc / memory;
+4. put the composite gesture in **one** `/act` transaction (tap content -> sleep 450ms -> tap control),
+   never a blind step-by-step loop;
+5. cross-check with an objective external signal when one exists (e.g. Bilibili
+   `x/v2/history` -> `progress` seconds) instead of eyeballing the screenshot.
+
+### Reading channels: a11y / OCR / screenshot
+
+Pick the channel by the question, and know its cache/timeout semantics before you rely on it:
+
+| channel | cost | good for | traps |
+|---|---|---|---|
+| a11y (`/scene`, `scr dump`, `scr find`) | ~0.2s | semantics, clickable nodes, text, bounds | self-drawn UI is absent; stale after a fast transition |
+| OCR (`/ocr`) | 0–0.6s | text that the tree does not expose (webview canvas, images) | `cached:true` = old frame; needs a screenshot underneath |
+| screenshot (`/screenshot`, `scr shot --save`) | 0.5–0.6s | pixels: color, layout, "is it really gone" | slow; a transient overlay may be gone by the time you look |
+
+Escalation: a11y first (cheap, semantic) -> OCR when the text is missing from the tree -> screenshot
+when you need pixels or proof. On failure, switch channel or parameters; do not repeat the same plan.
+
+### Execution protocol (the whole loop, in five lines)
+
+1. **Analyse**: what state do I need, and which channel gives it? What are that channel's latency and
+   cache semantics?
+2. **Design the chain**: write actions + timings (ms per step) + the success criterion up front, plus
+   a plan B ("if it misses, switch channel / re-calibrate").
+3. **Execute once**: one `/act` transaction, no thinking in the middle.
+4. **Read the reply**: raw JSON first, parse second; on failure change parameters or channel, never
+   re-run an identical plan.
+5. **Verify once at the end** (an `expect` or one dump); read the screen again only when a new
+   decision is needed.
+
 ### Gesture parameters matter more than coordinates
 
 - drag a slider/seekbar: `durationMs >= 800–1200` slow swipe; a short swipe over a long distance is

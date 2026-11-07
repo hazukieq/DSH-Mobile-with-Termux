@@ -933,8 +933,10 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                     .put("reason", "ppocr6 models/runtime missing: models ship with the APK; if a tier was never downloaded use /ocr?engine=ppocr6&download=tiny|medium")
                     .put("deployed", PpOcr.deployed(svc)).toString()
             }
+            val tShot0 = System.currentTimeMillis()
             val shot = svc.screenshotBase64NoFlash()
                 ?: return 503 to """{"ok":false,"error":"screenshot_failed","reason":"accessibility screenshot unavailable"}"""
+            val ocrCapturedAt = System.currentTimeMillis()
             val bytes = android.util.Base64.decode(shot.third, android.util.Base64.NO_WRAP)
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 ?: return 500 to """{"ok":false,"error":"bitmap_decode_failed"}"""
@@ -959,6 +961,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             return if (r.ok) 200 to JSONObject().put("ok", true).put("engine", "ppocr6-$tier")
                 .put("runtime", if (PpOcrNative.available(ctx)) "onnxruntime-android" else "termux-python")
                 .put("costMs", r.costMs).put("cached", r.cached).put("changed", r.changed)
+                .put("capturedAt", ocrCapturedAt)
                 .apply { r.region?.let { rg -> put("region", JSONArray().put(rg.left).put(rg.top).put(rg.right).put(rg.bottom)) } }
                 .put("lines", r.blocks.size).put("blocks", arr).toString()
             else 503 to JSONObject().put("ok", false).put("engine", "ppocr6-tiny")
@@ -989,6 +992,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             put("ok", !r.unavailable)
             put("unavailable", r.unavailable)
             put("cached", r.cached)
+            put("capturedAt", r.capturedAt)
             put("costMs", r.costMs.toInt())
             put("lines", r.blocks.size)
             put("blocks", arr)
@@ -1124,12 +1128,16 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             // 「整屏 + 隐藏悬浮窗」的旧路径（那条路会闪，真机实测 2.3s）。
             // ?flash=1 用于需要完整画面（状态栏/键盘）或回归对比时强制走旧路径。
             val params = parseQuery(query)
+            val tShot0 = System.currentTimeMillis()
             val shot = if (params["flash"] == "1") {
                 svc.lastShotVia = "display-forced"
                 svc.screenshotBase64()
             } else {
                 svc.screenshotBase64NoFlash()
             } ?: return 400 to """{"ok":false,"error":"screenshot failed (timeout or unsupported)"}"""
+            // 截完即记时刻：调用方据此判断"这张图是不是我要的那个瞬间"（瞬时浮层必备）
+            val capturedAt = System.currentTimeMillis()
+            val shotLatencyMs = capturedAt - tShot0
             val via = svc.lastShotVia
             // ?max=N：把最长边缩到 N 像素（省 base64 体积 + 省上下文）
             val maxDim = parseQuery(query)["max"]?.toIntOrNull()?.coerceIn(256, 4096)
@@ -1158,10 +1166,10 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                     f.writeBytes(android.util.Base64.decode(b64, android.util.Base64.DEFAULT))
                     dir.listFiles { file -> file.name.startsWith("shot-") }
                         ?.sortedBy { it.lastModified() }?.dropLast(12)?.forEach { it.delete() }
-                    return 200 to """{"ok":true,"path":"${f.absolutePath}","width":$w,"height":$h,"via":"$via","hint":"read it with the read_image tool"}"""
+                    return 200 to """{"ok":true,"path":"${f.absolutePath}","width":$w,"height":$h,"via":"$via","capturedAt":$capturedAt,"latencyMs":$shotLatencyMs,"hint":"read it with the read_image tool"}"""
                 }
             }
-            return 200 to """{"ok":true,"format":"png","width":$w,"height":$h,"via":"$via","base64":"$b64"}"""
+            return 200 to """{"ok":true,"format":"png","width":$w,"height":$h,"via":"$via","capturedAt":$capturedAt,"latencyMs":$shotLatencyMs,"base64":"$b64"}"""
         } catch (e: Exception) {
             500 to """{"ok":false,"error":"${e.message}"}"""
         }
@@ -1185,7 +1193,8 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
     internal fun captureStepShot(): String? = with(bridge) { runCatching {
         val c = shotCtx ?: return@runCatching null
         val svc = DshAccessibilityService.instance ?: return@runCatching null
-        val shot = svc.screenshotBase64(1500L) ?: return@runCatching null
+        // v2.9.93：免闪路径（composite → 窗口 → 整屏），旧路径每次回执都藏悬浮窗 2s+
+        val shot = svc.screenshotBase64NoFlash(1500L) ?: return@runCatching null
         val dir = java.io.File(c.filesDir, "screens").apply { mkdirs() }
         val f = java.io.File(dir, "step-${shotSeq.incrementAndGet()}.png")
         f.writeBytes(android.util.Base64.decode(shot.third, android.util.Base64.DEFAULT))
@@ -1438,7 +1447,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
 
     internal val shotSeq = java.util.concurrent.atomic.AtomicInteger(0)
 
-    internal val KEEP_STEP_SHOTS = 3
+    internal val KEEP_STEP_SHOTS = 12
 
     @Volatile internal var ocrPrefetch: OcrPrefetch? = null
 

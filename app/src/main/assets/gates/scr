@@ -9,7 +9,7 @@ if [ -z "$_DSH_REEXEC" ]; then
 fi
 # [dsh-android] scr: screen see & control via the accessibility service.
 #   see:    dump | dump-click | dump-full | xml | shot | pkg
-#   act:    tap <x> <y> | tap-text <t> | tap-desc <d> | [priv] tap --shell <x> <y>
+#   act:    tap [--no-shot] <x> <y> | tap-text <t> | tap-desc <d> | [priv] tap --shell <x> <y>
 #           swipe <x1> <y1> <x2> <y2> [ms] | long-press <x> <y> [ms]
 #           key <back|home|recents|notifications|quick_settings|expand-notifications|dismiss-shade|expand-settings>
 #   type:   input <text> [--target <hint>] [--append]     (v1.2.54)
@@ -93,8 +93,17 @@ case "$1" in
       dsh_http POST /tap "{\"x\":$3,\"y\":$4,\"via\":\"shell\"}" && echo tapped-shell || { echo "shell tap failed (need Shizuku/root)" >&2; exit 1; }
       exit 0
     fi
-    [ -n "$2" ] && [ -n "$3" ] || { echo "usage: scr tap <x> <y>   |   scr tap --shell <x> <y>" >&2; exit 64; }
-    dsh_http POST /tap "{\"x\":$2,\"y\":$3}" && echo tapped || { echo "tap failed" >&2; exit 1; }
+    # v2.9.93：--no-shot 去掉回执里那张截图（实测 2.6s → ~0.3s）。
+    # 拍瞬时浮层时别用 "scr tap 然后 scr shot"（≥3.2s 必然错过），
+    # 改用一条事务：POST /act {"steps":[{"tapXY":[x,y]},{"sleepMs":450},{"shot":true}]}
+    NO_SHOT=false
+    case "$2" in --no-shot) NO_SHOT=true; shift ;; esac
+    [ -n "$2" ] && [ -n "$3" ] || { echo "usage: scr tap [--no-shot] <x> <y>   |   scr tap --shell <x> <y>" >&2; exit 64; }
+    if $NO_SHOT; then
+      dsh_http POST /tap "{\"x\":$2,\"y\":$3,\"noShot\":true}" && echo tapped || { echo "tap failed" >&2; exit 1; }
+    else
+      dsh_http POST /tap "{\"x\":$2,\"y\":$3}" && echo tapped || { echo "tap failed" >&2; exit 1; }
+    fi
     ;;
   tap-text)
     [ -n "$2" ] || { echo "usage: scr tap-text <text>" >&2; exit 64; }
