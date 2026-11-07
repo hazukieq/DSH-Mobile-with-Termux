@@ -239,6 +239,13 @@ class DshAccessibilityService : AccessibilityService() {
                         app.dsh.mobile.service.EngineService.start(this@DshAccessibilityService)
                     }
                 }.onFailure { Log.w("DshA11y", "keepalive check failed: ${it.message}") }
+                runCatching {
+                    // v2.9.83（vivo 实测）：无障碍被系统撤销后，onAccessibilityLost 会先用
+                    // 应用悬浮窗(2038)顶上保命；服务重连时若 onServiceConnected 没重跑
+                    // （OriginOS 会跨撤销保持绑定），窗口就一直是 2038 —— 它依赖 SAW 权限、
+                    // 在部分界面会被系统强制隐藏。看门狗每次心跳顺手把类型收敛回 2032。
+                    StatusOverlay.show(this@DshAccessibilityService)
+                }.onFailure { Log.w("DshA11y", "keepalive overlay type check failed: ${it.message}") }
                 keepAliveHandler.postDelayed(this, KEEPALIVE_INTERVAL_MS)
             }
         }
@@ -1780,7 +1787,7 @@ class DshAccessibilityService : AccessibilityService() {
             .build()
         markSelfAction()
         expectSelfTouch()
-        return dispatchGesture(gesture, null, null)
+        return dispatchGestureAvoided(gesture, null, null)
     }
 
     /**
@@ -1991,6 +1998,61 @@ class DshAccessibilityService : AccessibilityService() {
      *  ⚠️ 诚实说明：这削弱的是「模式识别」，不是「指纹识别」——
      *  无障碍注入的手势在系统层仍有固有特征（deviceId、pressure 恒为 1.0），
      *  要彻底隐形需 Root 层 uinput 注入，不在本版范围。 */
+    /**
+     * v2.9.86：所有注入手势的统一避让点（私有助手，**不能**覆盖 dispatchGesture——它是 final）。
+     *
+     * 旧实现是在 Router 里「POST /act 一律隐藏悬浮窗」，真机实测 agent 连续操作时
+     * 悬浮窗以 ~3Hz 闪（40 次采样 14 次不可见 = 35% 占空比），用户描述为「不断闪烁 +
+     * 有时点不到」。这里改成**按几何判定**：只有本次注入的轨迹与悬浮窗矩形相交才隐藏，
+     * 手势回调结束立刻恢复；不相交的点击/滑动完全不碰悬浮窗。
+     *
+     * 为什么放在 dispatchGesture 而不是各个 dispatchTap/dispatchSwipe：
+     * 注入入口有 10+ 个（tap/doubleTap/swipe/humanSwipe/longPress/pinch/drag…），
+     * 且 /pick、/tap-id、/scroll-* 的坐标是在 handler 内部解析出来的 ——
+     * 只有到真正调用 dispatchGesture 这一刻坐标才一定准确。
+     */
+    private fun dispatchGestureAvoided(
+        gesture: GestureDescription,
+        callback: GestureResultCallback? = null,
+        handler: android.os.Handler? = null,
+    ): Boolean {
+        val bounds = runCatching { gestureBounds(gesture) }.getOrNull()
+        val avoided = bounds != null &&
+            runCatching { StatusOverlay.beginOpsAvoidIfHit(bounds) }.getOrDefault(false)
+        if (!avoided) return dispatchGesture(gesture, callback, handler)
+        val restoreDone = java.util.concurrent.atomic.AtomicBoolean(false)
+        val restore = {
+            if (restoreDone.compareAndSet(false, true)) {
+                runCatching { StatusOverlay.endOpsAvoid() }
+            }
+        }
+        val wrapped = object : GestureResultCallback() {
+            override fun onCompleted(g: GestureDescription?) { restore(); callback?.onCompleted(g) }
+            override fun onCancelled(g: GestureDescription?) { restore(); callback?.onCancelled(g) }
+        }
+        val ok = runCatching { dispatchGesture(gesture, wrapped, handler) }.getOrDefault(false)
+        if (!ok) restore()
+        else android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ restore() }, 1_200L)
+        return ok
+    }
+
+    /** 一次注入所有 stroke 的边界并集（屏幕像素），用于判断是否压到悬浮窗。 */
+    private fun gestureBounds(g: GestureDescription): android.graphics.Rect? {
+        if (g.strokeCount <= 0) return null
+        val out = android.graphics.Rect()
+        var init = false
+        for (i in 0 until g.strokeCount) {
+            val pb = android.graphics.RectF()
+            runCatching { g.getStroke(i).path.computeBounds(pb, true) }
+            val ri = android.graphics.Rect(
+                pb.left.toInt() - 2, pb.top.toInt() - 2,
+                pb.right.toInt() + 2, pb.bottom.toInt() + 2,
+            )
+            if (!init) { out.set(ri); init = true } else out.union(ri)
+        }
+        return if (init) out else null
+    }
+
     internal fun dispatchTap(x: Float, y: Float, jitterPx: Int = DEFAULT_TAP_JITTER): Boolean {
         if (Build.VERSION.SDK_INT < 24) return false
         val (jx, jy) = if (jitterPx > 0) {
@@ -2019,7 +2081,7 @@ class DshAccessibilityService : AccessibilityService() {
         // 同时**预期**一次触摸事件（计数核销比时间戳可靠：事件到达晚于标记）
         markSelfAction()
         expectSelfTouch()
-        return dispatchGesture(gesture, null, null)
+        return dispatchGestureAvoided(gesture, null, null)
     }
 
     /**
@@ -2045,7 +2107,7 @@ class DshAccessibilityService : AccessibilityService() {
             .build()
         markSelfAction()
         expectSelfTouch()
-        return dispatchGesture(gesture, null, null)
+        return dispatchGestureAvoided(gesture, null, null)
     }
 
     /**
@@ -2076,7 +2138,7 @@ class DshAccessibilityService : AccessibilityService() {
         // abortOnInterference 误判"用户接管"、/batch 响应误报 userInterference。
         markSelfAction()
         expectSelfTouch()
-        return dispatchGesture(gesture, null, null)
+        return dispatchGestureAvoided(gesture, null, null)
     }
 
     /**
@@ -2134,7 +2196,7 @@ class DshAccessibilityService : AccessibilityService() {
             .build()
         markSelfAction()
         expectSelfTouch()
-        return dispatchGesture(gesture, null, null)
+        return dispatchGestureAvoided(gesture, null, null)
     }
 
     /** 长按（单点长时长 stroke） */
@@ -2146,7 +2208,7 @@ class DshAccessibilityService : AccessibilityService() {
             .build()
         markSelfAction()
         expectSelfTouch()
-        return dispatchGesture(gesture, null, null)
+        return dispatchGestureAvoided(gesture, null, null)
     }
 
     /** 全局动作（back/home/recents/notifications/quick_settings）。

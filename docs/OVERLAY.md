@@ -168,6 +168,49 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 `appop=CREATE_ACCESSIBILITY_OVERLAY`；2038 为 `Sys2038:com.termux/…` 且
 `appop=SYSTEM_ALERT_WINDOW`），判据不要只看 `ty=`。
 
+### 3.q 2.9.86 / 2.9.88：避让下沉到「手势层」——只有轨迹真的压到悬浮窗才隐藏
+
+**为什么改**：在此之前避让是**请求级**的（`Router.route` 里 `POST /act` 就 `beginOpsAvoid`）。
+真机（vivo V2520A / OriginOS 17 / Android 17，无 root）实测：agent 连续操作时悬浮窗以
+**~3 Hz** 在 `INVISIBLE ↔ VISIBLE` 之间切换，20 秒采样 40 次里 **14 次 `mDrawState=NO_SURFACE`
+（35% 占空比）**——用户嘴里的「不断闪烁」和「有时点不到」就是同一件事：那 35% 的时间里
+窗口在退场重建，触摸无处可落。
+
+**怎么改**（v2.9.86）：
+
+| 层 | 旧 | 新 |
+|---|---|---|
+| `Router.route` | `POST /act` → 无条件 `beginOpsAvoid()` | 只对 `"/overlay"`, `"/open/file"`, `"/open/folder"`, `"/open/share"` 避让（改窗口自身 / 拉起系统选择器） |
+| `DshAccessibilityService` | 直接 `dispatchGesture(...)` | 统一走 `dispatchGestureAvoided(...)`：`gestureBounds()`（所有 stroke 的 `path.computeBounds` 并集，±2px）→ `StatusOverlay.beginOpsAvoidIfHit(bounds)` → 相交才 `beginOpsAvoid()`，手势回调（或 1200ms 兜底）里 `endOpsAvoid()` |
+
+关键点：
+
+1. **`AccessibilityService.dispatchGesture` 是 `final`，不能被 override**（编译报错
+   `'dispatchGesture' overrides nothing`）。所以是在类内做了私有助手，替换 6 个注入点
+   （`dispatchTap` / 双击 / `dispatchSwipe` / `dispatchSwipeHuman` / `dispatchLongPress` /
+   `dispatchPinch`），而不是拦截基类。
+2. **为什么必须在手势层判定**：`/pick`、`/tap-id`、`/scroll-*` 的目标坐标是在 handler
+   内部按节点解析的，Router 拿到 body 时根本不知道会点到哪；只有到 `dispatchGesture`
+   这一刻坐标才是确定的。
+3. **无障碍节点级点击（`ACTION_CLICK`）根本不需要避让**——它不经过输入通道，不会被
+   悬浮窗吞掉。旧逻辑把它们也一起避让了，纯属自伤。
+4. **真实手指完全不受影响**：避让只发生在「a11y 注入的手势」路径上，
+   `input tap` / 用户手指仍会正常命中悬浮窗（实测：真实点击球 → 展开成 720px 卡片）。
+
+**实测（vivo 2.9.88 / 659）**：
+
+| 场景 | 结果 |
+|---|---|
+| agent 式连点 40 次（全部远离球） | 窗口不可见 **0/40**（旧版同场景 14/40 = 35%） |
+| 注入 tap 压在球上 `(1000,506)` | 球**不展开**（避让生效，点击穿透到底层 App） |
+| 注入 swipe 穿过球 `700,506 → 1050,506` | 不展开、不移动；`hide(ops)` 仅 1 对，隐藏 357ms |
+| 真实手指点球 / 点圆点收起 | 正常展开 720px / 正常收回 108px |
+
+**硬规则（新增截图/注入代码必须遵守）**：
+- 任何「注入输入」的新入口都必须走 `dispatchGestureAvoided`，禁止直接调 `dispatchGesture`；
+- 禁止在 `Router` 里按「路径是不是 /act」这类**请求级**条件做避让；
+- 避让时长必须由手势结束（`onCompleted/onCancelled`）决定，兜底 timer 只用于异常路径。
+
 ## 4. 状态机速查
 
 ```

@@ -118,6 +118,11 @@ object StatusOverlay {
      * 空闲时不该还挂着上一次的动作文案（主人要的是「现在在干什么」）。
      */
     @Volatile private var working = false
+    // v2.9.83：无障碍回来了但当时正在显示进度（working）→ 类型切换推迟到回空闲，
+    // 否则会丢掉正在滚动的进度文本。
+    @Volatile private var pendingA11ySwitch = false
+    // v2.9.87：类型切换因 working 被推迟的起始时刻（0 = 未推迟）；超时后强制切换
+    @Volatile private var a11ySwitchDeferredAt = 0L
     private var lastStatusBody: String = ""
     private var lastStatusAt: Long = 0L
 
@@ -176,10 +181,24 @@ object StatusOverlay {
         // 表现就是「切个 App 悬浮窗就没了 / 一会儿又出来」。无障碍已就绪 → 换成 2032 并
         // 保留位置与展开档位，一次性纠正（只在 idle 时换，避免丢正在显示的进度文本）。
         if (root != null) {
-            if (windowTypeUsed == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) return
-            if (working) {
-                Log.i(TAG, "overlay type switch skipped: working (type=$windowTypeUsed)")
+            if (windowTypeUsed == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) {
+                a11ySwitchDeferredAt = 0L
+                return
+            }
+            // v2.9.87：working 可能长期卡住（进度文本还在但本轮早已结束，实测 vivo 上
+            // 60s 一次 "skipped: working" 无限循环），于是 2038 永远换不回 2032——
+            // 而 2038+Activity token 一退后台就被 WMS 隐藏（「切个 App 球就没了」）。
+            // 折中：只在 working 的**前 20 秒**推迟，超时强制切换（位置与档位照旧保留）。
+            val deferFor = 20_000L
+            val nowUptime = android.os.SystemClock.uptimeMillis()
+            if (working && a11ySwitchDeferredAt != 0L && nowUptime - a11ySwitchDeferredAt < deferFor) {
+                pendingA11ySwitch = true
+                Log.i(TAG, "overlay type switch skipped: working (type=$windowTypeUsed, deferred=${nowUptime - a11ySwitchDeferredAt}ms)")
             } else {
+                if (working) {
+                    Log.w(TAG, "overlay type switch forced: working too long (type=$windowTypeUsed)")
+                }
+                a11ySwitchDeferredAt = 0L
                 Log.i(TAG, "overlay type switch: $windowTypeUsed → TYPE_ACCESSIBILITY_OVERLAY (a11y ready)")
                 pendingPos = (params?.x ?: 0) to (params?.y ?: 0)
                 hideInternal(false)
@@ -195,7 +214,17 @@ object StatusOverlay {
      * @return true 表示窗口已创建（或已存在）。
      */
     fun show(ctx: Context): Boolean {
-        if (root != null) return true
+        if (root != null) {
+            // v2.9.83：无障碍回来了但窗口还是应用悬浮窗(2038) → 立刻换回 2032。
+            // 调用点很密（ProgressHub 每次 publish），比等服务重连/看门狗更快收敛。
+            val live = DshAccessibilityService.instance
+            val stuck = working && a11ySwitchDeferredAt != 0L &&
+                android.os.SystemClock.uptimeMillis() - a11ySwitchDeferredAt > 20_000L
+            if (live != null && windowTypeUsed != WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY && (!working || stuck)) {
+                show(live)
+            }
+            return true
+        }
         // 实测：applicationContext 建的 TYPE_APPLICATION_OVERLAY 在 App 退到后台后
         // WMS 会把它标记为 hidden（mLastHidden=true / isVisible=false），切到别的 App 就看不见；
         // Activity token 建的窗口反而能跨 App 持续显示。
@@ -734,7 +763,27 @@ object StatusOverlay {
     fun onAccessibilityLost() {
         // 都先收起——否则服务没了、app 窗口还挂在进程里（用户反馈「退出后悬浮窗还在」）。
         // 服务重新连接时 DshAccessibilityService.onServiceConnected 会按开关重新 show。
+        //
+        // v2.9.81（vivo / OriginOS 17 真机实测）：系统会在后台**静默撤销**无障碍
+        // （`enabled_accessibility_services` 变 null，隔夜就发生），于是 2032 窗口随服务
+        // 一起销毁 —— 用户看到的是「球突然没了 / 再点也没反应」，只能重开 App。
+        // 这里在服务断开时**立刻用应用悬浮窗(2038)顶上**，保住球与位置；
+        // 服务重连时 show(svc) 会走 2.9.75 的类型纠正把它换回 2032（不需要额外代码）。
+        val ctx = appCtx
+        val keep = root != null && !hidden && ctx != null &&
+            !app.dsh.mobile.service.EngineService.userExited(ctx)
         hide(null)
+        if (!keep || ctx == null) return
+        // hide() 是 post 到主线程执行的：必须等它真的把窗口摘掉、并把 hidden 复位之后
+        // 再 show —— 否则 show(ctx) 里 `if (root != null) return true` 会提前返回，
+        // 紧接着排队执行的 hide 又把窗口删掉（实测踩过：日志是「kept alive」紧跟「hidden by user」）。
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            runCatching {
+                resetHidden()
+                if (show(ctx)) Log.i(TAG, "overlay kept alive as app overlay (a11y lost)")
+                else Log.w(TAG, "overlay fallback: show(ctx) returned false")
+            }.onFailure { Log.w(TAG, "overlay fallback failed: ${it.message}") }
+        }, 300L)
     }
 
     private fun hideInternal(userHidden: Boolean) {
@@ -864,6 +913,25 @@ object StatusOverlay {
                 }
             }
         }
+    }
+
+    /**
+     * v2.9.86：**只有注入手势真的压到悬浮窗时才避让**。
+     * @param gestureBounds 一次注入的所有 stroke 的并集（屏幕坐标，已外扩）
+     * @return true 表示已隐藏，调用方必须在手势结束后调用 [endOpsAvoid]
+     */
+    fun beginOpsAvoidIfHit(gestureBounds: android.graphics.Rect): Boolean {
+        val r = currentFrameRect()
+        if (r == null) {
+            Log.d(TAG, "ops avoid skip: overlay rect unknown (gesture=$gestureBounds refs=$hideRefs)")
+            return false
+        }
+        if (!android.graphics.Rect.intersects(r, gestureBounds)) {
+            Log.d(TAG, "ops avoid skip: overlay=$r gesture=$gestureBounds")
+            return false
+        }
+        beginOpsAvoid()
+        return true
     }
 
     fun beginOpsAvoid() {
@@ -1101,6 +1169,15 @@ object StatusOverlay {
             statusText?.text = appCtx?.getString(R.string.overlay_idle) ?: "Idle"
             tintDots(COLOR_IDLE)
             working = false
+            if (pendingA11ySwitch) {
+                pendingA11ySwitch = false
+                DshAccessibilityService.instance?.let { svc ->
+                    if (windowTypeUsed != WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) {
+                        Log.i(TAG, "overlay type switch: deferred until idle")
+                        show(svc)
+                    }
+                }
+            }
             startedAt = 0L
             stopTicker()
             elapsedText?.text = ""
