@@ -249,6 +249,41 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 - **opsAvoid 去抖**：`beginOpsAvoid/endOpsAvoid` 400ms 内重复切换直接忽略（`opsAvoid on/off debounced`），
   避免每 250ms 翻一次导致状态栏/窗口抖动。
 
+### 3.aa 2.9.95「悬浮窗点不开」：档位与渲染态脱钩 + 展开卡片漏锚定（vivo 实测定案）
+
+- 现象（用户原话「现在我只有一个问题：悬浮窗点不开了」）：球看得见、点下去 `handle touch` 日志也有，
+  但毫无反应；偶发时展开卡片只露出屏幕右缘一条竖边，点哪儿都没用。
+- 根因①**档位与视图各说各话**：`expandLevel` 是唯一档位真源，但窗口重建（hide→show、
+  2032↔2038 类型切换）时会用 `rememberedLevel` 把它恢复成 1，而新视图是按**折叠态** inflate 的；
+  `bindHandle()` 又按 `expandLevel > 0` 把 root 的 onClick 绑成空实现，`expandPanel()` 首行还是
+  `if (expandLevel == 1) return` ⇒ 点击要么落在空 onClick、要么被早退吞掉 = **点不开**。
+- 根因②**展开卡片漏锚定**：`applyExpandLevel()` 只在 `lastAppliedLevel != expandLevel` 时锚定，
+  重建后两者已相等 ⇒ 不锚定；新建窗口的 `x` 用的是 `pendingPos`（球坐标 948），展开宽度 720
+  ⇒ 588px 在屏幕外，用户只看到一条边。
+- 修复（4 条，`visibility` + 引用计数机制不变）：
+  1. `expandPanel()` 早退判据改成**渲染态**（`statusRow?.visibility == View.VISIBLE`），并置
+     `lastAppliedLevel = -1` 强制重算锚定；
+  2. 展开态 root 的 onClick 从空实现改成自愈：`if (statusRow?.visibility != View.VISIBLE) expandPanel()`；
+  3. `applyExpandLevel()` 去掉 `lastAppliedLevel != expandLevel` 门控 —— 每次应用档位都
+     `postOnAnimation { anchorToEdge() }`；
+  4. `anchorToEdge()` 兜底夹取 `x ∈ [margin, screenW - w - margin]`（`w` 取 `prm.width → v.width → 档位默认宽`）。
+- 真机验证（vivo 10CG1C1M1H0021Z / 2.9.95 / versionCode 666）：
+
+| 动作 | 期望 | 实测 |
+|---|---|---|
+| 点球 | 展开 720 宽、完整在屏内 | `level=1 pos=336,360 size=720x-2`，连做 3 轮一致 |
+| 点圆点 | 收起成 108 球、贴右 | `level=0 pos=948,360 size=108x108` |
+| 展开态点正文 | 不收起 | `level=1` 不变 |
+| 拖动球 | 跟随并吸附到最近边缘 | `level=0 pos=948,768 size=108x108` |
+| 展开态撤销/恢复无障碍（2032→2038→2032，每次重建窗口） | 仍展开且仍在屏内 | 三次重建全部 `pos=336,360 size=720x-2` |
+| 截图（composite 免闪路径） | 不隐藏、不进画面 | 8/8 采样 `HAS_DRAWN isVisible=true`；PNG 球区域均值 247（无球） |
+
+- 两个排查时必须记住的坐标事实：
+  - vivo 上悬浮窗 `params.y` 与屏幕像素 y 相差 **92px**（`Frames: parent=[0,92][1080,2376]`），
+    `adb shell input tap` 要用视觉坐标（= `params.y + 92`）。
+  - `debugState()` 的 `level` 读的是 `expandLevel` 字段，**不代表"现在长什么样"**；判断渲染态看
+    `statusRow.visibility` 或直接截图。
+
 ### 3.z 为什么 OCR prefetch 绝不能摘悬浮窗（抖动 / flicker）
 
 - 现象：静置、不点任何截图，悬浮窗仍大约每 **3–5 秒**消失一次再出现（肉眼可见）。

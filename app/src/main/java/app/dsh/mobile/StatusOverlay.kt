@@ -409,10 +409,12 @@ object StatusOverlay {
             sScroll?.isClickable = false
             statusTv?.isClickable = false
 
-            // 卡片主体支持拖动与长按隐藏；单击主体空白处不收起，避免误触
+            // 卡片主体支持拖动与长按隐藏；单击主体空白处不收起，避免误触。
+            // 但「档位说展开、实际渲染是球」（重建后脱钩）时，这一下点击必须自愈成展开，
+            // 否则用户点了半天没反应 —— 这正是「悬浮窗点不开」的另一半成因。
             attachGesture(
                 view, p, ctx,
-                onClick = { /* 展开态点卡片空白处不收起，保持稳定展开 */ },
+                onClick = { if (statusRow?.visibility != View.VISIBLE) expandPanel() },
                 onLongPress = { hide(DshAccessibilityService.instance) },
                 scrollChild = sScroll,
             )
@@ -432,6 +434,7 @@ object StatusOverlay {
         if (expandLevel == 0) return
         expandLevel = 0
         rememberedLevel = 0
+        lastAppliedLevel = -1   // 收起后同样要按球宽重新锚定
         applyExpandLevel()
     }
 
@@ -557,7 +560,17 @@ object StatusOverlay {
         val prm = params ?: return
         val ctx = appCtx ?: return
         runCatching {
-            prm.x = dockX(v, prm, ctx)
+            val screenW = screenRect(ctx).width()
+            val margin = dp(ctx, 8)
+            val vw = when {
+                prm.width > 0 -> prm.width
+                v.width > 0 -> v.width
+                else -> if (expandLevel == 0) dp(ctx, COLLAPSED_BALL_DP) else dp(ctx, 240)
+            }
+            // 兜底夹取：任何情况下窗口右边都不能超出屏幕。
+            // 早先「展开卡片 x 仍是球坐标（948 + 720 > 1080）」时，用户只看到屏幕上一条
+            // 竖边、点哪里都没反应 —— 与「点不开」是同一个体验故障。
+            prm.x = dockX(v, prm, ctx).coerceIn(margin, (screenW - vw - margin).coerceAtLeast(margin))
             prm.y = clampY(v, prm, ctx)
             safeUpdateLayout(wm, v, prm)
         }
@@ -587,9 +600,15 @@ object StatusOverlay {
      */
     private fun expandPanel() {
         autoExpanded = false
-        if (expandLevel == 1) return
+        // ⚠️ 早退判据必须是「渲染态」，不能只看 expandLevel。
+        // 窗口重建 / 2032↔2038 类型切换 / hide→show 之后，expandLevel 可能被 rememberedLevel
+        // 留在 1，而视图已经按折叠态重建 —— 此时旧代码 `if (expandLevel == 1) return`
+        // 会把点击直接吞掉，真机表现就是「悬浮窗点不开」（v2.9.95 修复）。
+        val renderedExpanded = statusRow?.visibility == View.VISIBLE
+        if (renderedExpanded && expandLevel == 1) return
         expandLevel = 1
         rememberedLevel = 1
+        lastAppliedLevel = -1   // 强制重算锚定（卡在屏幕外的宽条就是漏锚定导致的）
         applyExpandLevel()
         // 再补一次：刚摘过窗口/刚由 GONE 恢复时，首帧测量可能还停在折叠态，
         // 补一次保证圆点、滚动区、文字三者的可见性与卡片尺寸一致。
@@ -649,15 +668,15 @@ object StatusOverlay {
         refreshActionVisibility()
         applyWindowSize(ctx, view, collapsed)
 
-        // 仅在档位切换时才需要重新锚定贴边
-        if (lastAppliedLevel != expandLevel) {
-            lastAppliedLevel = expandLevel
-            if (!anchorPending) {
-                anchorPending = true
-                view.postOnAnimation {
-                    anchorPending = false
-                    anchorToEdge()
-                }
+        // 每次应用档位都要重新锚定：宽度会在球 108 ↔ 卡片 720 之间变，
+        // 只在「档位值变了」时锚定，会让重建后的窗口停在旧坐标上
+        // （展开卡片 x=948 + 宽 720 → 588px 在屏幕外 = 用户眼里的「点不开」）。
+        lastAppliedLevel = expandLevel
+        if (!anchorPending) {
+            anchorPending = true
+            view.postOnAnimation {
+                anchorPending = false
+                anchorToEdge()
             }
         }
 
