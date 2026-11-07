@@ -299,6 +299,7 @@ object AgentBridge {
     internal val screen by lazy { ScreenHandler(this) }
     internal val action by lazy { ActionHandler(this) }
     internal val appHandler by lazy { AppHandler(this) }
+    internal val audio by lazy { app.dsh.mobile.bridge.AudioHandler(this) }
     internal val shortcutHandler by lazy { ShortcutHandler(this) }
     internal val promptHandler by lazy { app.dsh.mobile.bridge.AgentPromptHandler(this) }
     internal val vision by lazy { VisionHandler(this) }

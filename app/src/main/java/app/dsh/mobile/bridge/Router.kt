@@ -176,6 +176,8 @@ internal class Router(private val bridge: AgentBridge) {
             method == "GET" && path == "/settings" -> system.settingsGet()
             method == "POST" && path == "/settings" -> system.settingsSet(body)
             method == "POST" && path == "/activity" -> appHandler.openActivity(body)
+            method == "GET" && path == "/volume" -> audio.volumeGet(ctx)
+            method == "POST" && path == "/volume" -> audio.volumeSet(ctx, body)
             method == "POST" && path == "/media/play" -> appHandler.mediaPlay(ctx, body)
             method == "POST" && path == "/media/pause" -> appHandler.mediaPause(ctx)
             method == "POST" && path == "/media/resume" -> appHandler.mediaResume(ctx)

@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 音量控制：normal 权限，装包即授予（GET/POST /volume → AudioManager） -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 设置系统闹钟（交给时钟 App 建，用户能在系统时钟列表里看到/编辑） -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!-- v1.2.161：验证码提示条用普通浮层通道（无障碍不在位时也能显示） -->

@@ -1,0 +1,80 @@
+#!/system/bin/sh
+# [dsh-android] 自举到引擎 bash（/dev/tcp 是 bash 特性，toybox sh 不支持）。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+# [dsh-android] vol: 音量 / 铃声模式（v2.9.99）。
+#
+# 走 App 侧的 AudioManager（MODIFY_AUDIO_SETTINGS 是 normal 权限，装包即授予），
+# 不点音量键、不依赖当前前台是谁，改完读回校验。
+#
+# usage:
+#   vol                          # 读全部流 + 铃声模式
+#   vol set <index|N%> [stream]  # 绝对档位或百分比（默认 music）
+#   vol up [n] [stream] | vol down [n] [stream]
+#   vol mute [stream] | vol unmute [stream]
+#   vol ring | vol vibrate | vol silent
+#   vol dnd-settings             # 打开「勿扰访问权」设置页（silent 需要）
+#   vol <GET|POST> <path> [json] # 直调桥
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/_dsh_http.sh"
+
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+usage() { sed -n '9,19p' "$0" >&2; exit 2; }
+
+call() { # call METHOD PATH [BODY]
+  out=$(dsh_http "$1" "$2" "${3:-}"); rc=$?
+  [ "$rc" = 0 ] || { echo "vol: bridge failed (rc=$rc)${out:+ — $out}" >&2; exit 1; }
+  printf '%s\n' "$out"
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  ""|get)
+    call GET /volume
+    ;;
+  set)
+    shift
+    val="${1:-}"; [ -n "$val" ] || usage; shift || true
+    stream="${1:-music}"
+    case "$val" in
+      *%) body="{\"stream\":\"$(esc "$stream")\",\"percent\":${val%\%}}" ;;
+      *)  body="{\"stream\":\"$(esc "$stream")\",\"index\":$val}" ;;
+    esac
+    call POST /volume "$body"
+    ;;
+  up|down)
+    shift
+    steps=1
+    case "${1:-}" in
+      ''|-) ;;
+      *[!0-9]*) ;;
+      *) steps="$1"; shift || true ;;
+    esac
+    stream="${1:-music}"
+    dir=up; [ "$cmd" = down ] && dir=down
+    call POST /volume "{\"stream\":\"$(esc "$stream")\",\"adj\":\"$dir\",\"steps\":$steps}"
+    ;;
+  mute|unmute)
+    shift || true
+    stream="${1:-music}"
+    m=true; [ "$cmd" = unmute ] && m=false
+    call POST /volume "{\"stream\":\"$(esc "$stream")\",\"mute\":$m}"
+    ;;
+  ring|vibrate|silent)
+    mode="$cmd"; [ "$mode" = ring ] && mode=normal
+    call POST /volume "{\"ringer\":\"$mode\"}"
+    ;;
+  dnd-settings)
+    call POST /volume '{"openPolicySettings":true}'
+    ;;
+  -h|--help) usage ;;
+  GET|POST)
+    shift
+    path="${1:-/volume}"; shift || true
+    call "$cmd" "$path" "${1:-}"
+    ;;
+  *) echo "vol: unknown command '$cmd'" >&2; usage ;;
+esac

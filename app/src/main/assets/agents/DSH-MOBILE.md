@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v76 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v77 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -80,7 +80,8 @@ as blocked because it is off:
   `POST /share/text`, `POST /export`, `native share`, `native share-text`,
   `native open-file|open-folder`, SAF/DocumentsProvider;
 - media, TTS, notifications: `POST /media/play`, `POST /media/pause`, `POST /media/resume`,
-  `POST /media/stop`, `GET /media/status`, `say`, `notify`, `POST /notify`, `POST /say`,
+  `POST /media/stop`, `GET /media/status`, `GET /volume`, `POST /volume`, `say`, `notify`,
+  `POST /notify`, `POST /say`,
   `POST /overlay` (progress overlay; SYSTEM_ALERT_WINDOW first, a11y window only as fallback);
 - app/engine control: `GET /status`, `GET /settings`, `GET /apps`, `GET /process`, `GET /diag`,
   `GET /plugin/list`, `POST /plugin/install`, `POST /engine/restart`, `/pty/*`, `/runtime/*`,
@@ -312,6 +313,38 @@ media pause | resume | stop | status
 # bridge equivalents: POST /media/play {"path"|"url","title","artist","loop"},
 #                     POST /media/pause, /media/resume, /media/stop; GET /media/status
 ```
+
+### Volume / ringer (no accessibility needed)
+
+`MODIFY_AUDIO_SETTINGS` is a **normal** permission (granted at install, no prompt), so volume
+works even with the accessibility service off:
+
+```bash
+vol                                  # all streams + ringer mode (JSON)
+vol set 5                            # music index (0..max)
+vol set 40%                          # by percent
+vol up 2 | vol down                  # relative
+vol mute | vol unmute                # ADJUST_TOGGLE_MUTE / restores previous index
+vol silent | vol vibrate | vol ring  # ringer mode
+# bridge: GET /volume -> {streams:{music|ring|notification|alarm|system|voice_call},
+#                          ringer:{mode,policy_access}, volume_fixed}
+#         POST /volume {"stream":"music","index":5|"percent":40|"adj":"up"|"steps":2|
+#                       "mute":true}
+#         POST /volume {"ringer":"silent|vibrate|normal"}
+```
+
+- Every write **reads back** and returns `before`/`after`/`changed`; `changed:false` means the ROM
+  refused (e.g. media volume locked during a call) - report that instead of assuming success.
+- `ringer=silent` toggles Do Not Disturb: without **Notification Policy Access** the system throws
+  `SecurityException` and the endpoint answers `409 needs_policy_access` with
+  `action:"open_policy_settings"`; open the page with `vol dnd-settings`.
+- Media streams never need that policy access.
+- **ROM caveat (measured on vivo OriginOS 17 / Android 17)**: `STREAM_MUSIC` changes are silently
+  dropped for third-party apps - the call reaches AudioService, no exception is thrown, the index
+  simply stays. `ring` / `notification` / `alarm` / `system` / `voice_call` do work there, and the
+  hardware volume keys work. When that happens the endpoint answers `changed:false` +
+  `blocked_by_rom:true`; don't retry in a loop - open Settings > Sound and drag the slider as a UI
+  action, or tell the user. Stock Android (Pixel/AOSP) applies music changes normally.
 
 - Local paths: same uid, so files under `$PREFIX`/`$DSH_HOME` work; `/sdcard` needs the
   all-files grant. `http(s)` URLs work too.

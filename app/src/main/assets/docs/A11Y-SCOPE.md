@@ -38,7 +38,7 @@
 | 启动 / 交接 / 系统页 | `POST /launch`、`POST /launch-intent`、`POST /open`、`POST /activity`、`POST /a11y/enable`（只是打开系统无障碍设置页） |
 | 等本 App 回来 | `POST /wait-app`（目标包是本 App 时） |
 | 状态 / 设置 / 引擎 | `GET /status`、`GET /settings`、`POST /settings`、`GET /apps`、`GET /process`、`GET /diag`、`GET /plugin/list`、`POST /plugin/install`、`POST /engine/restart`、`POST /notify`、`POST /say`、`GET /say`、`POST /overlay`、`GET /local/status`、`POST /local/ensure`、`GET /daemon/status`、`POST /daemon/stop` |
-| 文件 / 分享 / 媒体 | `POST /open/file`、`POST /open/folder`、`POST /open/share`、`POST /share/text`、`POST /media/play`、`POST /media/pause`、`POST /media/resume`、`POST /media/stop`、`GET /media/status`、`POST /export` |
+| 文件 / 分享 / 媒体 | `POST /open/file`、`POST /open/folder`、`POST /open/share`、`POST /share/text`、`POST /media/play`、`POST /media/pause`、`POST /media/resume`、`POST /media/stop`、`GET /media/status`、`GET /volume`、`POST /volume`、`POST /export` |
 | 本 App 自己的窗口 | `GET /app-screenshot`（PixelCopy 抓本进程窗口，不要任何权限） |
 | PTY / 运行时 / 视觉列表 | `POST /pty/open`、`POST /pty/write`、`POST /pty/resize`、`POST /pty/kill`、`POST /pty/close`、`GET /pty/read`、`GET /runtime/status`、`GET /runtime/feed`、`POST /runtime/pull`、`POST /runtime/stage`、`POST /runtime/apply`、`POST /runtime/rollback`、`GET /vision/list` |
 | 记忆记账（不读屏） | `GET /memory/list`、`GET /memory/stats`、`POST /memory/confirm`、`POST /memory/clear` |
