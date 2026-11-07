@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v77 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v78 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -340,11 +340,26 @@ vol silent | vol vibrate | vol ring  # ringer mode
   `action:"open_policy_settings"`; open the page with `vol dnd-settings`.
 - Media streams never need that policy access.
 - **ROM caveat (measured on vivo OriginOS 17 / Android 17)**: `STREAM_MUSIC` changes are silently
-  dropped for third-party apps - the call reaches AudioService, no exception is thrown, the index
-  simply stays. `ring` / `notification` / `alarm` / `system` / `voice_call` do work there, and the
-  hardware volume keys work. When that happens the endpoint answers `changed:false` +
-  `blocked_by_rom:true`; don't retry in a loop - open Settings > Sound and drag the slider as a UI
-  action, or tell the user. Stock Android (Pixel/AOSP) applies music changes normally.
+  dropped for third-party apps - the call reaches AudioService, no exception is thrown, no appops
+  note is recorded, the index simply stays. `ring` / `notification` / `alarm` / `system` /
+  `voice_call` do work there, and the hardware volume keys work. When that happens the endpoint
+  answers `changed:false` + `blocked_by_rom:true`; don't retry in a loop. Stock Android
+  (Pixel/AOSP) applies music changes normally.
+- **Working fallback for a blocked stream: `viaUi`.** It opens Settings > Sound and drives the
+  system slider through the accessibility service (tap, then a corrective drag when the tap lands
+  more than `max/24` away) - this is the same path a user takes, so the ROM accepts it:
+
+```bash
+vol ui 40            # music 40% through the settings slider
+vol ui 55 alarm      # alarm 55%
+# bridge: POST /volume {"viaUi":true,"stream":"music","percent":40}
+#   -> {op:"ui_settings", before, after, changed, requested,
+#       slider_action:"set_progress|tap|tap+drag|drag|not_found", uiDetail}
+```
+
+  Measured on the same vivo device (150-step media scale): 20%→26, 55%→84, 90%→141, alarm
+  25%→34, every call `changed:true`; the app is brought back to the foreground afterwards.
+  It needs the accessibility service (it is the one injecting the tap) and takes ~2-4 s.
 
 - Local paths: same uid, so files under `$PREFIX`/`$DSH_HOME` work; `/sdcard` needs the
   all-files grant. `http(s)` URLs work too.

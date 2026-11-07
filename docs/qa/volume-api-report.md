@@ -178,3 +178,11 @@ adb shell dumpsys audio | awk '/^- STREAM_ALARM:/{f=1} f{print} f&&/Volume Group
 - 无 DND 访问权时「把铃声调到 0」类操作会被系统拦截（端点返回可点的授权入口）。
 - vivo 媒体流写入间歇性被丢（见 §4.3），非本 app 可修；已做读回校验与显式标记。
 - 音量键/面板的 UI 自动化不在本端点范围内（a11y 注入按键在部分 ROM 会弹系统确认）。
+
+## §9 后续：媒体流的确定可行路径（2.9.100 / 671）
+
+标准 `setStreamVolume` 在本机对 `STREAM_MUSIC` 被 ROM 在 `checkNoteAppOp` 之前丢弃，
+音量组 API 需要 `signature|privileged(|role)` 权限（普通 app 无解）。已补 **UI 兜底**：
+`POST /volume {"viaUi":true,"stream":"music","percent":40}` 打开系统「声音与振动」设置页，
+用无障碍在 SeekBar 上点按/拖动，实测 20%→26、55%→84、90%→141、alarm 25%→34，全部 `changed:true`。
+权限矩阵、AOSP 代码定位与实测见 **[volume-write-path.md](volume-write-path.md)**。

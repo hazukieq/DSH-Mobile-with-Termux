@@ -101,6 +101,166 @@ internal class AudioHandler(private val bridge: AgentBridge) {
     }
 
     /** `GET /volume`：所有主流 + 铃声模式 + 能力位。 */
+    /**
+     * 每个 stream 的写操作在 AudioService 里受 AppOps 门控（AOSP AudioService.STREAM_VOLUME_OPS）：
+     * STREAM_MUSIC → android:audio_media_volume，STREAM_ALARM → android:audio_alarm_volume …
+     * noteOp 不等于 MODE_ALLOWED 时 AudioService **静默 return**（不抛异常、不打日志），
+     * 表现就是「调用成功但音量没变」。默认模式是 allowed，但厂商策略 / UserManager
+     * DISALLOW_ADJUST_VOLUME 限制 / 用户手动改 appops 都会把它变成 deny。
+     */
+    private fun volumeOp(stream: Int): String = when (stream) {
+        AudioManager.STREAM_VOICE_CALL -> "android:audio_voice_volume"
+        AudioManager.STREAM_RING -> "android:audio_ring_volume"
+        AudioManager.STREAM_ALARM -> "android:audio_alarm_volume"
+        AudioManager.STREAM_NOTIFICATION -> "android:audio_notification_volume"
+        AudioManager.STREAM_ACCESSIBILITY -> "android:audio_accessibility_volume"
+        else -> "android:audio_media_volume"   // MUSIC / SYSTEM / DTMF / TTS / ASSISTANT
+    }
+
+    /** 返回 allowed / denied / default / unknown（读不到时）。 */
+    private fun opMode(ctx: Context, op: String): String = runCatching {
+        val aom = ctx.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+        val mode = aom.unsafeCheckOpNoThrow(op, android.os.Process.myUid(), ctx.packageName)
+        when (mode) {
+            android.app.AppOpsManager.MODE_ALLOWED -> "allowed"
+            android.app.AppOpsManager.MODE_IGNORED -> "ignored"
+            android.app.AppOpsManager.MODE_ERRORED -> "denied"
+            else -> "default"
+        }
+    }.getOrDefault("unknown")
+
+
+    // ---------------------------------------------------------------- UI 兜底
+    // 起因：vivo OriginOS 17 在 AudioService 内部把 STREAM_MUSIC 的 setStreamVolume 丢掉
+    // （dumpsys audio 有 VolumeEvent、但没有 AUDIO_MEDIA_VOLUME 的 appops 记录、也没有
+    // sending VOLUME_CHANGED；alarm/ring/notification/system 全部正常）。音量键能用 ⇒
+    // 走「声音与振动」设置页的 SeekBar + a11y ACTION_SET_PROGRESS 是确定可行的用户路径。
+    private fun findSeekBars(root: android.view.accessibility.AccessibilityNodeInfo?,
+                             label: String?, out: MutableList<android.view.accessibility.AccessibilityNodeInfo>,
+                             depth: Int = 0) {
+        if (root == null || depth > 40 || out.size >= 8) return
+        val cn = root.className?.toString() ?: ""
+        if (cn.contains("SeekBar")) {
+            val around = StringBuilder()
+            runCatching {
+                val p = root.parent
+                if (p != null) {
+                    for (i in 0 until p.childCount) {
+                        val c = p.getChild(i) ?: continue
+                        val t = c.text?.toString() ?: c.contentDescription?.toString() ?: ""
+                        if (t.isNotBlank()) around.append(t).append(' ')
+                    }
+                }
+            }
+            val text = around.toString()
+            if (label == null || text.contains(label)) out.add(root)
+        }
+        for (i in 0 until root.childCount) {
+            findSeekBars(root.getChild(i), label, out, depth + 1)
+            if (out.size >= 8) return
+        }
+    }
+
+    /** 走系统「声音与振动」设置页的滑块改音量；返回诊断串（供回执展示）。 */
+    private fun uiSetVolume(ctx: Context, a: AudioManager, streamType: Int, targetIndex: Int): String {
+        val svc = app.dsh.mobile.DshAccessibilityService.instance ?: return "no_a11y"
+        val barsBeforeIndex = a.getStreamVolume(streamType)
+        // 系统「声音与振动」页的滑块标题由 ROM 本地化，只能按当前语言的文案匹配；
+        // 这里用 \u 转义写中文，避免把 CJK 字面量留进 Kotlin 源码（i18n 门禁要求默认 locale 纯净）。
+        // 媒体=\u5a92\u4f53 铃声=\u94c3\u58f0 通知=\u901a\u77e5 闹钟=\u95f9\u949f
+        val label = when (streamType) {
+            AudioManager.STREAM_ALARM -> "\u95f9\u949f"
+            AudioManager.STREAM_RING -> "\u94c3\u58f0"
+            AudioManager.STREAM_NOTIFICATION -> "\u901a\u77e5"
+            else -> "\u5a92\u4f53"
+        }
+        runCatching {
+            ctx.startActivity(Intent(Settings.ACTION_SOUND_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+        var bars = mutableListOf<android.view.accessibility.AccessibilityNodeInfo>()
+        var seen = ""
+        var all = 0
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            Thread.sleep(300)
+            bars = mutableListOf()
+            runCatching {
+                val root = svc.rootInActiveWindow
+                seen = root?.packageName?.toString() ?: "null"
+                val every = mutableListOf<android.view.accessibility.AccessibilityNodeInfo>()
+                findSeekBars(root, null, every)
+                all = every.size
+                // 只认「屏幕上真实可见」的滑块条：宽度 >200px 且与屏幕相交，避免拿到别的窗口/离屏节点。
+                val scr = svc.resources.displayMetrics
+                every.filter { it1 ->
+                    val r = android.graphics.Rect()
+                    it1.getBoundsInScreen(r)
+                    r.width() > 200 && r.left >= 0 && r.right <= scr.widthPixels + 40 &&
+                        r.top >= 0 && r.bottom <= scr.heightPixels
+                }.forEach { n ->
+                    val t = (n.text?.toString() ?: "") + " " + (n.contentDescription?.toString() ?: "")
+                    if (t.contains(label)) bars.add(n)
+                }
+            }
+            if (bars.isNotEmpty()) break
+        }
+        if (bars.isEmpty()) {
+            Log.i(tag, "uiSetVolume: no bar label=$label root=$seen seekbars=$all")
+            return "not_found(root=$seen seekbars=$all label=$label)"
+        }
+        val target = bars.first()
+        val streamMax = a.getStreamMaxVolume(streamType).coerceAtLeast(1)
+        val frac = (targetIndex.toFloat() / streamMax).coerceIn(0f, 1f)
+        val setProgress = runCatching {
+            target.performAction(android.view.accessibility.AccessibilityNodeInfo
+                .AccessibilityAction.ACTION_SET_PROGRESS.id,
+                android.os.Bundle().apply {
+                    putFloat(android.view.accessibility.AccessibilityNodeInfo
+                        .ACTION_ARGUMENT_PROGRESS_VALUE, frac * 100f)
+                })
+        }.getOrDefault(false)
+        if (setProgress) return "set_progress bars=${bars.size} frac=$frac"
+        // vivo 的 SeekBar 不支持 ACTION_SET_PROGRESS：改为在滑块条上点一下（多数 SeekBar 点位置即跳转），
+        // 仍不生效就从当前拇指位置拖到目标位置。
+        val b = android.graphics.Rect()
+        target.getBoundsInScreen(b)
+        if (b.width() <= 0 || b.height() <= 0) return "no_bounds bars=${bars.size}"
+        val y = b.centerY()
+        val tx = (b.left + b.width() * frac).toInt().coerceIn(b.left + 2, b.right - 2)
+        fun gesture(fromX: Int, toX: Int): Boolean {
+            val path = android.graphics.Path().apply {
+                moveTo(fromX.toFloat(), y.toFloat())
+                if (fromX != toX) lineTo(toX.toFloat(), y.toFloat())
+            }
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(path, 0L,
+                if (fromX == toX) 60L else 260L)
+            val g = android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build()
+            return runCatching { svc.dispatchGesture(g, null, null) }.getOrDefault(false)
+        }
+        gesture(tx, tx)
+        Thread.sleep(420L)
+        var now = a.getStreamVolume(streamType)
+        var action = "tap"
+        // 点按有档位误差（vivo 媒体 150 档、滑块像素量化）；偏离超过 max/24 就从当前拇指位置补一次拖动。
+        val tolerance = (streamMax / 24).coerceAtLeast(1)
+        if (now == barsBeforeIndex) {
+            val from = (b.left + b.width() * (now.toFloat() / streamMax)).toInt()
+            gesture(from, tx)
+            Thread.sleep(450L)
+            now = a.getStreamVolume(streamType)
+            action = "drag"
+        } else if (Math.abs(now - targetIndex) > tolerance) {
+            val from = (b.left + b.width() * (now.toFloat() / streamMax)).toInt()
+            gesture(from, tx)
+            Thread.sleep(450L)
+            now = a.getStreamVolume(streamType)
+            action = "tap+drag"
+        }
+        Log.i(tag, "uiSetVolume: $action bars=${bars.size} label=$label frac=$frac tap=$tx now=$now")
+        return "$action bars=${bars.size} pkg=$seen now=$now tgt=$targetIndex"
+    }
+
     fun volumeGet(ctx: Context): Pair<Int, String> {
         val a = am(ctx) ?: return 503 to """{"ok":false,"error":"no_audio_service"}"""
         return runCatching {
@@ -158,6 +318,66 @@ internal class AudioHandler(private val bridge: AgentBridge) {
             }
         }
 
+        // 0c) 音量组（Android 16+ / VolumeGroup API）：vivo「应用独立音量」下 setStreamVolume 会被
+        //     厂商拦截（persist.sys.audio.vapc.volume.intercept_setvolume=true，实测静默丢弃），
+        //     而 adjustVolumeGroupVolume 走的是同一套 VolumeGroupService，未被拦截。
+        if (Build.VERSION.SDK_INT >= 36 && obj.optBoolean("viaGroup", false)) {
+            val usage = when (obj.optString("usage", "media")) {
+                "alarm" -> android.media.AudioAttributes.USAGE_ALARM
+                "notification" -> android.media.AudioAttributes.USAGE_NOTIFICATION
+                "assistant" -> android.media.AudioAttributes.USAGE_ASSISTANT
+                else -> android.media.AudioAttributes.USAGE_MEDIA
+            }
+            val attrs = android.media.AudioAttributes.Builder()
+                .setUsage(usage)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+            return runCatching {
+                val gid = a.getVolumeGroupIdForAttributes(attrs)
+                val stream = if (usage == android.media.AudioAttributes.USAGE_ALARM) AudioManager.STREAM_ALARM
+                             else AudioManager.STREAM_MUSIC
+                val before = a.getStreamVolume(stream)
+                val target = when {
+                    obj.has("index") -> obj.optInt("index")
+                    obj.has("level") -> obj.optInt("level")
+                    obj.has("percent") -> Math.round(obj.optInt("percent") / 100f * a.getStreamMaxVolume(stream))
+                    else -> -1
+                }
+                val steps = obj.optInt("steps", 0)
+                var done = 0
+                if (target >= 0) {
+                    val delta = target - before
+                    val dir = if (delta > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+                    repeat(kotlin.math.abs(delta)) {
+                        a.adjustVolumeGroupVolume(gid, dir, 0)
+                        done++
+                    }
+                } else if (steps > 0) {
+                    val dir = when (obj.optString("adj", "down")) {
+                        "up", "raise" -> AudioManager.ADJUST_RAISE
+                        else -> AudioManager.ADJUST_LOWER
+                    }
+                    repeat(steps) { a.adjustVolumeGroupVolume(gid, dir, 0); done++ }
+                }
+                val after = a.getStreamVolume(stream)
+                200 to JSONObject().put("ok", true).put("op", "group").put("group_id", gid)
+                    .put("stream", stream).put("before", before).put("after", after)
+                    .put("changed", before != after).put("steps", done)
+                    .put("muted", runCatching { a.isVolumeGroupMuted(gid) }.getOrDefault(false))
+                    .put("verify", "read-back").toString()
+            }.getOrElse { e ->
+                Log.w("AudioHandler", "group volume failed: ${e.message}")
+                500 to JSONObject().put("ok", false).put("error", "group_failed")
+                    .put("reason", e.message ?: "unknown").toString()
+            }
+        }
+
+        // 0d) AppOps 诊断：把门控状态直接放进响应，避免「看起来成功其实被静默丢弃」
+        val preName = obj.optString("stream", "music").lowercase()
+        val preStream = streams[preName] ?: AudioManager.STREAM_MUSIC
+        val preOp = volumeOp(preStream)
+        val preMode = opMode(ctx, preOp)
+
         // 1) 铃声模式（可能需要 DND 访问权）
         val ringer = obj.optString("ringer").lowercase()
         if (ringer.isNotBlank()) {
@@ -200,6 +420,36 @@ internal class AudioHandler(private val bridge: AgentBridge) {
             }
         }
 
+        // 1b) UI 兜底：走「声音与振动」设置页滑块（绕过 ROM 对 setStreamVolume 的拦截）
+        if (obj.optBoolean("viaUi", false)) {
+            val name = obj.optString("stream", "music").lowercase()
+            val type = streams[name] ?: return 400 to """{"ok":false,"error":"unknown_stream"}"""
+            val max = a.getStreamMaxVolume(type)
+            val want = when {
+                obj.has("index") -> obj.optInt("index")
+                obj.has("level") -> obj.optInt("level")
+                obj.has("percent") -> Math.round(obj.optInt("percent") / 100f * max)
+                else -> return 400 to """{"ok":false,"error":"need index|level|percent"}"""
+            }.coerceIn(0, max)
+            val before = a.getStreamVolume(type)
+            val detail = runCatching { uiSetVolume(ctx, a, type, want) }.getOrDefault("exception")
+            Thread.sleep(400)
+            val after = a.getStreamVolume(type)
+            // 成功改完后把 App 切回前台，别把用户留在系统设置页。
+            if (before != after) {
+                runCatching {
+                    ctx.startActivity(Intent().setClassName(ctx.packageName, "app.dsh.mobile.MainActivity")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                }
+            }
+            return 200 to JSONObject().put("ok", true).put("op", "ui_settings")
+                .put("stream", name).put("before", before).put("after", after)
+                .put("changed", before != after).put("requested", want)
+                .put("slider_action", detail.substringBefore(' '))
+                .put("note", "driven through the system sound-settings slider (a11y tap/drag)").put("uiDetail", detail)
+                .toString()
+        }
+
         // 2) 流音量
         val streamName = obj.optString("stream", "music").lowercase()
         val type = streams[streamName]
@@ -214,6 +464,7 @@ internal class AudioHandler(private val bridge: AgentBridge) {
         // ui=true 强制走 FLAG_SHOW_UI；默认 0（静默），静默无效时自动带 UI 重试一次。
         var flags = if (obj.optBoolean("ui", false)) AudioManager.FLAG_SHOW_UI else 0
         val resp = JSONObject().put("ok", true).put("op", "set").put("stream", streamName)
+            .put("appop", preOp).put("appop_mode", preMode)
         return runCatching {
             when {
                 obj.has("mute") -> {
