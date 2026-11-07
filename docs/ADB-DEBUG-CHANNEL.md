@@ -52,6 +52,21 @@ adb shell content query --uri content://com.termux.adb/state
 | `overlay` | `StatusOverlay.debugState()`：`root/attached/live/level/pos/size/flags/touchable/hideRefs/type` |
 | `token` | `ready` / `missing` |
 
+## 配套脚本
+
+取证/调试脚本已经接上这条通道，不用再手贴 token：
+
+```bash
+cd scripts/probes/flicker
+./bridge.sh token     # 取 token（自动 provider → /sdcard 兜底）
+./bridge.sh ping      # /diag 探活
+./bridge.sh state     # 版本 / pid / a11y / engine / overlay
+./bridge.sh shot /tmp/x.png
+./bridge.sh tap 540 1200
+```
+
+无 root 设备（vivo / OriginOS）用 `bridge.sh` 即可；`layers/frames/capture` 那些仍需要 root。
+
 ## 安全边界：凭什么只给 adb
 
 三重闸门，缺一不可：
