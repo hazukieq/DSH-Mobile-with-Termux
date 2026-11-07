@@ -56,6 +56,18 @@ object OrientationPrefs {
         OrientationMode.AUTO -> ActivityInfo.SCREEN_ORIENTATION_USER
     }
 
+    /**
+     * 把当前偏好落到某个 Activity 的 requestedOrientation。
+     *
+     * v2.9.110：原生页面（设置/关于/自定义指令）此前各自硬编码
+     * `requestedOrientation = SCREEN_ORIENTATION_PORTRAIT`，导致「主界面横屏、
+     * 一进设置就跳竖屏」（平板上必现，手机上因默认竖屏看不出来）。
+     * 原生页面必须和主界面共用同一套策略，否则同一个 App 里出现两种朝向行为。
+     */
+    fun applyTo(activity: android.app.Activity) {
+        activity.requestedOrientation = toActivityInfo(get(activity))
+    }
+
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(DshApp.PREFS_UI, Context.MODE_PRIVATE)
 }

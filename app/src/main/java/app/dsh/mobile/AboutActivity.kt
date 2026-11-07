@@ -3,7 +3,6 @@ package app.dsh.mobile
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.widget.ImageView
 import android.widget.TextView
@@ -21,7 +20,8 @@ class AboutActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        // v2.9.110：跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
+        OrientationPrefs.applyTo(this)
         setContentView(R.layout.activity_about)
 
         findViewById<ImageView>(R.id.btnBack).setOnClickListener { finish() }

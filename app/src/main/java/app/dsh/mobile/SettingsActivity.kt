@@ -3,7 +3,6 @@ package app.dsh.mobile
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -67,7 +66,8 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 设置页固定竖屏：即使主界面开了横屏模式，设置页也不跟随旋转
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        // v2.9.110：跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
+        OrientationPrefs.applyTo(this)
         setContentView(R.layout.activity_settings)
         addProgressSection()
 
