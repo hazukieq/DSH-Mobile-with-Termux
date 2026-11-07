@@ -30,3 +30,13 @@
 - 门禁：`python3 scripts/check-bundled-docs.py`（漏打包会 exit 1）。
 - 门禁：`python3 scripts/check-overlay-avoid.py`（禁止「路径表 → 隐藏悬浮窗」的写法复发，
   历史两次事故见 `docs/OVERLAY.md` §3.p；`bash scripts/acceptance.sh --static` 已包含它）。
+
+## 分支模型（dev → main）
+
+- **`main` = 稳定线**：只接受来自 `dev` 的合并，日常不直接提交；tag / Release 都打在 `main` 上。
+- **`dev` = 工作线 + 恢复快照**：所有改动先提交到 `dev`；它同时也是 main 的一份快照，
+  万一需要回滚而 git 历史不便操作（例如要丢弃一批已推送的提交），可以直接
+  `git reset --hard dev@{当时的位置}` 或从 `dev` 的某个提交重建分支。
+- 流程：`dev` 上改 → 真机验证 + `bash scripts/acceptance.sh --static` 通过 → `git checkout main && git merge --ff-only dev`（能快进就快进，避免无谓 merge commit）→ push → 需要发版时打 tag。
+- 发版后若 `main` 有热修（极少见），同样先回到 `dev` 做，再合并；不要两边同时改。
+- 合并前确认 `dev` 与 `main` 的差异只有预期提交：`git log --oneline main..dev`。
