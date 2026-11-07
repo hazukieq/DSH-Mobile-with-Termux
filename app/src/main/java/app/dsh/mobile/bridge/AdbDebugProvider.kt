@@ -91,7 +91,7 @@ class AdbDebugProvider : ContentProvider() {
                 rows += arrayOf("overlay", runCatching { StatusOverlay.debugState() }.getOrDefault("?"))
                 rows += arrayOf("token", if ((AgentBridge.currentToken() ?: "").isNotEmpty()) "ready" else "missing")
             }
-            else -> throw IllegalArgumentException("unknown path: ${uri.lastPathSegment}（可用：token | state）")
+            else -> throw IllegalArgumentException("unknown path: ${uri.lastPathSegment} (available: token | state)")
         }
         return MatrixCursor(COLUMNS).apply {
             for (r in rows) addRow(r)

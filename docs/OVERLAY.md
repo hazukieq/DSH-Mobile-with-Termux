@@ -424,3 +424,32 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
 | 注入 tap 压在球上 `(1000,506)` | — | 球仍收起（避让 + 穿透生效） |
 
 `ops avoid` 与 `hide(ops)` 计数均为 **0**（2.9.90 之前同场景 1154 / 1159）。
+
+### 机械闸门（2.9.91 起）
+
+只靠文档约束不够 —— 上两次事故都是「有人凭端点名字猜」。所以加了形状闸门：
+
+```bash
+python3 scripts/check-overlay-avoid.py        # 0 = 通过；1 = 检出路径级避让
+python3 scripts/check-overlay-avoid.py --selftest
+```
+
+它不看端点名字，只看三种形状（`app/src/main/java/**/*.kt`）：
+
+| 规则 | 形状 |
+|---|---|
+| R1 `PATH_SET_DECL` | 名字含 avoid/hide/ops/overlay 的集合字面量里放了 `"/..."` 路径串 |
+| R2 `PATH_GATED_HIDE` | `path in / == / != / startsWith` 条件 3 行内出现隐藏调用 |
+| R3 `METHOD_GATED_HIDE` | `method == "POST"` 条件 3 行内出现隐藏调用 |
+
+例外需显式写 `// overlay-gate: allow <理由>`（并回本文件记录原因）。已接进
+`bash scripts/acceptance.sh --static`。
+
+**回归证明**（拿历史版本当负样本）：
+
+| 版本 | 命中 |
+|---|---|
+| 2.9.88 / 659（`OPS_AVOID_PATHS = setOf("/overlay", …)`） | R1 + R2 两处 |
+| 2.9.90 / 661（清成空集但保留机制） | R2 一处 |
+| 2.9.91 / 662（机制删除） | 0 |
+

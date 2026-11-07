@@ -28,6 +28,7 @@ echo "== 1/4 静态门禁"
 run "i18n 一致性"      python3 scripts/check-i18n.py
 run "文档端点/子命令"   python3 scripts/check-doc-endpoints.py
 run "开发文档未随包"    python3 scripts/check-bundled-docs.py
+run "悬浮窗避让边界"    python3 scripts/check-overlay-avoid.py
 run "内置 pnpm 完整性"  python3 scripts/check-bundled-pnpm.py
 if [ "$STATIC_ONLY" = 0 ]; then
   export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}

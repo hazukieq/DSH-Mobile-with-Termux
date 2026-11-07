@@ -28,3 +28,5 @@
 - **开发文档**（`docs/`，给改代码的人/agent 看）：`ANDROID-CLI.md`、`refactor_guide.md`、`code_review.md`、`AI_CONTEXT.md`。**绝不拷进 `app/src/main/assets/docs/`**，那是随 APK 发布给用户与 App 内 agent 的。
 - **产物文档**（`app/src/main/assets/docs/`，随包）：`README.md`、`ENGINE-BUILD.md`、`SECURITY-AUDIT.md`、`A11Y-SCOPE.md` 等面向使用者的说明。
 - 门禁：`python3 scripts/check-bundled-docs.py`（漏打包会 exit 1）。
+- 门禁：`python3 scripts/check-overlay-avoid.py`（禁止「路径表 → 隐藏悬浮窗」的写法复发，
+  历史两次事故见 `docs/OVERLAY.md` §3.p；`bash scripts/acceptance.sh --static` 已包含它）。

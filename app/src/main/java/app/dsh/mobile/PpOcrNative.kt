@@ -143,11 +143,11 @@ internal object PpOcrNative {
     fun recognize(ctx: Context, bitmap: Bitmap, tier: String = "tiny"): PpOcr.Result {
         val t0 = System.currentTimeMillis()
         val det = session(ctx, tier, "det")
-            ?: return PpOcr.Result(false, unavailable = true, reason = "native: det_$tier.onnx 缺失或无法加载")
+            ?: return PpOcr.Result(false, unavailable = true, reason = "native: det_$tier.onnx missing or failed to load")
         val rec = session(ctx, tier, "rec")
-            ?: return PpOcr.Result(false, unavailable = true, reason = "native: rec_$tier.onnx 缺失或无法加载")
+            ?: return PpOcr.Result(false, unavailable = true, reason = "native: rec_$tier.onnx missing or failed to load")
         val cs = charset(ctx, tier)
-            ?: return PpOcr.Result(false, unavailable = true, reason = "native: rec_$tier.yml 里没有 character_dict")
+            ?: return PpOcr.Result(false, unavailable = true, reason = "native: rec_$tier.yml has no character_dict")
 
         val w = bitmap.width
         val h = bitmap.height
