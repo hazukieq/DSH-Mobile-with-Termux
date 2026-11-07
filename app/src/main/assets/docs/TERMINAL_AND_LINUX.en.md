@@ -208,9 +208,10 @@ dsh-update rollback         # go back any time
   with `engine-manifest.json`. When it has not, it reports `feed: unavailable` and states
   plainly that upstream has a newer version while the adapted bundle is not published — it
   never pretends npm is the feed.
-- `.github/workflows/dsh-runtime.yml` produces `engine-dsh-*.tar.gz` plus the manifest,
+- `scripts/build-engine-bundle.sh` produces `engine-dsh-*.tar.gz` plus the manifest,
   publishing to the rolling release `dsh-engine-latest` and to the immutable
-  `dsh-runtime-<dsh version>` archive.
+  `dsh-runtime-<dsh version>` archive. (Since v2.9.112 this repo has **no GitHub Actions
+  workflows**; build and publish these artifacts locally by hand.)
 
 ## 5. WebUI sidebar terminal (node-pty bridge)
 

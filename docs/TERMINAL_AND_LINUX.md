@@ -186,8 +186,9 @@ dsh-update rollback         # 不满意随时回上一份
 - `check` 只走 GitHub，分两路：上游 `deepseek-ai/deepseek-harness` 的 `dsh-v*` release，
   与本仓库是否已发布带 `engine-manifest.json` 的适配引擎包；没有就走 `feed: unavailable`
   并如实说明「上游有新版但适配包未发布」，不拿 npm 冒充。
-- `.github/workflows/dsh-runtime.yml` 产出 `engine-dsh-*.tar.gz` 与 manifest，发布到
+- `scripts/build-engine-bundle.sh` 产出 `engine-dsh-*.tar.gz` 与 manifest，发布到
   滚动 release `dsh-engine-latest`，并归档到 `dsh-runtime-<dsh 版本>`。
+  （v2.9.112 起本仓库**已移除全部 GitHub Actions 工作流**，这些产物改为本地手动构建/发布。）
 
 ## 五、WebUI 侧边栏终端（node-pty 桥）
 

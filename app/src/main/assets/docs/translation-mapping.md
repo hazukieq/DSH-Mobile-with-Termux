@@ -9,8 +9,8 @@ languages; **English is the default** and the old "Follow system" option
 was removed (`lang_system` deleted from every locale). The WebUI still
 follows the system language.
 
-Guard rails live in `scripts/check-i18n.py`, run on every PR by
-`.github/workflows/i18n-check.yml`.
+Guard rails live in `scripts/check-i18n.py` — run it locally (or wire it into your own
+pre-commit hook); this repo no longer ships GitHub Actions workflows.
 
 ## Terminology
 

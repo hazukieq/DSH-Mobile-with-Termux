@@ -6,6 +6,6 @@
   "version": "v1.2.102-arm64-v8a",
     "url": "远程 runtime.zip 下载地址（assets 内置包缺失时启用）；留空表示仅支持内置包",
   "sha256": "126327362e5a9523c171505d51477feb59d9b71d41dcd631b44948dbf5ac8b07",
-    "构建方式": "由 .github/workflows/android-build.yml 的 collect-runtime job 自动填充 url/sha256 后打包"
+    "构建方式": "本地 build-engine-bundle.sh 填充 url/sha256 后打包（仓库已无 GitHub Actions 工作流）"
   }
 }

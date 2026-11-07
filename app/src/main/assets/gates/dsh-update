@@ -272,7 +272,7 @@ _cmd_check() {
     echo "hint: 上游已发新版，但本仓库的 dsh-engine-latest 还没有该版本；"
     echo "      可等 CI 构建，或直接用包含新引擎的 APK 升级。"
   else
-    echo "hint: 引擎热更新包由 .github/workflows/dsh-runtime.yml 发布到 dsh-engine-latest；"
+    echo "hint: 引擎热更新包由 scripts/build-engine-bundle.sh 构建并发布到 dsh-engine-latest；"
     echo "      在它发布之前，升级引擎 = 安装包含新引擎的 APK。"
     echo "update: no (local $local_v matches upstream ${up:-unknown}; no adapted engine published)"
   fi

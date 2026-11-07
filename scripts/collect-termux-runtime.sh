@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# collect-termux-runtime.sh —— 在 x86_64 Linux（如 GitHub Actions ubuntu runner）上
+# collect-termux-runtime.sh —— 在 x86_64 Linux（本地或任意 CI runner）上
 # 从 Termux 官方 apt 仓库收集 aarch64 Node.js 运行时闭包，产出可被 Android 端
 # RuntimeInstaller 解压的 runtime.zip。
 #

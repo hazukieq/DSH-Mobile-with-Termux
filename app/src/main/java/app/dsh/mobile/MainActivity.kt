@@ -422,14 +422,23 @@ class MainActivity : Activity() {
         webView.loadUrl(url)
     }
 
-    /** 手势缩放开关：竖屏关闭（锁死固定全屏，禁止双指捏合/拖动移动），桌面模式开启（保留双指缩放）。
-     *  displayZoomControls 恒 false，只保留捏合不显示 +/- 浮层按钮。 */
-    private fun applyZoomControls(enable: Boolean) {
-        webView.settings.apply {
-            setSupportZoom(enable)
-            builtInZoomControls = enable
-            displayZoomControls = false
-        }
+    /**
+     * 手势缩放：v2.9.112 起**全面禁用**（用户要求「禁用放大缩小」）。
+     *
+     * 以前竖屏关、桌面模式开（保留双指捏合），目的是让桌面布局能整体缩小看全；
+     * 但实际使用中捏合缩放很容易被误触（浏览/滑动时页面突然放大），且桌面布局
+     * 已经由固定 1280px viewport 处理，不再需要用户手动缩放。
+     * 保留形参只为不改调用点；无论传什么都统一关闭。
+     */
+    private fun applyZoomControls(@Suppress("UNUSED_PARAMETER") enable: Boolean) {
+        val s = webView.settings
+        s.setSupportZoom(false)
+        s.builtInZoomControls = false
+        s.displayZoomControls = false
+        Log.i(
+            "MainActivity",
+            "webview zoom disabled: support=${s.supportZoom()} builtIn=${s.builtInZoomControls}",
+        )
     }
 
     /** 只改桌面渲染的 UA + 手势缩放开关，不 reload——reload 统一由旋转/onResume 回调做（避免双重整页重载卡顿）。

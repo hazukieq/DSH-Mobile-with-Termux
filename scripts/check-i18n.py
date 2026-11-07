@@ -2,7 +2,7 @@
 """i18n consistency checks for the DSH Mobile Android app.
 
 Run locally:  python3 scripts/check-i18n.py
-In CI:        .github/workflows/i18n-check.yml (pull_request + push)
+In CI:        (no bundled workflows — run manually or from your own CI)
 
 The app ships English as the DEFAULT locale (res/values/strings.xml) and
 translates into German (res/values-de/) and Simplified Chinese

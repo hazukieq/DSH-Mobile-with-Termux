@@ -25,7 +25,7 @@ import java.security.MessageDigest
  * 用户要的是第三种：拉「最新 dsh 运行时」，**不是**最新 APK，也不是「最新 APK 里
  * 那份 runtime.zip」。所以 feed 清单以 **dsh 版本**为键，每个 dsh 版本发布一份
  * 按本仓库 Android 补丁构建好的运行时包（补丁在 CI 里跑，见
- * `scripts/collect-termux-runtime.sh` 的 `DSH_VERSION` 与 `.github/workflows/dsh-runtime.yml`）。
+ * `scripts/collect-termux-runtime.sh` 的 `DSH_VERSION` 与 `scripts/build-engine-bundle.sh`）。
  *
  * ## 为什么不在设备上直接 `npm install @deepseek-ai/dsh@latest`
  *
