@@ -31,12 +31,17 @@
 - 门禁：`python3 scripts/check-overlay-avoid.py`（禁止「路径表 → 隐藏悬浮窗」的写法复发，
   历史两次事故见 `docs/OVERLAY.md` §3.p；`bash scripts/acceptance.sh --static` 已包含它）。
 
-## 分支模型（dev → main）
+## 分支模型（dev 分叉 → main 稳定）
 
 - **`main` = 稳定线**：只接受来自 `dev` 的合并，日常不直接提交；tag / Release 都打在 `main` 上。
-- **`dev` = 工作线 + 恢复快照**：所有改动先提交到 `dev`；它同时也是 main 的一份快照，
-  万一需要回滚而 git 历史不便操作（例如要丢弃一批已推送的提交），可以直接
-  `git reset --hard dev@{当时的位置}` 或从 `dev` 的某个提交重建分支。
-- 流程：`dev` 上改 → 真机验证 + `bash scripts/acceptance.sh --static` 通过 → `git checkout main && git merge --ff-only dev`（能快进就快进，避免无谓 merge commit）→ push → 需要发版时打 tag。
+- **`dev` = 分叉/工作线**：所有改动先提交到 `dev`，它是从 main 分出来向前走的线，**不是**快照
+  （分叉会继续前进，指针会移动，不能当备份用）。
+- **快照 = 不可移动的引用**，与 dev 分开：
+  - tag：`snapshot/<版本>`，annotated，钉在发布提交上（如 `snapshot/3.0-alpha-1` → `13492e2`）；
+  - 文件备份：`git bundle create <path> --all` 产出单文件全量仓库（含全部 refs），
+    即使 `.git` 或远端一起坏掉也能 `git clone <bundle>` 恢复。本机放在 `~/dsh-mobile-snapshots/`。
+  - 恢复：`git reset --hard snapshot/<版本>`，或 `git clone <bundle> <dir>` 后重新指向 origin。
+- 流程：`dev` 上改 → 真机验证 + `bash scripts/acceptance.sh --static` 通过 →
+  `git checkout main && git merge --ff-only dev`（能快进就快进）→ push → 发版时打 tag + 存快照。
 - 发版后若 `main` 有热修（极少见），同样先回到 `dev` 做，再合并；不要两边同时改。
-- 合并前确认 `dev` 与 `main` 的差异只有预期提交：`git log --oneline main..dev`。
+- 合并前确认差异只有预期提交：`git log --oneline main..dev`。
