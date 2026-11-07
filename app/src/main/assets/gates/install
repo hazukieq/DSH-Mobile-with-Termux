@@ -1,0 +1,64 @@
+#!/system/bin/sh
+# [dsh-android] 自举到引擎 bash（/dev/tcp 是 bash 特性，toybox sh 不支持）。
+if [ -z "$_DSH_REEXEC" ]; then
+  _DSH_REEXEC=1; export _DSH_REEXEC
+  LD_LIBRARY_PATH="@DSH_LIBDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH
+  exec "@DSH_BASH@" "$0" "$@"
+fi
+# [dsh-android] install: 把 APK 交给系统安装器（v2.9.102）。
+#
+# 只负责「准备好 PackageInstaller 会话 + 拉起系统安装器」，最后一步由用户本人在设备上确认
+# （Android 14+ 侧载强制用户确认，很多机型还要求解锁/生物识别，自动化既不可靠也不该做）。
+# 权限链：manifest 的 REQUEST_INSTALL_PACKAGES（normal）+「安装未知应用」开关（用户/root 授予）。
+#
+# usage:
+#   install                      # 能力与状态（can_install / root / 上次结果）
+#   install <path.apk>           # 交给系统安装器（默认只等 8s，不等用户确认）
+#   install <path.apk> --no-wait # 只提交，立刻返回（随后 install status 看结果）
+#   install status               # 同上（capabilities）
+#   install allow                # root 下自动授予「安装未知应用」
+#   install settings             # 打开本 app 的「安装未知应用」设置页
+#   install <GET|POST> <path> [json] # 直调桥
+DIR=$(cd "$(dirname "$0")" && pwd)
+. "$DIR/_dsh_http.sh"
+
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+usage() { sed -n '9,20p' "$0" >&2; exit 2; }
+
+call() { # call METHOD PATH [BODY]
+  out=$(dsh_http "$1" "$2" "${3:-}"); rc=$?
+  [ "$rc" = 0 ] || { echo "install: bridge failed (rc=$rc)${out:+ — $out}" >&2; exit 1; }
+  printf '%s\n' "$out"
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  ""|status|get)
+    call GET /install
+    ;;
+  allow|grant)
+    call POST /install '{"grant":true}'
+    ;;
+  settings|open-settings)
+    call POST /install '{"openSettings":true}'
+    ;;
+  GET|POST)
+    m="$1"; p="$2"; b="${3:-}"
+    call "$m" "$p" "$b"
+    ;;
+  *)
+    path="$cmd"; wait=true
+    shift || true
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --no-wait|--nowait) wait=false ;;
+        *) ;;
+      esac
+      shift || true
+    done
+    body="{\"path\":\"$(esc "$path")\""
+    if [ "$wait" = true ]; then body="$body,\"waitMs\":8000"; else body="$body,\"waitMs\":0"; fi
+    body="$body}"
+    call POST /install "$body"
+    ;;
+esac

@@ -300,6 +300,8 @@ object AgentBridge {
     internal val action by lazy { ActionHandler(this) }
     internal val appHandler by lazy { AppHandler(this) }
     internal val audio by lazy { app.dsh.mobile.bridge.AudioHandler(this) }
+    /** APK 安装（2.9.101）：PackageInstaller 会话 + 无障碍自动确认 */
+    internal val installer by lazy { app.dsh.mobile.bridge.InstallHandler(this) }
     internal val shortcutHandler by lazy { ShortcutHandler(this) }
     internal val promptHandler by lazy { app.dsh.mobile.bridge.AgentPromptHandler(this) }
     internal val vision by lazy { VisionHandler(this) }

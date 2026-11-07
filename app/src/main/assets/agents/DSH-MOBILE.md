@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v78 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v79 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -367,6 +367,36 @@ vol ui 55 alarm      # alarm 55%
   WAV…). Not supported: opus-in-webm, APE, DSD - transcode first (e.g. `ffmpeg` in Termux).
 - Playback continues in the background because the engine runs in a foreground service.
 - This is an instant action: `ok:true` means playback was started; no screenshot verification.
+
+### Installing APK files (side-load) - user confirms on device
+
+`REQUEST_INSTALL_PACKAGES` is declared (normal, granted at install) and the app prepares a real
+`PackageInstaller` session, but **the last step is always the user's**: since Android 14 the system
+installer requires an explicit user confirmation, and most OEM ROMs add a second gate
+(vivo「超级守护」+ `BiometricPrompt`). Do **not** try to click the installer through accessibility -
+that is why the endpoint has no auto-confirm at all.
+
+```bash
+install                                    # capability + last result (JSON)
+install /sdcard/Download/app.apk           # hand the APK to the system installer
+install /sdcard/Download/app.apk --no-wait # submit only, return immediately
+install allow                              # grant "install unknown apps" (needs root)
+install settings                           # open this app's "install unknown apps" page
+# bridge: GET  /install -> {can_install, has_permission, root, last_status, last_package}
+#         POST /install {"path":"/sdcard/x.apk"}   (optional waitMs, default 8000)
+#            -> {status:"pending_user_action", session, package, versionName, versionCode,
+#                requires_user:true, next:"user must confirm ..."}
+#         POST /install {"openSettings":true} | {"grant":true}
+```
+
+- `status: pending_user_action` is the **normal** answer; it means the installer UI is on screen and
+  waiting. Tell the user "确认安装" instead of retrying.
+- Poll `GET /install` afterwards: `last_status` becomes `success`, or one of
+  `failure_aborted|failure_blocked|failure_conflict|failure_incompatible|failure_invalid`.
+- `can_install:false` means the "install unknown apps" switch is off: open it with
+  `install settings`, or grant it with `install allow` when the device is rooted.
+- Verified on vivo OriginOS 17 / Android 17: session + installer launch take ~0.2 s, and the
+  vendor guard then requires unlocking the device. Do not fight it.
 
 ### Background launches (BAL) and the `opened` field
 

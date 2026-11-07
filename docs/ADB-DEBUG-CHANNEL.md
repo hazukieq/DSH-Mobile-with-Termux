@@ -37,6 +37,36 @@ TOK=$(adb shell content query --uri content://com.termux.adb/token \
       | sed -n 's/.*key=token, value=\([0-9a-f]*\).*/\1/p')
 ```
 
+## 在 App 的 Termux 环境里执行命令（exec，2.9.103 / 674 起）
+
+以前要在手机上跑命令，只能打开 App 内终端用 `adb shell input text` 打字——而中文输入法会把
+`_` `.` `/` 变成全角字符（实测 `sh /sdcard/chk_install.sh` 被打成 `sh/sdcard、chk—installl。sh`），
+脚本几乎没法用。现在直接走 `content call`：
+
+```bash
+adb shell "content call --uri content://com.termux.adb --method exec --arg 'ls \$HOME | head'"
+# Result: Bundle[{timeout=false, ms=102, ok=true, cmd=ls $HOME | head,
+#                 cwd=/data/user/0/com.termux/files/dsh-home, out=DSH-MOBILE.md ...,
+#                 exit=0, truncated=false}]
+```
+
+- **环境与 App 内终端一致**：引擎自带的 `bin/bash -lc`，`PATH`/`PREFIX`/`LD_LIBRARY_PATH`/
+  `DSH_HOME` 都来自 `EngineEnvBuilder.buildEnv`，工作目录默认 `$DSH_HOME`。
+- 可选参数：`--extra timeoutMs:l:120000`、`--extra cmd:s:'…'`（等价 `--arg`）、
+  `--extra cwd:s:/sdcard`、`--extra maxBytes:i:262144`。
+- 回执字段：`ok`、`exit`、`ms`、`timeout`、`truncated`、`cmd`、`cwd`、`out`（stdout+stderr 合并）。
+- 输出上限默认 128 KB；超时默认 60 s、上限 300 s，超时会 `destroyForcibly` 并置 `timeout=true`。
+- 首次调用（刚装完包）可能撞上 Termux bootstrap 第二阶段，耗时 ~20 s；完成后恢复正常
+  （实测第二次 102 ms）。
+
+宿主侧封装（推荐，省掉引号地狱并透传退出码）：
+
+```bash
+./scripts/probes/adb-exec.sh 'echo hi; uname -m'
+SERIAL=10CG1C1M1H0021Z ./scripts/probes/adb-exec.sh --raw 'wc -l $HOME/DSH-MOBILE.md'
+./scripts/probes/adb-exec.sh --timeout 120000 'sleep 30; echo done'
+```
+
 ## 诊断状态
 
 ```bash
@@ -91,8 +121,10 @@ adb shell settings put global dsh_adb_bridge 1
 - **只读**：`insert/update/delete` 一律抛 `UnsupportedOperationException`；
 - token **每次 App 启动重新生成**，所以查询结果只在本次进程内有效（这也是为什么不能把它
   缓存进配置或提交进仓库）；
-- 通道本身不提供「执行动作」能力，只把已有的 bridge 能力**暴露给 adb**，
-  动作仍走 `127.0.0.1:3083` 的既有鉴权与权限分级。
+- `query`（token/state）与 `call exec` 走**同一套三重闸门**；`exec` 用 App 自己的 uid 运行，
+  不额外提权（没有 root 就是应用沙箱权限，能读的只有本 app 自己的目录与已授权的共享存储）。
+- 通道本身不提供新的设备能力，只把**已经能做的事**（bridge 调用、App 环境里的 shell）
+  暴露给 adb，动作仍走 `127.0.0.1:3083` 的既有鉴权与权限分级。
 
 ## 相关代码
 

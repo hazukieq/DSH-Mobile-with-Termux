@@ -136,6 +136,8 @@ internal class Router(private val bridge: AgentBridge) {
             }
         }
         return when {
+            method == "GET" && path == "/install" -> installer.state(ctx)
+            method == "POST" && path == "/install" -> installer.install(ctx, body)
             method == "POST" && path == "/notify" -> appHandler.notify(ctx, body)
             method == "GET" && path == "/screen" -> screen.screen(query)
             method == "GET" && path == "/ocr" -> screen.ocr(ctx, query)
