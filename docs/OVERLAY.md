@@ -326,6 +326,37 @@ I/StatusOverlay: overlay type switch: 2038 → TYPE_ACCESSIBILITY_OVERLAY (a11y 
   2. 退出 App（通知栏「退出」/划掉任务）→ 引擎退出 → `teardown()`，见 §3.ab。
 - 回归清单新增一条：**长按不再隐藏窗口**（`input swipe x y x y 1500` 模拟长按，窗口应保持可见）。
 
+### 3.ad 2.9.107「关闭悬浮窗」必须真的关闭：能力面与悬浮窗解耦
+
+- 问题（用户提问「当关闭悬浮窗时，所有 a11y 功能、ocr 识别、分享等所有功能，是否正常运作？」）：
+  设置 →「后台进度提示 → 显示方式 → 关闭」只调 `ProgressHub.setMode(MODE_OFF)` → `hideAuto()`，
+  而 `hideAuto()` 会把 `hidden` 复位成 false；随后多条通路（`ProgressHub.ensureOverlayVisible`、
+  `ProgressHub.maybePublish`、无障碍看门狗、`MainActivity.onResume`）各自 `show()` 一次
+  ⇒ 实测关掉后 **11 秒球又冒出来**（`02:20:33 overlay hidden (auto)` → `02:20:44 overlay shown at 948,360`）。
+- 修复：在唯一的建窗入口 `StatusOverlay.startOverlay(ctx, w, type)` 加模式闸门——
+  `ProgressHub.mode(ctx) != MODE_OVERLAY` 时直接 return 并记 `overlay suppressed: progress mode off`。
+  与 §3.ab 的 `userExited` 闸门并列（退出 / 关闭悬浮窗 是两种"不要窗口"的意图）。
+- 能力面（2.9.107 / versionCode 678，vivo 10CG1C1M1H0021Z，悬浮窗关闭状态下逐项实测）：
+
+| 能力 | 端点 | 结果 | 窗口状态 |
+|---|---|---|---|
+| 读屏（无障碍节点树） | `GET /screen` | `fg=com.termux 57 nodes`（含 OCR 兜底 24 行/822ms） | `root=null` |
+| 无障碍文本点击 | `POST /act {"steps":[{"tap":"轨迹"}]}` | `ok:true`，界面切换（57→147 节点） | `root=null` |
+| 坐标点击注入 | `POST /tap` | `{"ok":true,"via":"gesture"}` | `root=null` |
+| 手势注入 | `POST /gesture` | ok | `root=null` |
+| OCR 识别 | `GET /ocr?cache=0` | 24 行 / 725ms | `root=null` |
+| OCR 预热（每请求触发） | `GET /daemon/status` ×5 | `prefetch ocr ready n=29 engine=mlkit ms=322` | `root=null` |
+| 免闪截图 | `GET /screenshot?save=1` | `via=composite 1080x2376` | `root=null` |
+| 帧差 | `GET /frame-diff` | ok | `root=null` |
+| 分享 | `POST /share/text` | `{"ok":true,"opened":true,"handoff":true}` | `root=null` |
+| 音量 | `GET /volume` | ok | `root=null` |
+| 安装 | `GET /install` | `can_install=true perm=true` | `root=null` |
+| 保活心跳（2 个周期） | — | 日志 `overlay suppressed: progress mode off` ×2 | `root=null` |
+
+- 切回「悬浮窗」：`02:25:34 overlay shown at 948,360 (108x108)` 立刻回来。
+- 结论：**能力面（读屏/点击/OCR/截图/分享/音量/安装）与悬浮窗完全解耦**，关掉悬浮窗只是不显示那个球；
+  唯一副作用是失去"看 AI 在做什么"的可视反馈（可按需切「通知」显示方式）。
+
 ### 3.z 为什么 OCR prefetch 绝不能摘悬浮窗（抖动 / flicker）
 
 - 现象：静置、不点任何截图，悬浮窗仍大约每 **3–5 秒**消失一次再出现（肉眼可见）。

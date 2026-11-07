@@ -260,6 +260,15 @@ object StatusOverlay {
             Log.i(TAG, "overlay suppressed: user exited")
             return
         }
+        // v2.9.107：用户把「显示方式」设为关闭（ProgressHub.MODE_OFF）时，任何通路都不能把
+        // 窗口再挂回来——读屏/点击/OCR/截图/分享这些能力与悬浮窗无关，必须照常工作；
+        // 之前 hideAuto() 把 hidden 复位成 false，于是保活/进度/回到前台几条路各自 show() 一次，
+        // 关掉的球过十几秒又冒出来（用户实测）。
+        if (runCatching { app.dsh.mobile.ProgressHub.mode(ctx) } .getOrDefault("") !=
+            app.dsh.mobile.ProgressHub.MODE_OVERLAY) {
+            Log.i(TAG, "overlay suppressed: progress mode off")
+            return
+        }
         main {
             if (root != null || hidden) return@main
             try {
