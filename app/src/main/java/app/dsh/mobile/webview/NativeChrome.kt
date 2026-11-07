@@ -70,6 +70,8 @@ class NativeChrome(
         }
         // 工具栏收起/唤回：点横栏文字空白区收起（网页全屏）
         statusBar.setOnClickListener { toggleToolbar() }
+        // v2.9.111：默认收起工具栏（用户反馈每次都要点「隐藏」）。用户的手动选择会被记住。
+        applyToolbarHidden(app.dsh.mobile.DshPrefs.toolbarHidden(activity))
         // 把手：可拖到屏幕边缘任意位置（避让遮挡）；移动距离小于阈值视为点击唤回工具栏
         setupHandleBar()
     }
@@ -147,14 +149,17 @@ class NativeChrome(
     /** 工具栏收起/唤回：收起时网页全屏，仅留顶部小把手提示可恢复 */
     fun toggleToolbar() {
         val row = activity.findViewById<View>(R.id.statusBarRow)
+        val hidden = row.visibility == View.VISIBLE
+        applyToolbarHidden(hidden)
+        app.dsh.mobile.DshPrefs.setToolbarHidden(activity, hidden)
+    }
+
+    /** 只改可见性，不写偏好（启动时按偏好恢复，切换时另外落库）。 */
+    private fun applyToolbarHidden(hidden: Boolean) {
+        val row = activity.findViewById<View>(R.id.statusBarRow)
         val handle = activity.findViewById<View>(R.id.handleBar)
-        if (row.visibility == View.VISIBLE) {
-            row.visibility = View.GONE
-            handle.visibility = View.VISIBLE
-        } else {
-            row.visibility = View.VISIBLE
-            handle.visibility = View.GONE
-        }
+        row.visibility = if (hidden) View.GONE else View.VISIBLE
+        handle.visibility = if (hidden) View.VISIBLE else View.GONE
     }
 
     /**

@@ -37,7 +37,7 @@
         android:background="@drawable/bg_handle_bar"
         android:clickable="true"
         android:focusable="true"
-        android:visibility="gone">
+        android:visibility="visible">
         <View
             android:layout_width="28dp"
             android:layout_height="3dp"
@@ -52,7 +52,8 @@
         android:orientation="horizontal"
         android:background="#F2F0F1F5"
         android:elevation="4dp"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:visibility="gone">
 
         <TextView
             android:id="@+id/statusBar"

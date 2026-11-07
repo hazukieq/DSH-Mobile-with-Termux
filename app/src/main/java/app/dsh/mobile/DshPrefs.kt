@@ -52,6 +52,22 @@ object DshPrefs {
             .edit().putInt(KEY_PAGE_SCALE, clamped).apply()
     }
 
+    // ---- 顶部工具栏是否收起（v2.9.111） ----
+    // 默认收起：顶部那条「引擎已就绪 · url / 重启 / 隐藏 / 齿轮」会一直占着 40dp，
+    // 用户每次进 App 都得点一次「隐藏」才能全屏看网页 → 改成默认收起，
+    // 想用按钮时点顶部小把手唤回；用户的显式选择会被记住。
+
+    const val KEY_TOOLBAR_HIDDEN = "toolbar_hidden"
+
+    fun toolbarHidden(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE)
+            .getBoolean(KEY_TOOLBAR_HIDDEN, true)
+
+    fun setToolbarHidden(ctx: Context, hidden: Boolean) {
+        ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_TOOLBAR_HIDDEN, hidden).apply()
+    }
+
     // ---- 用户主动退出 ----
 
     fun userExited(ctx: Context): Boolean =
