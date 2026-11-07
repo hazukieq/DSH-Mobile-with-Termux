@@ -50,6 +50,16 @@ class WebViewManager(
      */
     @SuppressLint("SetJavaScriptEnabled")
     fun configure() {
+        // ── 外观：默认隐藏滚动条（v2.9.114，用户要求）─────────────────────────
+        // 原生滚动条在窄屏/桌面模式下会贴着内容边缘画一条灰线，和「无边框」的
+        // 引擎 UI 不搭；纯 CSS 隐藏不了「原生渲染的滚动条」，必须关 View 层。
+        // 同时去掉过度滚动时的边缘辉光（三星/小米等 ROM 上尤其明显）。
+        webView.isVerticalScrollBarEnabled = false
+        webView.isHorizontalScrollBarEnabled = false
+        webView.overScrollMode = android.view.View.OVER_SCROLL_NEVER
+        // 深色页面前的白闪：先把底色刷成和 App 主题一致（页面首帧前的空窗期可见）
+        webView.setBackgroundColor(0xFFF0F1F5.toInt())
+
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -65,6 +75,28 @@ class WebViewManager(
             useWideViewPort = true
             loadWithOverviewMode = true
             host.applyZoomControls(host.isDesktopMode())
+
+            // ── 渲染 / 排版（v2.9.114，参考官方 WebSettings 文档 + SurgicalNote/CNWebView）──
+            // 本地引擎页是 UTF-8；显式声明避免中文站点的编码猜错（乱码）。
+            defaultTextEncodingName = "utf-8"
+            // 系统字体缩放会把网页文字一起放大，和 App 自己的「页面缩放」打架
+            // → 文字固定 100%，整体缩放交给 viewport（本 App 已有 pageScale）。
+            textZoom = 100
+            // 引擎页是同源 http://127.0.0.1，加载的旧式资源可能混用协议；
+            // COMPATIBILITY 允许「https 页面里的 http 资源」显示，避免 AI 打开的
+            // 第三方页出现整块空白（官方默认 NEVER 会直接拦掉）。
+            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            // 只走默认 HTTP 缓存策略：引擎静态资源带 hash，本地回环命中率高。
+            cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+
+            // ── 安全（官方 WebSettings 文档的默认值，这里显式写死，防未来误改）──
+            // 不加载 file:// 页面，就不该允许 file 域跨源访问（XSS→本地文件读取的经典链）。
+            allowFileAccessFromFileURLs = false
+            allowUniversalAccessFromFileURLs = false
+            // 媒体（AI 生成的音视频/播放器）必须先有用户手势，避免后台自动播放。
+            mediaPlaybackRequiresUserGesture = true
+            // 不需要网页定位。
+            setGeolocationEnabled(false)
         }
         // v1.3.68：WebUI 的 mobile-progress 插件通过这个桥把当前思考/步骤报给原生，
         // 不需要无障碍就能在后台/通知栏展示进度。

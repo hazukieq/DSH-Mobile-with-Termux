@@ -4,10 +4,12 @@
     android:layout_height="match_parent">
 
     <!-- WebView 全屏垫底：半透明工具栏悬浮其上（网页内容透出，浏览器质感） -->
+    <!-- scrollbars=none：原生滚动条默认隐藏（v2.9.114），代码侧也会 setVertical/HorizontalScrollBarEnabled(false) -->
     <WebView
         android:id="@+id/webView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:scrollbars="none" />
 
     <!-- 安装/启动进度条：Installing 显示真实解压百分比，Starting 转不确定动画 -->
     <ProgressBar
