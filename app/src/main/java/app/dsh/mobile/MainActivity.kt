@@ -393,13 +393,10 @@ class MainActivity : Activity() {
         // 模式分支**之前**。此前 desktopMode 分支先 return，遮罩永不淡出，
         // 全屏可点击的遮罩把后续所有触摸都吃掉 = 看起来卡死。
         splashController.dismiss()
-        // 桌面模式：视口改写为固定 1280px（响应式走桌面分支，侧栏完整展开）。
-        if (desktopMode) {
-            view.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
-            return
-        }
-        // 竖屏：全交给 viewport meta 的 initial-scale 控制显示缩放（浏览器 Ctrl- 做法）。
-        view.evaluateJavascript(portraitViewportJs(pageScale / 100f), null)
+        // 视口按当前模式重写：桌面模式固定 1280px（响应式走桌面分支，侧栏完整展开），
+        // 竖屏全交给 viewport meta 的 initial-scale 控制显示缩放（浏览器 Ctrl- 做法）。
+        // 2.9.109 起抽成 applyViewport()，旋转/小窗 resize 复用同一套 JS（不再 reload）。
+        applyViewport()
         // 竖屏「对话流被挤压」修复已改为**引擎侧客户端插件**
         // （assets/android-plugins/narrow-sidebar/，v1.2.175）：用户要求「不要直接改源代码，
         // 要做成插件形式」——外部注入 JS 会和其它 UI 插件抢 DOM，且引擎升级后哈希类名一变
@@ -445,14 +442,26 @@ class MainActivity : Activity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // 旋转后屏宽变化 → 需要重算适配视口（reload 后 onPageFinished 会按当前模式
-        // 与 pageScale 重写 viewport meta）。竖屏旋转屏宽同样变，故统一 reload。
-        // 同时同步手势缩放开关（竖屏锁死、桌面保留），防止切屏后对手势失效。
+        // 旋转/小窗 resize 后屏宽变化 → 需要重算适配视口，但**绝不能 reload**：
+        // reload 等于把整个 SPA 重新加载一遍，会话滚动位置、正在输入的内容、
+        // 打开的面板全丢——用户反馈「App 以小窗打开时会重新加载」就是这么来的
+        // （2.9.109 之前这里无条件 webView.reload()）。
+        // 改为直接重写 viewport meta（和 onPageFinished 用的是同一套 JS），
+        // 页面不重新导航，状态自然保住。
         // v1.2.120：auto 模式下桌面渲染跟随**实际**朝向——旋转后先按新朝向求值，
-        // 否则横屏后仍是竖屏那套 UA/视口。setDesktop 自身不 reload，reload 紧随其后。
+        // 否则横屏后仍是竖屏那套 UA/视口。setDesktop 自身不 reload。
         setDesktop(shouldUseDesktop())
         applyZoomControls(desktopMode)
-        webView.reload()
+        applyViewport()
+    }
+
+    /** 按当前模式重写 viewport（不触发页面导航）。onPageFinished 与 onConfigurationChanged 共用。 */
+    private fun applyViewport() {
+        if (desktopMode) {
+            webView.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
+        } else {
+            webView.evaluateJavascript(portraitViewportJs(pageScale / 100f), null)
+        }
     }
 
     /**
