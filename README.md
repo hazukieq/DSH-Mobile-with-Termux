@@ -4,6 +4,10 @@
 
 [下载 APK](https://github.com/hazukieq/DSH-Mobile-with-Termux/releases) · [使用文档](docs/README.md) · [反馈问题](https://github.com/hazukieq/DSH-Mobile-with-Termux/issues) · [English](README_EN.md) · [Deutsch](README.de.md)
 
+<p align="center">
+  <img src="docs/promo/dsh-mobile-readme.png" alt="DSH Mobile：Android 上的 Harness 引擎、Termux 环境与本地 OCR" width="100%">
+</p>
+
 DSH Mobile 将适配 Android 的 DeepSeek Harness 引擎、WebUI、Node.js 和 Termux 用户态打包进 APK。
 安装后可直接在手机上使用会话、工具和插件，无需另装 Termux，也不需要 Root 或电脑。
 
