@@ -84,7 +84,7 @@ object LocalModel {
 
     fun ensureReady(ctx: Context, onProgress: (Float, String) -> Unit = { _, _ -> }): Boolean {
         if (isServerRunning()) return true
-        // v2.3.9（vivo 反馈「语义模型无法下载」）：旧顺序先查 llama-server，缺二进制就直接
+        // 旧顺序先查 llama-server，缺二进制就直接
         // return false，**模型根本没开始下载**，用户只看到「下载失败」。现在先下模型，
         // 再把「服务器缺失」作为单独、可执行的错误报告。
         val model = modelFile(ctx)
@@ -208,7 +208,8 @@ object LocalModel {
 
     fun stop() {
         runCatching {
-            Privilege.runSu("pkill -f 'llama-server.*${LocalEmbedder.PORT}'")
+            ProcessBuilder("/system/bin/sh", "-c", "pkill -f 'llama-server.*${LocalEmbedder.PORT}'")
+                .start().waitFor(3, TimeUnit.SECONDS)
         }
         runCatching { serverProcess?.destroy() }
         serverProcess = null

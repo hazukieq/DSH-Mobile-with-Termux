@@ -61,7 +61,7 @@ class DshAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        // v1.7.6：记住「曾经授权成功过」。Android 在 force-stop/部分更新流程里会把
+        // 记住「曾经授权成功过」。Android 在 force-stop/部分更新流程里会把
         // 无障碍从 secure settings 整个摘掉，此时系统状态与 secure 列表都看不出历史，
         // 只能靠我们自己记住，才能在 503 里给出「被系统停用，去重开」而不是「你从没授权」。
         runCatching {
@@ -79,7 +79,7 @@ class DshAccessibilityService : AccessibilityService() {
             info.eventTypes = info.eventTypes or
                 AccessibilityEvent.TYPE_TOUCH_INTERACTION_START or
                 AccessibilityEvent.TYPE_TOUCH_INTERACTION_END
-            // v2.5.25：XML 里的 flag 只是初始值，部分 ROM/重连路径会回落到 flagDefault。
+            // XML 里的 flag 只是初始值，部分 ROM/重连路径会回落到 flagDefault。
             // 这里显式补齐两个关键 flag：
             //  - flagRetrieveInteractiveWindows：账号抽屉这类 Dialog/PopupWindow 是独立窗口，
             //    不取交互窗口时 getWindows() 只拿得到前台 Activity 那一个。
@@ -88,47 +88,25 @@ class DshAccessibilityService : AccessibilityService() {
             info.flags = info.flags or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
-            // v2.5.25：GitHub App / Play 商店把界面标为 accessibilityDataSensitive，
+            // GitHub App / Play 商店把界面标为 accessibilityDataSensitive，
             // Android 14+ 只对 isAccessibilityTool=true 的服务开放节点树与手势注入。
             // ⚠️ 该开关**只能在 XML 声明**（AccessibilityServiceInfo.isAccessibilityTool 是只读的），
             // 改动后必须到系统设置里重新开关一次无障碍服务才会按新 XML 生效。
             serviceInfo = info
         }.onFailure { android.util.Log.w("DshA11y", "serviceInfo update failed: ${it.message}") }
-        // 悬浮窗（v1.2.57）：服务连上即显示，让用户随时看到 AI 在做什么。
-        // 用 TYPE_ACCESSIBILITY_OVERLAY，无需额外授权。
-        //
-        // ⚠️ v1.2.96：悬浮窗归入**实验性功能**管辖（主人要求）——开关关闭（默认）时
-        // 悬浮窗不出现，只保留读屏/点击等 Agent 能力。开关实时生效见 setOverlayEnabled。
-        //
-        // ⚠️ v1.2.66：先 resetHidden()。长按悬浮球会调 hide()，那会把 hidden 置 true 并
-        // **粘住整个进程**（show() 直接早退）——而 resetHidden() 此前**没有任何调用点**，
-        // 于是「长按隐藏后，悬浮窗在本进程内再也回不来」（实测：服务重连、切前台都不恢复）。
-        // 服务重连 = 系统层面重新装配无障碍能力，此时恢复显示是符合直觉的语义。
+        // 显示模式与退出状态由 StatusOverlay 统一检查，不影响读屏/点击能力。
         runCatching {
-            // v2.3.2：用户划掉 App / 点通知退出后，userExited=true。
-            // 此时服务若被系统重连，不允许再把悬浮窗拉回来（用户明确要它消失）。
-            if (app.dsh.mobile.service.EngineService.userExited(this)) {
-                android.util.Log.i("DshA11y", "overlay not shown: user exited")
-            } else {
+            if (!app.dsh.mobile.service.EngineService.userExited(this)) {
                 StatusOverlay.resetHidden()
-            // v1.2.182（用户要求）：**原「试验性功能」开关已移除**，悬浮窗常驻——
-            // 开关取消后不再有"默认不显示"的语义，服务连上即展示（用户随时看到 AI 在做什么）。
-            StatusOverlay.show(this)
-            // ⚠️ v1.2.106：**流式悬浮条暂时下线**（主人 2026-10-09 决定）。
-            // 真机上仍报「session 解压失败」（诊断已能显示具体文件与原因，但根因
-            // 未定：模拟器上用严格真实格式的多帧会话可正常渲染，真机不行，差异
-            // 尚未定位）。功能不成熟就先摘掉，免得用户看到空白浮条或误导性诊断；
-            // 代码整体保留，排查清楚后解开下面两行注释即可恢复。
-            // tickerBar().show()
-            // tickerBar().startPolling()
+                StatusOverlay.show(this)
             }
-        }.onFailure { android.util.Log.w("DshA11y", "overlay show failed: ${it.message}") }
-        // 保活看门狗（v1.2.91，主人要求「利用无障碍/悬浮窗机制保活」）
-        //
+        }.onFailure { Log.w("DshA11y", "overlay show failed: ${it.message}") }
+        // 保活看门狗（v1.2.91，交互约定「利用无障碍/悬浮窗机制保活」）
+
         // ## 为什么用无障碍服务做保活
         // 无障碍服务由系统持有、随系统启动、**极难被 ROM 杀掉**（比前台服务更稳）。
         // 它天然适合当"保活哨兵"：定期检查引擎前台服务是否还活着，不活就拉起来。
-        //
+
         // ## 为什么只是"检查 + 拉起"而不是更激进的手段
         //  · 本项目 targetSdk 28（sideload 分发），前台服务 + 无障碍已经足够
         //  · 双服务互拉（AlarmManager 心跳等）耗电明显，且属灰色手段
@@ -147,7 +125,7 @@ class DshAccessibilityService : AccessibilityService() {
     /**
      * 后台预热。
      *
-     * v1.2.182（用户要求「把无障碍功能 max+ 删了」）：原先受 max+ 开关控制的
+     * 原先受 max+ 开关控制的
      * **本地模型自动下载/启动**一并移除 —— 那段行为需要用户知情同意（读 API key +
      * 下载 15MB 模型），开关取消后不能再静默执行。引擎若需要，仍可显式调用
      * `POST /local/ensure`（AgentBridge 提供，属主动请求）。
@@ -187,41 +165,15 @@ class DshAccessibilityService : AccessibilityService() {
         if (changeSeen.size > 1000) changeSeen.clear()
     }
 
-    /**
-     * 实验性开关切换时由设置页调用（v1.2.96）：实时显隐悬浮窗。
-     *
-     * · 开：resetHidden + show（resetHidden 必须先行——hide 会把 hidden 置 true
-     *   粘住进程，直接 show 会早退）
-     * · 关：hide（读屏/点击等 Agent 能力不受影响）
-     * 服务未连接时静默跳过——下次 onServiceConnected 会按开关决定是否显示。
-     */
-    fun setOverlayEnabled(on: Boolean) {
-        runCatching {
-            if (on) {
-                StatusOverlay.resetHidden()
-                StatusOverlay.show(this)
-                // 流式悬浮条已下线，见 onServiceConnected 里的说明（v1.2.106）
-            } else {
-                StatusOverlay.hide(this)
-                tickerBar().hide()
-                tickerBar().stopPolling()
-            }
-        }.onFailure { Log.w("DshA11y", "overlay toggle failed: ${it.message}") }
-    }
-
-    /** 流式悬浮条（懒建，v1.2.99） */
-    private var ticker: TickerBar? = null
-    private fun tickerBar(): TickerBar = ticker ?: TickerBar(this).also { ticker = it }
-
     // ==================== 保活看门狗（v1.2.91） ====================
-    //
-    // 主人实测：「回到后台时通过语音发送消息，消息发出去了但模型不响应，
+
+    // 设备实测：「回到后台时通过语音发送消息，消息发出去了但模型不响应，
     // 切回前台才开始响应」+「能不能利用无障碍服务和悬浮窗机制保活」。
-    //
+
     // 分两层解决：
     //  ① WebView 生命周期（见 MainActivity.onResume/onPause）—— 治"后台 JS 被冻结"
     //  ② **本看门狗** —— 治"进程/服务被系统回收"
-    //
+
     // 无障碍服务是系统级长驻组件，用它当哨兵最稳；每 60 秒检查一次前台服务存活，
     // 掉了就拉起来。正常情况开销可忽略（一次 isRunning 判断）。
 
@@ -232,7 +184,7 @@ class DshAccessibilityService : AccessibilityService() {
         stopKeepAliveWatchdog()
         val r = object : Runnable {
             override fun run() {
-                // v2.9.104（用户反馈「app 彻底销毁后悬浮窗还在」）：用户主动退出后
+                // 用户主动退出后
                 // （通知栏「退出」/从最近任务划掉），无障碍服务仍被系统绑着、进程还活着，
                 // 看门狗 60s 后照样把引擎拉起并 show() —— 于是"已经关掉的 App"又冒出个悬浮球。
                 // 退出语义必须闭环：userExited 为真时，引擎不自启、悬浮窗也不再回来。
@@ -250,7 +202,7 @@ class DshAccessibilityService : AccessibilityService() {
                         }
                     }.onFailure { Log.w("DshA11y", "keepalive check failed: ${it.message}") }
                     runCatching {
-                        // v2.9.83（vivo 实测）：无障碍被系统撤销后，onAccessibilityLost 会先用
+                        // 无障碍被系统撤销后，onAccessibilityLost 会先用
                         // 应用悬浮窗(2038)顶上保命；服务重连时若 onServiceConnected 没重跑
                         // （OriginOS 会跨撤销保持绑定），窗口就一直是 2038 —— 它依赖 SAW 权限、
                         // 在部分界面会被系统强制隐藏。看门狗每次心跳顺手把类型收敛回 2032。
@@ -283,7 +235,7 @@ class DshAccessibilityService : AccessibilityService() {
                 lastTouchEndAt = System.currentTimeMillis()
             }
             AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED -> {
-                // v1.2.141：缓存通知内容供桥的 /notif 读取（任务完成通知、
+                // 缓存通知内容供桥的 /notif 读取（任务完成通知、
                 // 验证"是否弹了通知"等场景；无需额外的 NotificationListenerService）
                 val pkg = e.packageName?.toString().orEmpty()
                 val texts = e.text?.mapNotNull { it?.toString()?.trim() }?.filter { it.isNotEmpty() }
@@ -296,7 +248,7 @@ class DshAccessibilityService : AccessibilityService() {
                 }
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // ⚠️ v1.2.114：主线程只提取文本（见字段区说明），其余投事件线程。
+                // 主线程只提取文本（见字段区说明），其余投事件线程。
                 val types = e.contentChangeTypes
                 if (types and AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT != 0) {
                     val texts = e.text?.mapNotNull { it?.toString()?.trim() }
@@ -309,7 +261,7 @@ class DshAccessibilityService : AccessibilityService() {
                 }
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // ⚠️ v1.2.56：window change **不能**作为「用户接管」的判据 ——
+                // window change **不能**作为「用户接管」的判据 ——
                 // 应用自己启动、弹出联想下拉、切页都会触发它（用户实测：
                 // 启动 Edge、弹下拉时 lastWindowChangeAt 变了，但 touchCount=0、
                 // lastTouchAt=0）。这里只更新前台包名缓存供 pkg 查询，
@@ -323,36 +275,22 @@ class DshAccessibilityService : AccessibilityService() {
         }
     }
 
-    /**
-     * 旋转 / 分屏时转发给悬浮条（v1.2.106）。
-     *
-     * 悬浮条过去把「离屏幕边缘的内缩」算在 WindowManager 参数里，而那些值只在
-     * 创建时算一次 —— 转横屏后宽度仍是竖屏的，卡片不居中、右边空一块
-     * （主人实测）。现在宽度交给 MATCH_PARENT 自适应，但顶部偏移需跟着状态栏
-     * 高度重算，所以必须有这个回调把它叫醒。
-     */
-    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
-        super.onConfigurationChanged(newConfig)
-        runCatching { ticker?.onConfigChanged() }
-    }
-
     override fun onInterrupt() {}
 
     override fun onDestroy() {
-        ticker?.stopPolling()
         if (instance === this) instance = null
         stopKeepAliveWatchdog()
-        // v1.4.9：只有在用无障碍窗口时才跟着收；应用悬浮窗保留（否则切 App/服务重启浮窗就消失）
+        // 无障碍窗口随服务解绑，按显示模式尝试应用悬浮窗回退。
         runCatching { StatusOverlay.onAccessibilityLost() }
         super.onDestroy()
     }
 
     // ==================== 外部干预感知（v1.2.54） ====================
-    //
+
     // 用户反馈：「有的时候人操作突然接管，AI 也不知道」。
     // 真实场景：AI 正在跑多步流程，用户拿过手机自己点了两下 —— AI 继续按原计划
     // 操作，结果点在完全不同的界面上，或者把用户的输入覆盖掉。
-    //
+
     // 机制：记录触摸/窗口变化的时间戳。调用方（AI）在关键步骤前后比对，
     // 若在自己「没做动作」的时间窗内出现了触摸或窗口切换，即判定为外部干预。
 
@@ -366,7 +304,7 @@ class DshAccessibilityService : AccessibilityService() {
     private val changeSeen = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val CHANGE_KEEP = 30            // 最多保留的事件条数
     private val CHANGE_DEDUP_MS = 800L      // 同一文本去重窗口（CONTENT_CHANGED 高频）
-    // ⚠️ v1.2.114：事件处理线程 —— onAccessibilityEvent 跑在主线程，而 CONTENT_CHANGED
+    // 事件处理线程 —— onAccessibilityEvent 跑在主线程，而 CONTENT_CHANGED
     // 在真机上每秒上百（WebView 活动页尤甚）；此前在主线程做去重 map + 记录，
     // 且 ConcurrentLinkedDeque.size() 是 O(n) 遍历 —— 主线程被事件流拖死 → App
     // 直接卡退（主人真机复现「屡次停止运行」，模拟器事件稀疏不复现）。
@@ -538,7 +476,7 @@ class DshAccessibilityService : AccessibilityService() {
                         .getOrDefault("")
                     if (hint.isNotEmpty()) text = "p:$hint"
                 }
-                // v1.2.126：可勾选节点即使无文本也保留（详情页的 Switch 控件常无文本，
+                // 可勾选节点即使无文本也保留（详情页的 Switch 控件常无文本，
                 // 其标签在旁边的 TextView 上——过滤掉就看不到开关状态了）
                 if ((text.isNotEmpty() || desc.isNotEmpty() || clickable || node.isCheckable) &&
                     (!filterRestricted || when (filter) {
@@ -555,7 +493,7 @@ class DshAccessibilityService : AccessibilityService() {
                         if (clickable) append('c')
                         if (scrollable) append('s')
                         if (editable) append('e')
-                        // v1.2.126：勾选状态（开关/复选框）——v=选中 o=未选中。
+                        // 勾选状态（开关/复选框）——v=选中 o=未选中。
                         // 此前开关状态在 dump 里完全不可见：① 验证只能靠帧差猜；
                         // ② 场景记忆因"点击前后指纹相同"而反复命中同一动作（反复点开关）。
                         if (node.isCheckable) append(if (node.isChecked) 'v' else 'o')
@@ -682,7 +620,7 @@ class DshAccessibilityService : AccessibilityService() {
                 ocrInfo = " ocr=unavailable"
             }
         }
-        // v2.5.38（handoff 过度校验 issue）：头行带前台包名，跨 App 的 dump 能自证来源，
+        // 头行带前台包名，跨 App 的 dump 能自证来源，
         // 避免把上一帧/自己 App 的树当成目标 App 的界面去解读。
         val fgTag = runCatching { foregroundPackage() }.getOrNull() ?: "?"
         sb.append("fg=$fgTag ${resources.displayMetrics.widthPixels}x$rootHeight ${lines.size}nodes$ocrInfo\n")
@@ -736,7 +674,7 @@ class DshAccessibilityService : AccessibilityService() {
             if (visible) {
                 val text = nodeTextOf(node)
                 val desc = nodeDescOf(node)
-                // v1.2.153：空输入的 placeholder（见 compact dump 处说明）
+                // 空输入的 placeholder（见 compact dump 处说明）
                 val hint = if (text.isEmpty() && desc.isEmpty() &&
                     android.os.Build.VERSION.SDK_INT >= 26
                 ) {
@@ -745,7 +683,7 @@ class DshAccessibilityService : AccessibilityService() {
                 if ((text.isNotEmpty() || desc.isNotEmpty()) && rect.centerY() > contentTop) {
                     contentChars += text.length + desc.length
                 }
-                // v1.8.6：可滚动容器即使没有文本/desc/clickable 也要保留一条记录，
+                // 可滚动容器即使没有文本/desc/clickable 也要保留一条记录，
                 // 否则 P1-6 的 listId 锚点找不到（实测 Settings 的 RecyclerView 是
                 // scrollable=true 但无文本，被过滤后列表行全部拿不到 listId）。
                 if ((text.isNotEmpty() || desc.isNotEmpty() || node.isClickable || node.isCheckable ||
@@ -760,10 +698,10 @@ class DshAccessibilityService : AccessibilityService() {
                         put("index", count)
                         put("text", text)
                         put("desc", desc)
-                        put("hint", hint)      // v1.2.153：空输入的 placeholder
+                        put("hint", hint)      // 空输入的 placeholder
                         put("cls", node.className?.toString() ?: "")
                         put("rid", node.viewIdResourceName ?: "")
-                        // v1.2.126：部分可见节点的中心可能越界 → 用可见区域中心
+                        // 部分可见节点的中心可能越界 → 用可见区域中心
                         // （与 dumpScreenCompact 同判据；越界坐标点击会静默落空）
                         val vis = Rect(rect)
                         val onScreen = vis.intersect(0, 0, resources.displayMetrics.widthPixels, rootHeight)
@@ -773,7 +711,7 @@ class DshAccessibilityService : AccessibilityService() {
                         put("y", cy)
                         put("w", rect.width())
                         put("h", rect.height())
-                        // v1.8.0（点击链路提案 P0-1）：显式 bbox 与中心，图标按钮/空心控件
+                        // 显式 bbox 与中心，图标按钮/空心控件
                         // 不再靠 w/h 反推，直接给可点区域。
                         put("bounds", JSONArray().put(rect.left).put(rect.top).put(rect.right).put(rect.bottom))
                         put("center", JSONArray().put(cx).put(cy))
@@ -820,7 +758,7 @@ class DshAccessibilityService : AccessibilityService() {
                 count++
             }
         }
-        // v1.8.2（提案 P1-6）：给滚动列表内的可点行标 listId/itemIndex。
+        // 给滚动列表内的可点行标 listId/itemIndex。
         // 文本重复（同一 UP 名出现 4 次）时，坐标会随滚动全变，但 (listId,itemIndex)
         // 稳定，Agent 可以按位置点，而不是拿上一屏坐标。
         runCatching {
@@ -846,7 +784,7 @@ class DshAccessibilityService : AccessibilityService() {
                     o.put("listId", hit.id)
                     o.put("itemIndex", hit.counter[0])
                     hit.counter[0]++
-                    // v1.8.7：列表行容器本身常常没有 text/desc（文本在子节点里）。
+                    // 列表行容器本身常常没有 text/desc（文本在子节点里）。
                     // 给一个 label（最多 3 段子文本），让 Agent 不点开也知道这一行是什么。
                     if (o.optString("text").isBlank() && o.optString("desc").isBlank()) {
                         val rb = o.optJSONArray("bounds")
@@ -910,76 +848,39 @@ class DshAccessibilityService : AccessibilityService() {
         return sb.toString()
     }
 
-    /**
-     * 截取当前屏幕为 PNG 并返回 (宽, 高, base64)。**API 30+ 可用**（takeScreenshot）。
-     * 同步等待结果（AgentBridge 的请求线程阻塞在此，默认超时 3s）。
-     * 返回 null = 平台不支持或截图失败。
-     */
-    /**
-     * 截图为 ARGB 字节数组（v1.2.122，Framer 专用）—— 跳过 PNG 压缩与 base64 编码。
-     *
-     * 帧差验证每秒可能采几十帧，走 screenshotBase64() 那条路（PNG 压缩 + base64 +
-     * 调用方再解码回 ARGB）会把大部分时间花在无谓的编解码上。这里直接出
-     * IntArray（ARGB_8888 逐像素），调用方自行降采样。
-     *
-     * @return (像素数组, 宽, 高)；失败返回 null
-     */
+    /** ARGB 整屏截图；后台帧差/OCR 不避让，视觉取图可请求隐藏浮窗。 */
     fun screenshotArgb(
         timeoutMs: Long = 5000L,
         avoidOverlay: Boolean = true,
     ): Triple<IntArray, Int, Int>? {
         if (Build.VERSION.SDK_INT < 30) return null
-        // v1.2.156 实测修复：系统对 takeScreenshot 有节流（errorCode=3
-        // INTERVAL_TIME_SHORT）。实测**间隔 5 秒仍被拒**——因为一次读屏里 OCR 与
-        // 图标识别各截一帧、叠加其它消费者，节流窗口被持续占用。此前一拒就放弃，
-        // 于是 OCR 长期显示 `ocr=unavailable`（画布/无文本界面等于读瞎）。
-        // 改为短退避重试：失败等 450ms 再来（最多 3 次），把"偶发被拒"与
-        // "真的不可用"分开。
-        //
-        // 更进一步（同一批实测）：节流的根因是**一次读屏里有两个消费者**
-        // （OCR 与图标识别各截一帧），互相把配额吃掉 → 两边都撞 errorCode=3，
-        // 各付 450ms 退避。这里加 700ms 的"近期帧复用"：同一个 dump 里的第二次
-        // 取帧直接吃缓存，整次读屏只消耗一次系统配额。
         val now = System.currentTimeMillis()
         lastShotCache?.let { c ->
-            if (now - lastShotAt < SHOT_REUSE_MS) return c     // 复用帧：无需避让（已有帧里没有悬浮窗）
+            if (now - c.at < SHOT_REUSE_MS && (!avoidOverlay || c.overlayAvoided)) return c.pixels
         }
-        // ⚠️ v1.2.164（用户反馈"截图会带上我们自己的悬浮窗，遮挡 AI 视野"）：
-        // 截图前**临时隐藏**悬浮窗，截完恢复。悬浮窗是 app 自己的 UI，被截进去会让
-        // AI 把它当成页面内容（状态球/文字混进识别结果）→ 误判。
-        // 用 try/finally 保证任何异常路径都能恢复，绝不把用户的悬浮窗"吞掉"。
-        // v2.9.72（真机取证修复）：避让不是免费的 —— 对 TYPE_ACCESSIBILITY_OVERLAY 窗口
-        // 设 INVISIBLE 会让 WMS 真正销毁 surface（WindowStateAnimator 里 t.remove +
-        // setHasSurface(false) + NO_SURFACE），恢复时重建 layer 并等首帧 ⇒ 肉眼一闪。
-        // 帧轮询（/frame-wait、verify、settle）以 250–300ms 的频率走这里，等于 3–5Hz
-        // 闪烁；而它们只需要「画面变没变」，不需要干净画面（Framer 会把悬浮窗矩形排除
-        // 在比对之外）。所以**只有需要干净画面的消费者**（显式 /screenshot、视觉模型）
-        // 才传 avoidOverlay=true；内部测量一律 false。
-        val svcForAvoid = if (avoidOverlay) instance else null
-        if (avoidOverlay) StatusOverlay.beginCaptureAvoid(svcForAvoid)
+        // 干净帧不能复用未避让的缓存；一次采集只持有一份避让凭据。
+        val captureLease = if (avoidOverlay) StatusOverlay.beginCaptureAvoid() else null
         try {
             repeat(3) { attempt ->
-                screenshotArgbOnce(timeoutMs, avoidOverlay)?.let {
-                    lastShotCache = it
-                    lastShotAt = System.currentTimeMillis()
+                screenshotArgbOnce(timeoutMs)?.let {
+                    lastShotCache = ArgbFrame(it, System.currentTimeMillis(), avoidOverlay)
                     return it
                 }
                 if (attempt < 2) Thread.sleep(450L)
             }
             return null
         } finally {
-            if (avoidOverlay) StatusOverlay.endCaptureAvoid(svcForAvoid)
+            StatusOverlay.endCaptureAvoid(captureLease)
         }
     }
 
-    /** 近期帧（见 screenshotArgb 顶部说明）：同一个 dump 内的第二次取帧复用它 */
-    @Volatile private var lastShotCache: Triple<IntArray, Int, Int>? = null
-    @Volatile private var lastShotAt = 0L
+    /** 缓存帧与来源标记一起发布，避免并发调用把未避让的帧误认成干净帧。 */
+    private data class ArgbFrame(val pixels: Triple<IntArray, Int, Int>, val at: Long, val overlayAvoided: Boolean)
+    @Volatile private var lastShotCache: ArgbFrame? = null
     private val SHOT_REUSE_MS = 700L
 
     private fun screenshotArgbOnce(
         timeoutMs: Long,
-        avoidOverlay: Boolean,
     ): Triple<IntArray, Int, Int>? {
         val latch = java.util.concurrent.CountDownLatch(1)
         var bmp: Bitmap? = null
@@ -994,23 +895,15 @@ class DshAccessibilityService : AccessibilityService() {
                 latch.countDown()
             }
             override fun onFailure(errorCode: Int) {
-                // ⚠️ 诊断（v1.2.124 实测）：连续高频调用时 takeScreenshot 会因
-                // ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT(=3) 被系统节流拒绝——
-                // 这是"每帧截图"路线的根本障碍，正解是 MediaProjection 帧流。
+                // 系统节流与服务失效分别记录，调用方可据此决定重试或回退。
                 Log.w("DshA11y", "screenshotArgb failed: errorCode=$errorCode " +
                     "(3=INTERVAL_TIME_SHORT: throttled; 1=INTERNAL; 2=NO_ACCESSIBILITY_ACCESS; 4=INVALID_DISPLAY)")
                 latch.countDown()
             }
         }
-        // v1.2.164：截图前临时隐藏自己的悬浮窗（同 screenshotArgb，见其注释）
-        val svcForAvoid = if (avoidOverlay) instance else null
-        if (avoidOverlay) StatusOverlay.beginCaptureAvoid(svcForAvoid)
-        try {
-            takeScreenshot(android.view.Display.DEFAULT_DISPLAY, { it.run() }, callback)
-            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
-        } finally {
-            if (avoidOverlay) StatusOverlay.endCaptureAvoid(svcForAvoid)
-        }
+        awaitCaptureSlot()
+        takeScreenshot(android.view.Display.DEFAULT_DISPLAY, { it.run() }, callback)
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         val bitmap = bmp ?: return null
         val w = bitmap.width
         val h = bitmap.height
@@ -1019,7 +912,6 @@ class DshAccessibilityService : AccessibilityService() {
         bitmap.recycle()
         return Triple(pixels, w, h)
     }
-
 
     // ── takeScreenshot 平台节流：AOSP 的间隔下限是 333ms ────────────────────────
     // 依据：AccessibilityService 对 takeScreenshot 有
@@ -1034,21 +926,8 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 截图（整体截图 + 截图前摘掉自己的悬浮窗）。
-     *
-     * 两个平台坑（都不是靠猜，是查到的）：
-     *  1. **节流**：同一服务相邻两次 takeScreenshot 必须 ≥333ms，否则 errorCode=3；
-     *     所以这里用 [awaitCaptureSlot] 统一排队，不再靠固定 sleep 撞运气。
-     *  2. **陈旧帧**：SurfaceFlinger 双缓冲，取到的可能是**上一帧**——于是「摘掉悬浮窗」
-     *     之后立刻截，图里还有悬浮窗。已知现象与对策（先取一帧丢掉、再取真图）：
-     *     https://community.amazondeveloper.com/t/vega-sdk-0-24-vvd-automation-toolkit-crashes-on-every-takescreenshot-econnreset-then-dies-after-3-calls-until-reboot/29134/12
-     */
-    /**
-     * @param avoidOverlay 是否在拍照前摘掉自己的悬浮窗。
-     *   显式截图（/screenshot、shot 门、agent 取图）必须 true —— 用户要的是「所见即所得」；
-     *   后台 OCR prefetch 必须 **false** —— 它每 3–5 秒抓一帧，摘/挂窗口会让悬浮窗肉眼可见地闪
-     *   （issue-overlay-flicker）。prefetch 的画面里如果有悬浮窗，由 [ScreenHandler] 按 overlay
-     *   矩形把 OCR block 过滤掉，不用摘窗口。
+     * 整屏截图回退。avoidOverlay=true 时临时隐藏浮窗，并预热两次以等待画面更新。
+     * 内部帧差/OCR 预取使用 false，避免高频隐藏；显式取图优先 screenshotBase64NoFlash。
      */
     fun screenshotBase64(timeoutMs: Long = 3000L, avoidOverlay: Boolean = true): Triple<Int, Int, String>? {
         if (Build.VERSION.SDK_INT < 30) return null
@@ -1064,12 +943,12 @@ class DshAccessibilityService : AccessibilityService() {
             }
             return null
         }
-        StatusOverlay.beginCaptureAvoid(svcForAvoid)
+        val captureLease = StatusOverlay.beginCaptureAvoid()
         try {
             Log.i("DshA11y", "screenshot: avoid done, overlays=${StatusOverlay.debugState()}")
-            // 等一帧 + 丢掉一次采集：把双缓冲里「摘窗口前」的那一帧消耗掉
+            // 等一帧 + 丢掉一次采集：等待隐藏后的合成结果
             Thread.sleep(120L)
-            // 双缓冲要丢两帧：切 App / 展开动画刚结束时的第一张仍可能拿到「摘窗口前」的帧
+            // 回退路径预热两次，再取实际返回帧
             repeat(2) { w ->
                 awaitCaptureSlot()
                 val warm = screenshotBase64Inner(timeoutMs)
@@ -1084,7 +963,7 @@ class DshAccessibilityService : AccessibilityService() {
             }
             return null
         } finally {
-            StatusOverlay.endCaptureAvoid(svcForAvoid)
+            StatusOverlay.endCaptureAvoid(captureLease)
             Log.i("DshA11y", "screenshot: restore done, overlays=${StatusOverlay.debugState()}")
         }
     }
@@ -1427,7 +1306,7 @@ class DshAccessibilityService : AccessibilityService() {
     fun tapSmart(x: Float, y: Float): String {
         val hit = runCatching { nodeAt(x.toInt(), y.toInt()) }.getOrNull()
         if (hit != null) {
-            // v2.5.30：整屏装饰层/残留全屏节点（面积 >=60% 屏）绝不能当点击目标——
+            // 整屏装饰层/残留全屏节点（面积 >=60% 屏）绝不能当点击目标——
             // 实测酷狗当前页挂着 [0,0,1080,2376] 的「关闭侧边栏」「播放」节点，
             // 按坐标取最深节点就会点到它，表现为「点了没反应」。此类情况退回合成手势。
             val (sw, sh) = screenSize()
@@ -1560,7 +1439,7 @@ class DshAccessibilityService : AccessibilityService() {
      * 才回退到最近的可点击祖先矩形。
      */
     private fun tapNode(node: AccessibilityNodeInfo): Boolean {
-        // v2.5.32：先试节点动作 ACTION_CLICK（SystemUI 通知栏等窗口会吞掉合成手势），失败再手势
+        // 先试节点动作 ACTION_CLICK（SystemUI 通知栏等窗口会吞掉合成手势），失败再手势
         if (runCatching { node.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)) {
             lastTapVia = "action-click"
             return true
@@ -1607,7 +1486,7 @@ class DshAccessibilityService : AccessibilityService() {
     /**
      * 匹配结果：命中节点 + 同分候选（v1.2.82）。
      *
-     * 主人实测反馈（无障碍提案 P1-4）：`tap-text "7"` 在计算器上同时匹配显示区与键盘，
+     * 用户反馈（无障碍提案 P1-4）：`tap-text "7"` 在计算器上同时匹配显示区与键盘，
      * 旧实现**静默取第一个**（"这次恰好对，纯属运气"）。现在把候选一并带出来，
      * 由调用方决定是报错、还是按 index 选。
      */
@@ -1767,7 +1646,7 @@ class DshAccessibilityService : AccessibilityService() {
         }
         walk(root)
         if (best == null) return null
-        // ⚠️ v1.2.56：**返回命中节点自身**，不再返回可点击祖先。
+        // **返回命中节点自身**，不再返回可点击祖先。
         // 旧实现返回祖先 → 点击时用祖先中心 → 祖先若是整个列表/下拉容器，
         // 中心落在别的条目上（用户实测："Dsh mobile" 建议项 clickable=false，
         // 点祖先中心无效，点文字坐标才生效）。
@@ -1919,7 +1798,7 @@ class DshAccessibilityService : AccessibilityService() {
         fun isConnected(): Boolean = instance != null
 
         /**
-         * v1.7.3：**系统层面**是否已启用本服务（不看 instance）。
+         * **系统层面**是否已启用本服务（不看 instance）。
          *
          * 旧实现 `isEnabled() = instance != null` 把「已授权但尚未绑定/绑定被系统回收」
          * 误判成「未授权」，Agent 预检 /health 或调动作端点直接拿到 503。
@@ -1938,7 +1817,7 @@ class DshAccessibilityService : AccessibilityService() {
         }.getOrDefault(false)
 
         /**
-         * v1.7.5：secure 设置里仍列着本服务、但系统并不认为它已启用。
+         * secure 设置里仍列着本服务、但系统并不认为它已启用。
          *
          * 典型来源：Android 规定 **force-stop 应用会禁用其无障碍服务**（更新/强杀后
          * secure setting 可能还是旧值）。此时必须让用户去系统设置重新开启，App 无法代替。
@@ -2010,7 +1889,7 @@ class DshAccessibilityService : AccessibilityService() {
      *  无障碍注入的手势在系统层仍有固有特征（deviceId、pressure 恒为 1.0），
      *  要彻底隐形需 Root 层 uinput 注入，不在本版范围。 */
     /**
-     * v2.9.86：所有注入手势的统一避让点（私有助手，**不能**覆盖 dispatchGesture——它是 final）。
+     * 所有注入手势的统一避让点（私有助手，**不能**覆盖 dispatchGesture——它是 final）。
      *
      * 旧实现是在 Router 里「POST /act 一律隐藏悬浮窗」，真机实测 agent 连续操作时
      * 悬浮窗以 ~3Hz 闪（40 次采样 14 次不可见 = 35% 占空比），用户描述为「不断闪烁 +
@@ -2028,23 +1907,47 @@ class DshAccessibilityService : AccessibilityService() {
         handler: android.os.Handler? = null,
     ): Boolean {
         val bounds = runCatching { gestureBounds(gesture) }.getOrNull()
-        val avoided = bounds != null &&
-            runCatching { StatusOverlay.beginOpsAvoidIfHit(bounds) }.getOrDefault(false)
-        if (!avoided) return dispatchGesture(gesture, callback, handler)
+        val lease = bounds?.let { StatusOverlay.beginOpsAvoidIfHit(it) }
+        if (lease == null) return dispatchGesture(gesture, callback, handler)
         val restoreDone = java.util.concurrent.atomic.AtomicBoolean(false)
         val restore = {
             if (restoreDone.compareAndSet(false, true)) {
-                runCatching { StatusOverlay.endOpsAvoid() }
+                runCatching { StatusOverlay.endOpsAvoid(lease) }
             }
         }
         val wrapped = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) { restore(); callback?.onCompleted(g) }
             override fun onCancelled(g: GestureDescription?) { restore(); callback?.onCancelled(g) }
         }
-        val ok = runCatching { dispatchGesture(gesture, wrapped, handler) }.getOrDefault(false)
-        if (!ok) restore()
-        else android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ restore() }, 1_200L)
-        return ok
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val dispatch = {
+            val ok = runCatching { dispatchGesture(gesture, wrapped, handler) }.getOrDefault(false)
+            if (!ok) restore()
+            else {
+                val duration = (0 until gesture.strokeCount).maxOf {
+                    val stroke = gesture.getStroke(it)
+                    stroke.startTime + stroke.duration
+                }
+                main.postDelayed({ restore() }, duration + 1_200L)
+            }
+            ok
+        }
+        // INVISIBLE 先更新 View，再异步更新系统输入窗口；立即注入仍会命中旧窗口。
+        // 与截图回退一样留出合成窗口时间，主线程调用则排队，不能阻塞布局遍历。
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            val queued = main.postDelayed({
+                if (!dispatch()) callback?.onCancelled(gesture)
+            }, 120L)
+            if (!queued) restore()
+            return queued
+        }
+        try { Thread.sleep(120L) }
+        catch (e: InterruptedException) {
+            restore()
+            Thread.currentThread().interrupt()
+            return false
+        }
+        return dispatch()
     }
 
     /** 一次注入所有 stroke 的边界并集（屏幕像素），用于判断是否压到悬浮窗。 */
@@ -2074,7 +1977,7 @@ class DshAccessibilityService : AccessibilityService() {
             val (sw, sh) = screenSize()
             (x + dx).coerceIn(1f, sw - 2f) to (y + dy).coerceIn(1f, sh - 2f)
         } else {
-            // v1.2.126：jitter=0 时同样钳制——越界坐标的手势被系统静默丢弃
+            // jitter=0 时同样钳制——越界坐标的手势被系统静默丢弃
             // （实测：节点中心 @540,2211 超出屏高 2209，dispatchGesture 返回
             // true 但实际没点中）。钳进屏内至少让点击落在控件可见部分。
             val (sw, sh) = screenSize()
@@ -2124,7 +2027,7 @@ class DshAccessibilityService : AccessibilityService() {
     /**
      * 任意滑动/手势（无障碍 dispatchGesture，无需 Shizuku/Root 权限）。
      *
-     * ⚠️ v1.2.68：坐标**先钳进屏幕**再建 Path。
+     * 坐标**先钳进屏幕**再建 Path。
      * 内置 AI 实测反馈「向上滚动报 `Path bounds must not be negative`，只能向下找」——
      * `Path`/`StrokeDescription` 遇到负坐标会直接抛异常（整条手势失败），
      * 而调用方（引擎侧的 scr / batch 里的 swipe 步）可能按「元素位置 ± 偏移」算出负值。
@@ -2241,7 +2144,7 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     // ==================== 文字输入（v1.2.54） ====================
-    //
+
     // 为什么必须有：此前只有 tap/swipe/key，AI 能点开搜索框却打不了字 ——
     // 搜索、登录、发消息、填表全部卡死在这一步（用户反馈「无障碍基本用不了」
     // 的头号原因）。文字输入是自动化闭环的最后一块拼图。
@@ -2354,7 +2257,7 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     // ==================== 滚动查找（v1.2.54） ====================
-    //
+
     // 为什么必须有：目标在屏幕外时，此前只能「swipe → dump → 没找到 → 再 swipe」
     // 手动循环，一次找元素烧 5-10 个来回。滚动查找把整个循环压到服务端一次调用。
 
@@ -2420,7 +2323,7 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     // ==================== 等待界面稳定（v1.2.54） ====================
-    //
+
     // 为什么必须有：点击后立刻读屏会拿到「旧界面」，AI 以为没生效 → 重复点。
     // 此前只能靠 wait <文本> 猜或硬 sleep。稳定检测让「点完等它安静下来」变成一次调用。
 
@@ -2506,7 +2409,7 @@ class DshAccessibilityService : AccessibilityService() {
         // ⚠️ 只取**应用类型**窗口——实测教训：Chrome 地址栏激活时输入法窗口
         // 也是 isActive，直接取 active 会拿到 com.google.android.inputmethod.*
         // → verify.foregroundPkg 持续误判（25 次轮询全失败）。
-        //
+
         // v1.2.152 实测修复：**系统对话框也是应用窗口**。Chrome 弹「没有响应/关闭
         // 应用/等待」的 ANR 框时，窗口列表顶部是 package=`android` 的对话框窗口，
         // 于是 foregroundPackage() 返回 "android" —— 调用方的
@@ -2568,11 +2471,11 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     // ==================== 批量动作执行（v1.2.54） ====================
-    //
+
     // 用户反馈的核心问题：「太慢」。根因不是单次动作慢（桥接往返只有几十毫秒），
     // 而是**每个动作都要 AI 往返一次**——dump → LLM 思考（秒级）→ 点 → dump → …
     // 一个 10 步流程就是 10 次 LLM 调用。
-    //
+
     // 解法：一次调用执行一串动作，只在最后回一次结果。
     // AI 只思考一次（「打开设置 → 点 WLAN → 等它稳定」），剩下的在服务端跑完。
 
@@ -2643,7 +2546,7 @@ class DshAccessibilityService : AccessibilityService() {
             // ── 重试与断言（v1.2.82，无障碍提案 P0-1）────────────────────────
             // 提案原文：批次失败**不回滚** —— step 0 已产生副作用、step 1 失败中止后，
             // 若盲目重跑会**执行两次**（转账/提交订单场景直接出事）。
-            //
+
             // 因此：
             //  · **非幂等步骤默认禁止重试**（tap/input/key/long_press 都可能产生副作用）；
             //    要重试必须显式 `"idempotent": true` 声明它安全。
@@ -2695,7 +2598,7 @@ class DshAccessibilityService : AccessibilityService() {
                         val t = step["text"] as? String ?: ""
                         inputText(t, step["append"] == true, step["target"] as? String)
                     }
-                    // ⚠️ v1.2.57：字段名**两种都接受**。用户实测踩坑：
+                    // 字段名**两种都接受**。用户实测踩坑：
                     // 单条命令是 `scr key home`，照此写成 {"type":"key","key":"home"}
                     // → 字段名不匹配 → ok:false → **整条 batch 中断**。
                     // 宽进严出：key/action 任给其一即可，避免这类「文档没写清」的翻车。

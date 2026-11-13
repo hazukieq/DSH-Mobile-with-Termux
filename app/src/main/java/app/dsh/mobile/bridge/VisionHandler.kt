@@ -31,7 +31,7 @@ import java.nio.charset.StandardCharsets
 import app.dsh.mobile.engine.AgentBridge
 
 /**
- * VisionHandler：Phase 2 从 AgentBridge 拆出的端点组（成员原样迁移，行为不变）。
+ * VisionHandler：对应能力的桥端点实现。
  *
  * 函数体包 `with(bridge)`，因此原文件里对 AgentBridge 成员的裸引用不用改名；
  * 跨组裸调用由本包的 AgentBridge 扩展别名（CrossCalls.kt）兜住。
@@ -160,7 +160,7 @@ internal class VisionHandler(private val bridge: AgentBridge) {
         }
     }
 
-    internal fun withTimeoutTap(svc: DshAccessibilityService, x: Int, y: Int): Boolean = with(bridge) { 
+    internal fun withTimeoutTap(svc: DshAccessibilityService, x: Int, y: Int): Boolean = with(bridge) {
         runCatching { svc.dispatchTapRect(android.graphics.Rect(x, y, x, y)) }.getOrDefault(false)
     }
 

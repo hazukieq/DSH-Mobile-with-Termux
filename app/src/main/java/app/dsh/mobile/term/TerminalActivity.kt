@@ -341,14 +341,14 @@ class TerminalActivity : Activity() {
 
     // ── 返回键 ─────────────────────────────────────────────────────────────
 
-    @Deprecated("Use onBack(); kept because the project has no AndroidX dependency")
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
         onBack()
     }
 
     private fun onBack() {
         // 若正在回看历史，第一次返回先回到底部（与桌面终端一致的直觉）。
-        //
+
         // ⚠️ 2026-10-18 修 bug：这里原先写的是
         //     viewportTopRow < scrollbackRows - 1
         // 但视口顶行最大只到 `scrollbackRows - 屏幕行数`（maxTop），所以只要屏幕

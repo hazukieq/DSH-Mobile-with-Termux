@@ -21,7 +21,7 @@ import kotlin.math.abs
  * 所以签名 = `节点数 + 每节点的(角色, 4x4 网格格位)`，**刻意不含文本内容**。
  *
  * ## 三态判定
- * - [Phase.LOADING]  有 ProgressBar / "加载中"类文本 / 节点数 < 5 → **继续等**（到
+ * - [Phase.LOADING]  有 ProgressBar 或明确的加载提示 → **继续等**（到
  *   maxLoadingMs 为止，覆盖慢加载；期间不判定就绪）
  * - [Phase.READY]    结构签名连续 [stableReads] 次一致 → **立即交还控制权**
  * - [Phase.TIMEOUT]  超过总预算仍在变（罕见）→ 放行，由动作后的 verify 兜底
@@ -116,7 +116,7 @@ object PageStateDetector {
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
         walk(root)
-        // v1.2.147：**只认明确信号**。上一版"内容区节点 < 3"判据实测误判风险高
+        // **只认明确信号**。上一版"内容区节点 < 3"判据实测误判风险高
         // （对话框/空状态页内容本来就少 → 被判加载中 → settle 白等），已移除。
         return when {
             progress || hint -> LoadSignal.STRONG

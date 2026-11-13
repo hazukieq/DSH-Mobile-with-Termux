@@ -27,13 +27,14 @@ val dshStoreFile: String? = signingValue("storeFile", "DSH_KEYSTORE_FILE")
 
 android {
     namespace = "app.dsh.mobile"
-    // CI 上 compileSdk=35；本地 SDK 只有 33/36/36.1 时可临时降/升到此值，
-    // compileSdk 仅决定编译期 API 可见性，不影响运行时行为（targetSdk=28 才是生效阈值）。
+    // 编译 API 版本；运行时兼容策略由 minSdk/targetSdk 决定。
     compileSdk = 36
+    testBuildType = (project.findProperty("testBuildType") as String?) ?: "debug"
 
     defaultConfig {
         applicationId = "com.termux"  // 2026-10-18：与 Termux 同包名，$PREFIX 才是 /data/data/com.termux/files/usr
         minSdk = 26
+        testInstrumentationRunner = "app.dsh.mobile.OverlayRegressionInstrumentation"
         // 关键决策：targetSdk 28 —— sideload 分发，豁免 Android 10+ 的 W^X 限制，
         // 允许从 filesDir 直接 execve bionic 二进制（Termux 同款策略）。
         targetSdk = 28
@@ -89,7 +90,7 @@ android {
     }
     lint {
         // release 的 lintVital 在 AGP 8.5 + 本机 SDK 36.1 上会崩（For input string: "36.1"），
-        // 属于工具链 bug；发布构建靠 CI 的 lint job 兜底，这里跳过 vital 检查。
+        // 属于工具链 bug；这里跳过 vital 检查；验收脚本并不替代完整 lint 审计。
         checkReleaseBuilds = false
         // targetSdk 28 会触发大量 lint 提示（前台服务类型、通知权限等），
         // 这些是刻意的兼容性决策，不阻断构建。
@@ -105,7 +106,7 @@ android {
 dependencies {
     // JVM 单测（纯逻辑，不依赖 Android 框架）
     testImplementation("junit:junit:4.13.2")
-    // YOLO 实验（debug 专门，正式包先不开）
+    // 原生 PP-OCRv6 与图标模型共用 ONNX Runtime。
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // 扩展中心解包链路：Termux .deb 的 data.tar.xz 解码（纯 Java 实现，~110KB）

@@ -35,7 +35,7 @@ import java.nio.charset.StandardCharsets
 /**
  * 系统/运维类端点：状态、本地运行时、守护、插件、设置、内存、日志诊断。
  *
- * Phase 2 从 AgentBridge 提出；与无障碍/手势无关，AgentBridge 内部成员通过 [bridge] 访问。
+ * 与无障碍/手势无关，AgentBridge 内部成员通过 [bridge] 访问。
  */
 internal class SystemHandler(private val bridge: AgentBridge) {
    fun status(): Pair<Int, String> {
@@ -182,7 +182,7 @@ internal class SystemHandler(private val bridge: AgentBridge) {
             put("serverRunning", LocalModel.isServerRunning())
             put("modelPath", LocalModel.modelFile(ctx).absolutePath)
             put("port", LocalEmbedder.PORT)
-            // v1.2.124：本地判决 AI 的实际用量（exact/semantic/none + verify 语义救场）
+            // 本地判决 AI 的实际用量（exact/semantic/none + verify 语义救场）
             put("stats", FastPicker.stats.snapshot())
         }.toString()
 

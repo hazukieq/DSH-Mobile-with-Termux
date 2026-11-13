@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 分享内容接收器（Phase 1.2 从 MainActivity 提取）。
+ * 分享内容接收器。
  *
  * 职责：把其它 App 分享过来的文件复制进 `$DSH_HOME/inbox/`，并把
  * 「文件路径 + 分享文本」组装成正文交给调用方去预填输入框。
@@ -59,7 +59,7 @@ class ShareHandler(
         @Suppress("DEPRECATION")
         (intent.getParcelableExtra<android.os.Parcelable>(Intent.EXTRA_STREAM) as? Uri)?.let { uris.add(it) }
 
-        // v2.5.64（安全评估 H1）：文件复制绝不能跑在主线程上 —— 旧实现在
+        // 文件复制绝不能跑在主线程上 —— 旧实现在
         // onCreate/onNewIntent 里直接 copyTo，分享大文件时主线程卡住 5s 就是 ANR。
         if (uris.isEmpty()) {
             deliver(rawText, emptyList())

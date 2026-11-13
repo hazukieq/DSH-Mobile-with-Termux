@@ -5,9 +5,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 本地快速决策层（v1.2.120）—— 主人设计的「非黑即白判断题」架构。
+ * 本地快速决策层（v1.2.120）—— 设计的「非黑即白判断题」架构。
  *
- * ## 架构意图（主人原话）
+ * ## 架构意图（需求）
  * 本地跑一个**极小**模型，**只做判断题**：给定屏幕文本 + 目标描述，
  * 立刻回答「该点哪个节点」。**不输出坐标**（坐标由无障碍层从节点直接取），
  * **不看图片**（不做视觉推理）—— 因此模型可以极小、延迟可以毫秒级。
@@ -106,10 +106,10 @@ object FastPicker {
             // [edit] 角色或标志位里的 e（v1.2.153）
             val editable = tail.contains("e") && (tail.contains(" e") || tail.contains("ce") ||
                 tail.contains("ec") || tail.contains("[edit]"))
-            // v1.2.131：角色标记（行尾 `[switch]`/`[row]`…）。⚠️ 必须先剥离再判
+            // 角色标记（行尾 `[switch]`/`[row]`…）。⚠️ 必须先剥离再判
             // flags —— `[row]` 含字母 o，混进 flagPart 会被误判成「未勾选」。
             val role = Regex("\\[([a-z]+)\\]\\s*$").find(tail)?.groupValues?.get(1) ?: ""
-            // v1.2.126：勾选标记（flags 末尾的 v/o；坐标段是数字不含字母，安全）
+            // 勾选标记（flags 末尾的 v/o；坐标段是数字不含字母，安全）
             val flagPart = tail.substringAfter(' ', "").substringBefore('[').trim()
             val checked = when {
                 flagPart.contains('v') -> true
@@ -251,7 +251,7 @@ object LocalEmbedder {
             val conn = java.net.URL("http://127.0.0.1:$PORT/v1/embeddings").openConnection()
             conn.doOutput = true
             conn.connectTimeout = 2000
-            // v1.2.152：4s→2.5s。15MB 模型**热态**是毫秒级；冷加载应在 llama-server
+            // 4s→2.5s。15MB 模型**热态**是毫秒级；冷加载应在 llama-server
             // 启动时完成（LocalModel 有预热），不该让 verify 的预算替它买单——
             // 实测一次冷调用吃掉 8s，把 timeoutMs=6000 的验证拖成 14s。
             conn.readTimeout = 2500

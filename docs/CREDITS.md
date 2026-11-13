@@ -4,7 +4,7 @@ DSH Mobile 站在一批开源项目上。本文件列清「用了什么、用在
 
 | 项目 | 在本项目里承担什么 | 许可 | 链接 |
 |---|---|---|---|
-| **DeepSeek Harness（`dsh`）** | Agent 引擎本体：会话、工具调用、插件系统、WebUI。随包内置 `pubspec` 发行版 `0.2.1-rc.2` | 见上游仓库 | https://github.com/deepseek-ai/deepseek-harness |
+| **DeepSeek Harness（`dsh`）** | Agent 引擎本体：会话、工具调用、插件系统、WebUI。随包版本以引擎层的 `.dsh-engine-version` 为准 | 见上游仓库 | https://github.com/deepseek-ai/deepseek-harness |
 | **Termux** | 运行时用户态：`files/usr` 前缀、`pkg`/`apt`/`dpkg`、bash、VT100 终端约定。APK 与 Termux 同包名 `com.termux` | GPL-3.0 | https://github.com/termux/termux-app |
 | **PaddleOCR / PP-OCRv6** | 截图文字识别（`assets/ppocr6/` 的 `det_tiny` + `rec_tiny` ONNX）；可选 `medium` 档从 ModelScope 下载 | Apache-2.0 | https://github.com/PaddlePaddle/PaddleOCR |
 | **microsoft/OmniParser** | 图标/无文字控件检测模型的来源（`icon_detect`），本项目蒸馏 + int8 量化后为 30 MB 单类模型 | 见上游仓库 | https://github.com/microsoft/OmniParser |

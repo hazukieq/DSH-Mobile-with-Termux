@@ -5,8 +5,8 @@ import java.io.File
 /**
  * 引擎的「平台适配配置」总入口：目录、环境变量、overlay、门脚本、自愈。
  *
- * Phase 3 拆分后本类只保留公开 API 与常量；实现分散在同包的 4 个 internal 协作者里，
- * 这里全部是**一行委托**，签名与行为保持不变：
+ * 本类提供公开入口与常量；实现分散在同包的协作者中，
+ * 主要协作者：
  *  - [EnginePaths]        目录拓扑、用户数据外置
  *  - [EngineEnvBuilder]   子进程环境变量、su/shz 闸门
  *  - [AndroidOverlay]     overlay / 客户端插件 / 上游 JS patch / 门脚本部署
@@ -55,7 +55,7 @@ object EngineConfig {
     /** 日志标签（拆分后各协作者共用） */
     internal const val TAG = "EngineConfig"
 
-    // ── 以下为薄委托（Phase 3 拆分）：实现见同包协作者，签名保持不变 ──
+    // ── 实现委托给同包协作者 ──
 
     // EnginePaths
     fun ensureUserDataExternal(ctx: android.content.Context) { EnginePaths.ensureUserDataExternal(ctx) }

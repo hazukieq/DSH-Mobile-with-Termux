@@ -115,7 +115,7 @@ object SceneMemory {
     }
 
     /** 场景指纹 = 屏幕文本集合（复用 FastPicker 的紧凑 dump 解析）
-     *  v1.2.126：**勾选状态纳入指纹**（v:/o: 前缀）——开关开/关是不同指纹，
+     *  **勾选状态纳入指纹**（v:/o: 前缀）——开关开/关是不同指纹，
      *  修复"点击开关后指纹不变 → 记忆反复命中同一动作（反复点开关）"的根因。 */
     fun fingerprint(dump: String, foregroundPkg: String = ""): Set<String> {
         val base = FastPicker.parseCompact(dump)
@@ -128,7 +128,7 @@ object SceneMemory {
                 }
             }
             .toMutableSet()
-        // v1.2.139：前台包名并入指纹——同一文本在不同 App 下不是同一场景
+        // 前台包名并入指纹——同一文本在不同 App 下不是同一场景
         // （实测教训：不同 App 的"设置"页文本高度相似，仅靠文本集合会误命中）
         if (foregroundPkg.isNotBlank()) base.add("pkg:$foregroundPkg")
         return base

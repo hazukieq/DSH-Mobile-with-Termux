@@ -293,7 +293,7 @@ Do not bind, proxy onto, or squat 3080 / 3083 — those are the engine's WebUI a
 
 ## Android powers: notifications and screen control
 
-- notify the user: the `notify` gate (the bridge has no `/notify`; write `notify "text"`).
+- notify the user: the `notify` gate (wraps `POST /notify`; write `notify "text"`).
 - screen: `/screen` (text tree), `/screenshot`, `/overlay` (our floating layer).
 - permission-dependent behaviour (POST_NOTIFICATIONS, overlay windows, foreground service) is
   summarised in `docs --section "Android powers: notifications and screen control" DSH-MOBILE`.
@@ -339,7 +339,7 @@ After exporting, report the actual `targetDir` and each copied path from the rep
 
 You run inside **DSH Mobile** — a Termux fork (`com.termux`) that bundles the DSH engine.
 The automation bridge listens on `127.0.0.1:3083`; authenticate with `X-DSH-Token` read from
-`$DSH_HOME/.bridge-token`. Gate scripts live in `$PREFIX/bin`. Full inventory (routes, gates,
+`$PREFIX/.bridge-token`. Gate scripts live in `$PREFIX/bin`. Full inventory (routes, gates,
 native screens, permission model) is in `docs --section "This app: internals" DSH-MOBILE`.
 
 ## Debugging the Web UI over CDP - mandatory

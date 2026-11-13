@@ -40,7 +40,7 @@ restart: the engine will stop/start by itself; do not run another restart
 - `EngineSupervisor` 在 `spawnEngine()` 前、以及健康轮询失败后清理外来监听者：
   `portListenInodes()` 解析 `/proc/net/tcp`、`/proc/net/tcp6` 的 LISTEN 行取 socket inode →
   `pidsForSocketInodes()` 扫 `/proc/<pid>/fd` 反查 PID → `killForeignPortHolders(port)` 杀掉既不是本进程、
-  也不是受管子进程的监听者，并 `waitPortFree(3080, 2000ms)`；最终只有受管引擎占用 3080，WebView 用新
+  也不是受管子进程的监听者，并等待端口释放；最终只有受管引擎占用 3080，WebView 用新
   token 重载。
 
 ## 3. 重启后的 token 与 WebView
@@ -48,24 +48,27 @@ restart: the engine will stop/start by itself; do not run another restart
 - 引擎每次启动生成新 token，supervisor 从本次启动的 stdout/log 提取 `dsh web: …?token=…`；
 - `MainActivity` 检测 URL 变化后清 cookie/缓存并加载新地址；
 - **返回栈同时清空**：重启后第一次 `onPageFinished` 会 `clearHistory()`，否则按 BACK 会退回上一个 token
-  的引擎页或预览页（那些页面连的是已死的引擎，只有白屏）；清空后网页没有历史时 BACK 退到桌面（见 §3.1）；
+  的引擎页或预览页（那些页面连的是已死的引擎，只有白屏）；清空后网页没有可回退的历史时，BACK 的行为见 §3.1；
 - 若 WebView 显示 `ERR_CONNECTION_REFUSED`，先确认受管引擎是否健康，而不是反复点重启。
 
 ### 3.1 原生返回键（2.9.97 / 668 起）
 
-- `webView.canGoBack()` 为真 → `goBack()`（先回上一页）；
-- 否则 → `moveTaskToBack(true)`：**App 退到桌面，不 `finish()`、不杀进程**。旧实现会销毁 Activity，
-  WebView 随之回收，再从桌面进来要重建 WebView + 重载整个 SPA（用户观感「又从头加载」）。
-- 实测（vivo / Android 17）：BACK 后焦点变桌面、`pidof com.termux` 不变，再进 App 整屏像素差 0.02%。
-- 本 App 的 SPA 是状态驱动、不写 URL/hash（打开会话后地址仍是 `/`），所以 `canGoBack()` 实际基本恒为 false；
-  「回会话列表」是网页左上角 `←` 的职责，不是系统返回键的。
+Android 的返回键/返回手势只做两件事，**都不销毁 App**：
+
+| 条件 | 行为 | 理由 |
+|---|---|---|
+| `webView.canGoBack()` | `webView.goBack()` | 类原生浏览体验：先回上一页 |
+| 没有网页历史 | `moveTaskToBack(true)`：App 退到桌面 | 保住热状态 |
+
+返回根页时只是把任务移到后台；系统仍可回收后台进程，因此不承诺无限保留热状态。
+WebUI 内部会话导航由网页负责，系统返回键按实际 WebView 历史处理。
 
 ## 4. Agent 应该怎么做
 
 1. 先告诉用户「我将重启引擎，当前回合会中断」；
 2. 执行 `dsh-update restart`（或 `POST /engine/restart`）；
 3. 不要使用插件市场的「立即重启」，不要杀 node 进程；
-4. 重启后验证：`GET /health`（或设置页状态）与 WebUI 可访问，再继续任务。
+4. 重启后验证：`GET /status`（或设置页状态）与 WebUI 可访问，再继续任务。
 
 ## 5. 排障
 

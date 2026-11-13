@@ -35,7 +35,7 @@ import app.dsh.mobile.engine.ShotFallback
 import app.dsh.mobile.engine.AgentBridge
 
 /**
- * ScreenHandler：Phase 2 从 AgentBridge 拆出的端点组（成员原样迁移，行为不变）。
+ * ScreenHandler：对应能力的桥端点实现。
  *
  * 函数体包 `with(bridge)`，因此原文件里对 AgentBridge 成员的裸引用不用改名；
  * 跨组裸调用由本包的 AgentBridge 扩展别名（CrossCalls.kt）兜住。
@@ -164,7 +164,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         }
     }
 
-    internal fun a11yGone(): Pair<Int, String> = with(bridge) { 
+    internal fun a11yGone(): Pair<Int, String> = with(bridge) {
         ocrFallback("accessibility restricted") ?: (503 to JSONObject()
         .put("ok", false)
         .put("error", "a11y_off")
@@ -207,7 +207,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 if (a11ySeqLastAt == 0L || now - a11ySeqLastAt > A11Y_NOTIF_WINDOW_MS) {
                     a11ySeqCount = 0
                 }
-                // v1.2.188（审查 P2）：/loop/run 是"整段连续操作"——它的内部每一步
+                // /loop/run 是"整段连续操作"——它的内部每一步
                 // 在进程内执行、不再经过 HTTP，若只计 1 步，daemon 的长任务永远
                 // 凑不够阈值 3，通知在最主要场景下不出现。这里按整段计 3 步。
                 a11ySeqCount += if (path == "/loop/run") A11Y_NOTIF_THRESHOLD else 1
@@ -807,7 +807,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         with(bridge) {
         val params = parseQuery(query)
         val tier = (params["tier"] ?: "tiny").lowercase()
-        // v1.9.6（P1-4 收尾）：medium 档按需下载；也可查状态。均不需要无障碍。
+        // medium 档按需下载；也可查状态。均不需要无障碍。
         if (params["engine"]?.lowercase() == "ppocr6" && params["download"] != null) {
             val rawDownload = params["download"].orEmpty()
             val want = rawDownload.takeIf { it.isNotBlank() && it != "1" } ?: tier
@@ -831,9 +831,9 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 .put("runtime", if (PpOcrNative.available(ctx)) "onnxruntime-android" else "termux-python")
                 .put("native", PpOcrNative.available(ctx)).toString()
         }
-        // v1.9.4：装 OCR 依赖不需要无障碍（只需 pkg/context），放在 svc 判空之前。
+        // 装 OCR 依赖不需要无障碍（只需 pkg/context），放在 svc 判空之前。
         if (params["engine"]?.lowercase() == "ppocr6" && params["ensure"] in listOf("1", "true", "yes")) {
-            // v2.9.78：模型随包 + 内置 onnxruntime-android 已能直接推理，python 运行时不再是必需项。
+            // 模型随包 + 内置 onnxruntime-android 已能直接推理，python 运行时不再是必需项。
             if (PpOcrNative.available(ctx) && params["legacy"] !in listOf("1", "true", "yes")) {
                 return 200 to JSONObject()
                     .put("ok", true)
@@ -851,7 +851,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
                     .put("unavailable", true).put("reason", err).toString()
             }
-            // v1.9.5：纯安装请求不需要无障碍；装完直接回执，不再走截图
+            // 纯安装请求不需要无障碍；装完直接回执，不再走截图
             return 200 to JSONObject()
                 .put("ok", true)
                 .put("engine", "ppocr6")
@@ -887,12 +887,12 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         }
         val svc = DshAccessibilityService.instance
         if (svc == null) {
-            // v1.9.6：无障碍不可用时，尝试 root/Shizuku 的 screencap 回退
+            // 无障碍不可用时，尝试 root/Shizuku 的 screencap 回退
             if (params["engine"]?.lowercase() == "ppocr6") {
-                // 特权 screencap 也会把悬浮窗截进去：截之前真正移除，截完挂回。
+                // 特权整屏截图使用临时隐藏避让。
                 val shot = run {
-                    StatusOverlay.beginCaptureAvoid(svc)
-                    try { ShotFallback.capture(ctx) } finally { StatusOverlay.endCaptureAvoid(svc) }
+                    val captureLease = StatusOverlay.beginCaptureAvoid()
+                    try { ShotFallback.capture(ctx) } finally { StatusOverlay.endCaptureAvoid(captureLease) }
                 }
                 if (shot != null) {
                     val r = PpOcr.recognizeFile(ctx, shot, tier)
@@ -925,7 +925,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
                 .put("retryable", true)
                 .toString()
         }
-        // v1.8.2（提案 P1-4）：PP-OCRv6 tiny 本地兜底（Termux python+onnxruntime）
+        // PP-OCRv6 tiny 本地兜底（Termux python+onnxruntime）
         if (params["engine"]?.lowercase() == "ppocr6") {
             if (!PpOcr.ready(ctx)) {
                 return 503 to JSONObject().put("ok", false).put("engine", "ppocr6")
@@ -944,7 +944,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             val regionOnly = params["region"] in listOf("1", "true", "yes")
             val ifChanged = params["ifChanged"] in listOf("1", "true", "yes")
             val r = PpOcr.recognize(svc, bmp, tier, useCache, regionOnly, ifChanged)
-            // v2.5.28：把 OCR 的截图像素坐标校正到显示坐标（没有校准参数时恒等）
+            // 把 OCR 的截图像素坐标校正到显示坐标（没有校准参数时恒等）
             val mapped = r.blocks
                 .map { Box(it.text, it.left, it.top, it.right, it.bottom, it.conf) }
                 .toMutableList()
@@ -970,7 +970,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         val force = params["force"] in listOf("1", "true", "yes")
         val scale = params["scale"]?.toFloatOrNull() ?: 0.5f
         val r = app.dsh.mobile.ScreenOcr.recognize(svc, force, scale)
-        // v2.5.28：ML Kit 结果是显示坐标；仍按显示尺寸查一次校准（通常无参数 → 恒等）
+        // ML Kit 结果是显示坐标；仍按显示尺寸查一次校准（通常无参数 → 恒等）
         val dm = svc.resources.displayMetrics
         val mlBoxes = r.blocks
             .map { Box(it.text, it.left, it.top, it.right, it.bottom, 0.0) }
@@ -1123,7 +1123,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             return 400 to """{"ok":false,"error":"accessibility service lacks screenshot capability — toggle the service off/on in system settings to grant it"}"""
         }
         return try {
-            // v2.9.73：默认**免闪**——截前台应用窗口（API 34+），悬浮窗全程可见不闪；
+            // 默认**免闪**——截前台应用窗口（API 34+），悬浮窗全程可见不闪；
             // 只有窗口截图不可用（API<34 / 有输入法或系统对话框 / 系统拒绝）才退回
             // 「整屏 + 隐藏悬浮窗」的旧路径（那条路会闪，真机实测 2.3s）。
             // ?flash=1 用于需要完整画面（状态栏/键盘）或回归对比时强制走旧路径。
@@ -1193,7 +1193,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
     internal fun captureStepShot(): String? = with(bridge) { runCatching {
         val c = shotCtx ?: return@runCatching null
         val svc = DshAccessibilityService.instance ?: return@runCatching null
-        // v2.9.93：免闪路径（composite → 窗口 → 整屏），旧路径每次回执都藏悬浮窗 2s+
+        // 免闪路径（composite → 窗口 → 整屏），旧路径每次回执都藏悬浮窗 2s+
         val shot = svc.screenshotBase64NoFlash(1500L) ?: return@runCatching null
         val dir = java.io.File(c.filesDir, "screens").apply { mkdirs() }
         val f = java.io.File(dir, "step-${shotSeq.incrementAndGet()}.png")
@@ -1240,7 +1240,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         val verbose = params["verbose"] in listOf("1", "true", "yes")
         for (i in 0 until a11yNodes.length()) {
             val o = a11yNodes.optJSONObject(i) ?: continue
-            // v2.4.1（用户反馈 /scene 超 20KB 被截断成非法 JSON）：
+
             // 默认只输出 agent 真正需要的字段；cls/rid/desc 等空字段与冗余字段省略，
             // verbose=1 才回完整 a11y 节点。100 节点可从 ~35KB 降到 ~12KB。
             val n = JSONObject()
@@ -1280,7 +1280,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
             val boxes = ArrayList<Box>()
             val enginePref = params["engine"]?.lowercase()
             val tier = (params["tier"] ?: "tiny").lowercase()
-            // v2.9.78：PP-OCR 现在能原生跑（不再依赖 python），但整屏 det+rec 约 1.2s，是 ML Kit 的
+            // PP-OCR 现在能原生跑（不再依赖 python），但整屏 det+rec 约 1.2s，是 ML Kit 的
             // 4 倍；点击链路是热路径，所以**保持 ML Kit 为默认**，只在显式 engine=ppocr6 时用 PP-OCR
             // （要精度/中文细节时由调用方点名）。
             val usePp = enginePref == "ppocr6"
@@ -1346,7 +1346,7 @@ internal class ScreenHandler(private val bridge: AgentBridge) {
         }
 
         val perf = JSONObject().put("a11y", a11yMs).put("ocr", ocrMs)
-        // v2.4.1：分页返回，任何一页都远低于 20KB；nextOffset=null 表示结束。
+        // 分页返回，任何一页都远低于 20KB；nextOffset=null 表示结束。
         val total = out.length()
         var limit = (params["limit"]?.toIntOrNull() ?: 80).coerceIn(1, 1000)
         val offset = (params["offset"]?.toIntOrNull() ?: 0).coerceAtLeast(0)

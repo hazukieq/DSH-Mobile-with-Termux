@@ -14,7 +14,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * v2.9.78：PP-OCRv6 **原生**推理（onnxruntime-android，不再依赖 Termux 的 python/onnxruntime）。
+ * PP-OCRv6 **原生**推理（onnxruntime-android，不再依赖 Termux 的 python/onnxruntime）。
  *
  * 背景：模型（`share/ppocr6/det_tiny.onnx` + `rec_tiny.onnx` + `rec_tiny.yml`）一直随 APK 部署，
  * 但历史实现把推理交给 `$PREFIX/bin/ppocr6`（Termux python3 + onnxruntime）。真机上 python 运行时

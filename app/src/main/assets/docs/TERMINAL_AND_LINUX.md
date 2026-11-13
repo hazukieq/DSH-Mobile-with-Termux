@@ -179,7 +179,7 @@ dsh-update rollback         # 不满意随时回上一份
   `http://127.0.0.1:3080/` 做健康检查（120 s）；新树不健康自动回滚。
 - 只换引擎层，所以更新引擎不会破坏 `pkg`/`apt`。
 
-### feed 与 CI
+### feed 与手动发布
 
 - 默认 feed：本仓库 release `dsh-engine-latest/engine-manifest.json`
   （`{dsh_version, engine_version, assets.<arch>.{url,sha256,size}}`）。
@@ -242,7 +242,7 @@ node-pty shim  ──HTTP──▶ AgentBridge /pty/{open,write,resize,kill,clos
 | `pkg` / `apt`: not found | bootstrap 尚未解压完成，稍后重试；检查 `$PREFIX/bin/apt` |
 | WebUI 侧边栏报 `terminal inspection is unsupported on platform android` | 引擎补丁未生效：重启引擎，确认运行时版本 |
 | WebUI 侧边栏报 `node-pty unavailable in this Android build` | overlay 未覆盖：重启引擎让 `applyRuntimeOverlays()` 重跑 |
-| `dsh-update check` 显示 `feed: unavailable` | 本仓库还没有该 dsh 版本的适配引擎包；可等 CI 或用含新引擎的 APK 升级 |
+| `dsh-update check` 显示 `feed: unavailable` | 本仓库还没有该 dsh 版本的适配引擎包；等待适配包发布，或用含新引擎的 APK 升级 |
 
 ### dsh-update 现在同时换「JS 闭包」与「原生库」（v2.5.62 起）
 

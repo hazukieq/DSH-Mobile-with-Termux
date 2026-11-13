@@ -7,7 +7,7 @@ import android.widget.Toast
 import app.dsh.mobile.R
 
 /**
- * 分享正文投递（Phase 1.7 从 MainActivity 提取，v1.3.44 逻辑原样）。
+ * 分享正文投递。
  *
  * 「文件路径 + 分享文本」由 [ShareHandler] 组装好后，交给这里写进当前会话的输入框
  * （只是预填，不自动发送）。不能只看 JS 返回值：Lexical 的 paste 管线是**异步**的，
@@ -128,7 +128,7 @@ class ShareDelivery(
      *
      * 与前端同步读值钩子的区别：那个只回答"空不空"，这个给出内容 ——
      * 必须靠它区分「我们刚写进去的那段」和「用户自己打的字」，
-     * 否则会把用户的输入覆盖掉、或把我们那段提交两遍（主人实测的「两段」）。
+     * 否则会把用户的输入覆盖掉、或把我们那段提交两遍（设备实测的「两段」）。
      */
     private fun readSendText(cb: (String) -> Unit) {
         withWebView { wv ->

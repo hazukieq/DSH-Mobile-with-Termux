@@ -18,7 +18,7 @@ an explanation. Classification always follows the handler's actual mechanism, ne
 name, file name or category. This document is the human-readable version of that classification;
 **code is the single source of truth** — when they disagree, fix this document to match the code.
 
-## 2. Endpoints that need accessibility (hard gate, 28 total)
+## 2. Endpoints that need accessibility (hard gate; see A11yGate)
 
 When the service is unavailable, the gate at the top of `route()` answers these with a structured 503
 (see §4); every handler in the table really uses `DshAccessibilityService.instance` for its main job.
@@ -80,7 +80,6 @@ an error that **states the reason and how to fix it** when it really needs the s
 | `GET /ocr` | the default path OCRs an accessibility screenshot | `engine=ppocr6` can use privileged `screencap` (Shizuku/root); the `ensure`/`download`/`models` branches need no a11y at all |
 | `POST /wait-app` | waiting for the foreground state of **another** app | for this app it uses the Activity lifecycle; only third-party targets answer 503 `a11y_unavailable` |
 | `POST /memory/lookup`, `POST /memory/store` | computing a scene fingerprint from the current screen | when the body carries `dump` (the caller supplies the node tree) nothing is read; the package name in the fingerprint may be empty |
-| `POST /overlay` | `hide=true` also dismisses the overlay window | showing/updating the progress bar does not depend on it; `StatusOverlay.hide(svc)` accepts null |
 | `POST /activity` | only affects the `bal_exempt.accessibility` hint in the receipt | the start goes through `startActivity` and returns 200 as usual |
 | `POST /open` | only reads the foreground package before/after the jump to verify "did it really switch" | returns 200 with the service off, and the receipt carries a `hint` that nothing was verified |
 

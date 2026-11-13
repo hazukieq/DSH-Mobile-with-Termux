@@ -1,5 +1,7 @@
 # 悬浮窗「不断闪烁 / 有时点不到」真机取证与修复报告
 
+> 历史取证记录：结论仅适用于文中设备、版本和采样范围。当前行为与维护约束见相关使用文档；旧行号和临时文件路径不代表当前工作区。
+
 - 版本：设备上 2.9.64(635) → 2.9.71(642) → **2.9.72(643，本次修复)**
 - 设备：Xiaomi M2012K11AC（Redmi K40）/ Android 16 (SDK 36) / Magisk root / 序列号 5f08bc20
 - 取证日期：2026-11-06
@@ -225,4 +227,4 @@ curl -s -H "X-DSH-Token: $TOK" http://127.0.0.1:3083/frame-diff
 | `docs/qa/flicker-research.md` | AOSP/官方文档级机理与方案表 |
 | `docs/qa/flicker-forensics.md` | root 取证工具链、四类判据（layer 消失 / buffer 空 / 位置跳变 / 陈旧帧） |
 | `scripts/probes/flicker/` | 可复用采集脚本（layers/frames/input/logcat/record + analyze.py + selftest.sh） |
-| `docs/OVERLAY.md` §3.u | 本次结论固化成的硬规则 |
+| `docs/OVERLAY.md` | 本次结论固化成的硬规则 |

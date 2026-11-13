@@ -1,5 +1,7 @@
 # PP-OCR 原生化测试报告（2.9.78 / 649 → 2.9.79 / 650）
 
+> 历史取证记录：结论仅适用于文中设备、版本和采样范围。当前行为与维护约束见相关使用文档；旧行号和临时文件路径不代表当前工作区。
+
 > 真机：Redmi K40（M2012K11AC，Android 16 / SDK 36，5f08bc20），Magisk root。
 > 目标：用 APK 里已有的 `com.microsoft.onnxruntime:onnxruntime-android:1.31.1` 在 Kotlin 里直接跑
 > PP-OCRv6 的 det/rec，**彻底去掉 Termux python + onnxruntime 依赖**，并顺带清掉仍会触发

@@ -77,7 +77,7 @@ object Framer {
      */
     fun captureAndDiff(svc: android.accessibilityservice.AccessibilityService): DiffResult {
         val t0 = System.currentTimeMillis()
-        // v2.9.72：帧差**不避让**悬浮窗。避让要 INVISIBLE 一次、WMS 就会销毁并重建
+        // 帧差**不避让**悬浮窗。避让要 INVISIBLE 一次、WMS 就会销毁并重建
         // 该窗口的 surface（见 DshAccessibilityService.screenshotArgb 注释），
         // 250–300ms 一次的轮询就是 3–5Hz 闪。悬浮窗只有右下角 99×99，
         // 遮住的 64×64 格子下面用上一帧内容抹平（[maskOverlayRegion]），

@@ -70,14 +70,14 @@ object AgentBridge {
     /**
      * 每个动作入口都调一次：让悬浮窗立刻显示「执行中 · <动作类型>」+ 具体指令。
      *
-     * 🔴 v1.2.72 修主人实测「展开悬浮窗也看不到 AI 干活的指令」：
+     * 🔴 v1.2.72 修设备实测「展开悬浮窗也看不到 AI 干活的指令」：
      * 此前**只有 `/tap`** 会通知悬浮窗，滑动 / 按键 / 输入文字 / 滚动查找 / 批量**全都没有**。
      * AI 的实际操作里 tap 只占一部分，所以用户展开也经常一片空白。
      */
     internal fun announceAction(actionRes: Int, detail: String) {
         runCatching {
             val c = shotCtx ?: return@runCatching
-            // v2.3.7（用户反馈「无障碍点击动作占用思考链 layout」）：
+
             // 旧实现把动作写进 overlayStatus（即 [思考]/[工具]/[结果] 链的正文视图），
             // 一次 tap 就把整段思考链覆盖成「点击」，而且占用滚动区高度。
             // 动作只属于独立的动作行（overlayAction），不碰思考链正文。
@@ -86,23 +86,7 @@ object AgentBridge {
         }
     }
 
-    /**
-     * 桥访问 token（v1.2.99）。
-     *
-     * ## 为什么需要
-     * 桥监听 `127.0.0.1:3083`，把读屏 / 点击 / 通知 / 手势等能力暴露成 HTTP。
-     * 未鉴权时，**同设备上任何 App** 都能直接调用 —— 等于把无障碍能力借给第三方。
-     * 加 token 门控后，只有拿到 token 的引擎内 Agent 能调。
-     *
-     * ## 传递方式
-     * token 每次进程启动随机生成（不落盘、不复用），写入引擎环境变量
-     * `DSH_BRIDGE_TOKEN`；`_dsh_http.sh` 自动带上 `X-DSH-Token` 头。
-     * 因此**只有引擎子进程**（及其派生的 AI 命令）能通过校验。
-     *
-     * ## 兼容
-     * 引擎未重启时（旧进程无 token）→ 会 403。调用方（scr/notify 等闸门脚本）
-     * 读的是当前进程环境变量，与引擎同源，故不受影响。
-     */
+    /** 进程内随机 token；引擎环境、私有 token 文件和受保护的 adb 调试入口可读取。 */
     @Volatile internal var token: String? = null
 
     /** 当前 token（供 EngineConfig 注入环境变量） */
@@ -155,9 +139,9 @@ object AgentBridge {
         app.dsh.mobile.DshLog.init(ctx)
         if (server != null) return
         shotCtx = ctx.applicationContext
-        // v1.2.160：LAN 代理需要 app context 推导引擎目录（部署脚本 / 拉起 node 进程）
+        // LAN 代理需要 app context 推导引擎目录（部署脚本 / 拉起 node 进程）
         runCatching { LanWebProxy.setContext(ctx) }
-        // 桥 token（v1.2.99）：每次启动随机生成，只通过环境变量交给引擎内的 Agent。
+        // 桥 token（v1.2.99）：进程内生成，并通过环境变量与私有 token 文件交给引擎工具。
         // 同设备第三方 App 拿不到 → 无法调用读屏/点击/通知等能力。
         ensureToken(ctx)
         try {
@@ -184,7 +168,7 @@ object AgentBridge {
                 onTurnEnd(ctx.applicationContext, session)
             }
         } catch (e: Exception) {
-            // ⚠️ v1.2.104：**bind 失败绝不能再静默**（主人反馈的起点）。
+            // **bind 失败绝不能再静默**（用户反馈的起点）。
             // 旧实现只打一行 Log.w，于是「notify / scr / say 全哑」在现场被反复
             // 误判成「无障碍没开 / 桥没就绪」，真因（端口被占）谁也看不见。
             // 现在把占用者一并查出来 —— 典型元凶是继承了桥 listen socket 的历史
@@ -262,7 +246,7 @@ object AgentBridge {
     internal fun onTurnEnd(ctx: Context, session: String) {
         runCatching {
             Log.i(TAG, "turn/end detected in $session")
-            StatusOverlay.markReplyReady(ctx.getString(R.string.overlay_turn_done))
+            StatusOverlay.markReplyReady()
             appHandler.notify(
                 ctx,
                 JSONObject().apply {
@@ -402,7 +386,7 @@ object AgentBridge {
             val obj = JSONObject(json)
             when (kind) {
                 "instant" -> {
-                    // v1.8.1：带内联 expect 的 tap 已经自己校验过，不要把 verify/hint 覆盖成
+                    // 带内联 expect 的 tap 已经自己校验过，不要把 verify/hint 覆盖成
                     // "none/去 dump"；只补 instant 元数据。
                     val inlineVerified = obj.has("verified")
                     obj.put("instant", true)
@@ -419,7 +403,7 @@ object AgentBridge {
                 "handoff" -> {
                     obj.put("handoff", true)
                         .put("verify", "none")
-                        // v2.5.38：机器可读的终止标记——agent 不必读 prose 也知道该停
+                        // 机器可读的终止标记——agent 不必读 prose 也知道该停
                         .put("stop", true)
                         .put("next", "none")
                         .put("do_not", org.json.JSONArray().put("screenshot").put("poll").put("retry"))

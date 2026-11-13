@@ -41,7 +41,7 @@ object SessionTail {
      * 活跃会话的时间窗（v1.2.101：10 分钟 → 2 小时）。
      *
      * 旧值太严：用户思考、查资料、等模型长时间推理时，会话文件可能十几分钟没有新事件，
-     * 于是被判「没有活跃会话」→ 悬浮条内容被清空（主人实测「输出不了内容」的一种成因）。
+     * 于是被判「没有活跃会话」→ 悬浮条内容被清空（设备实测「输出不了内容」的一种成因）。
      * 放宽到 2 小时，覆盖绝大多数交互间隔；真正的旧会话不会干扰（取的是 mtime 最新者）。
      */
     private const val RECENT_MS = 2 * 60 * 60_000L
@@ -98,7 +98,7 @@ object SessionTail {
      * @return 最新快照
      */
     fun refresh(ctx: Context): Snapshot {
-        // ⚠️ v1.2.101：旧实现连续调了两次 activeSessionFile()（调试残留），
+        // 旧实现连续调了两次 activeSessionFile()（调试残留），
         // 每次都 walkTopDown 整棵树 —— 轮询 2 秒一次，白耗 IO。
         val (file, diag) = activeSessionFile(ctx)
         if (file == null) {
@@ -162,7 +162,7 @@ object SessionTail {
      * ## ⚠️ v1.2.101 修复「悬浮条永远没内容」的真根因
      * 旧实现把整段遍历包在 `runCatching{...}.getOrNull()` 里 —— **异常被静默吞掉**，
      * 无论什么原因失败（目录不可读、软链悬空、权限拒绝）都返回 null，
-     * 而且**连一行日志都没有**，现场完全无法诊断（主人实测：悬浮条一直空白）。
+     * 而且**连一行日志都没有**，现场完全无法诊断（设备实测：悬浮条一直空白）。
      *
      * 现在分三段做，各自记录失败原因：
      *  ① 根目录存在性与可读性
@@ -213,7 +213,7 @@ object SessionTail {
             return
         }
         for (f in children) {
-            // v1.2.105：放宽到 .json*.zstd —— 主人诊断里报出的文件名是 `session.v4.json.zstd`，
+            // 放宽到 .json*.zstd —— 主人诊断里报出的文件名是 `session.v4.json.zstd`，
             // 与代码假定的 `.jsonl.zstd` 差一个 l。两种都收，避免因为命名差异
             // 整个悬浮条找不到文件（找不到的表现和「解压失败」一样难分辨）。
             if (f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".jsonl.zstd") || f.name.endsWith(".json.zstd"))) {
@@ -265,7 +265,7 @@ object SessionTail {
                     "tool/call" -> {
                         val name = o.optString("name")
                         if (name.isNotBlank()) {
-                            // ⚠️ v1.2.100：`arguments` 是 **JSON 字符串**（上游
+                            // `arguments` 是 **JSON 字符串**（上游
                             // dsh-session-format 用 stringValue() 校验），不是嵌套对象。
                             // 旧代码用 optJSONObject 取值 → 永远 null → 工具行退化成
                             // 纯工具名、参数详情显示不出来（审查发现）。
@@ -315,7 +315,7 @@ object SessionTail {
         // ⚠️ v1.2.101 修（实测踩坑）：旧代码先 `msg.optString("content")` ——
         // 当 content 是数组时 optString 会返回**整段 JSON 文本**
         // （`[{"type":"text","text":"…"}]`），于是提前 return，永远走不到数组解析，
-        // 悬浮条上显示的就是这坨原始 JSON（主人实测「输出不了内容」的真凶之一）。
+        // 悬浮条上显示的就是这坨原始 JSON（设备实测「输出不了内容」的真凶之一）。
         // 现在先判类型，数组走逐元素提取。
         val msg = o.optJSONObject("message")
         if (msg != null) {

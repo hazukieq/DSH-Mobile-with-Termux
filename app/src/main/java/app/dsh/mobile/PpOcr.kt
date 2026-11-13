@@ -11,7 +11,7 @@ import java.net.URL
 import java.util.concurrent.TimeUnit
 
 /**
- * v1.8.2：PP-OCRv6（ONNX Runtime）本地 OCR 兜底（点击链路提案 P1-4）。
+ * PP-OCRv6（ONNX Runtime）本地 OCR 兜底（点击链路提案 P1-4）。
  *
  * 路线（用户选定的首批）：tiny 6MB 模型随 APK 部署到 `$PREFIX/share/ppocr6`，
  * 脚本 `$PREFIX/bin/ppocr6` 用 Termux 里的 python3 + onnxruntime 跑推理。
@@ -128,7 +128,7 @@ object PpOcr {
     /** v2.0.1（P2-8）：同一截图 5s 内重复请求直接复用结果（轮询/重复读屏时省掉整次 OCR）。 */
     private data class CacheEntry(val hash: Long, val at: Long, val blocks: List<Block>)
     private val cache = HashMap<String, CacheEntry>()
-    // v2.1.0（P2-8 区域增量）：保留上一帧降采样图做像素 diff
+    // 保留上一帧降采样图做像素 diff
     private var lastFrame: Bitmap? = null
     /** 最近一次全屏/合并结果，用于区域增量时保留未变化区域的文本。 */
     @Volatile private var lastBlocks: List<Block>? = null
@@ -211,7 +211,7 @@ object PpOcr {
      * python-pip, onnxruntime），必须走 `pkg install`；pip 在 bionic 上没有可用 wheel。
      */
     fun ensureDeps(ctx: Context): String? {
-        // v2.9.78：原生 ORT 可用时不再需要 python 运行时
+        // 原生 ORT 可用时不再需要 python 运行时
         if (PpOcrNative.available(ctx)) return null
         val bash = File(EngineConfig.engineRoot(ctx), "bin/bash")
         if (!bash.isFile) return "engine bash missing"
@@ -317,7 +317,7 @@ object PpOcr {
         useCache: Boolean = true, ifChanged: Boolean = false, trackFull: Boolean = true,
     ): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
-        // v2.9.78：原生 ORT 优先——不落 PNG、不起进程、不依赖 python。
+        // 原生 ORT 优先——不落 PNG、不起进程、不依赖 python。
         if (PpOcrNative.available(ctx)) {
             val hash = if (useCache) bitmapHash(bitmap) else 0L
             if (useCache) {
@@ -349,7 +349,7 @@ object PpOcr {
         useCache: Boolean = true, ifChanged: Boolean = false, trackFull: Boolean = true,
     ): Result {
         if (!deployed(ctx)) return Result(false, unavailable = true, reason = "ppocr6 not deployed")
-        // v2.9.78：原生推理（PNG 直接解码，无需 python）
+        // 原生推理（PNG 直接解码，无需 python）
         if (PpOcrNative.available(ctx)) {
             val nHash = if (useCache) fileHash(png) else 0L
             if (useCache) {

@@ -14,7 +14,7 @@ import android.webkit.WebViewClient
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * WebView 装配器（Phase 1.3 从 MainActivity 提取）。
+ * WebView 装配器。
  *
  * 只负责「把 WebView 配置成引擎宿主需要的形态」——settings、JS 桥、两个 Client。
  * 所有**需要 Activity 状态**的动作（收遮罩、viewport 改写、渲染进程自愈、文件选择器）
@@ -98,7 +98,7 @@ class WebViewManager(
             // 不需要网页定位。
             setGeolocationEnabled(false)
         }
-        // v1.3.68：WebUI 的 mobile-progress 插件通过这个桥把当前思考/步骤报给原生，
+        // WebUI 的 mobile-progress 插件通过这个桥把当前思考/步骤报给原生，
         // 不需要无障碍就能在后台/通知栏展示进度。
         runCatching {
             webView.addJavascriptInterface(ProgressJsBridge(webView.context), "DshNative")

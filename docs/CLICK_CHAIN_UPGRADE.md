@@ -1,7 +1,7 @@
 # 点击链路
 
 点击链路是「读屏 → 定位 → 点击 → 校验」四段。读屏由三层证据合成：**无障碍节点树（真相源）**、
-**PP-OCRv6 文本识别（补文字与坐标）**、**单类 `icon` 控件检测（补无文字控件）**；点击后用回执、内联
+**OCR 文本识别（默认 ML Kit，可选 PP-OCRv6）**、**单类 `icon` 控件检测（补无文字控件）**；点击后用回执、内联
 `expect` 或读屏文本差校验。本文记录当前实现、字段、阈值与失效边界。
 
 ## 节点与读屏接口
@@ -9,7 +9,7 @@
 - `GET /screen?format=json`：节点带 `bounds:[x0,y0,x1,y1]`、`center:[x,y]`、`x/y/w/h`、
   `clickable/checkable/checked/scrollable/editable`；`POST /tap-id {"id":"..."}` 回执带 `bounds` 与
   `boundsCenter`，用来核对空心图标/行中心。
-- `scr dump` 首行固定 `fg=<package> WxH Nnodes`（`DshAccessibilityService.kt:1002`）：跨 App 操作先自证前台包；
+- `scr dump` 首行固定 `fg=<package> WxH Nnodes`（`DshAccessibilityService.dumpScreenCompact`）：跨 App 操作先自证前台包；
   `/scene` 不带包名，跨窗口场景先用 `scr dump` 确认，再按坐标操作。
 
 ## tap 与内联 expect 校验
@@ -50,24 +50,19 @@ POST /tap
 - 分页：`limit` 默认 80、`offset` 0，服务端按 18KB 自动缩页；回 `total/offset/limit/nextOffset`；
 - OCR 行合并：同一 y 带 ±18px、间距 < 0.8 字高；OCR 框落在可点 a11y 节点 bounds 内 → 继承
   `clickable`/`a11yIndex`，`hint:"near-clickable"`；`timings` 分开报无障碍与 OCR 耗时，`ocrEngine` 说明
-  实际引擎；默认 PP-OCRv6 + `region=1` 增量：同屏无变化 `ocrCached:true, ocrChanged:false`，局部变化回
+  实际引擎；默认 ML Kit；指定 `engine=ppocr6` 可使用 `region=1` 增量：同屏无变化 `ocrCached:true, ocrChanged:false`，局部变化回
   `ocrRegion:[l,t,r,b]`，只识别变化区并与上一轮结果合并。
 
 ## PP-OCRv6 本地文本识别
 
-- 随 APK 内置 `assets/ppocr6/`：脚本 + `det_tiny.onnx` + `rec_tiny.onnx/yml`（约 6.3MB），引擎启动部署到
-  `$PREFIX/bin/ppocr6` 与 `$PREFIX/share/ppocr6/`；`GET /ocr?engine=ppocr6` 依赖缺失回
-  `unavailable:true, reason`；
-- `&ensure=1` 执行 `pkg install -y python python-numpy python-pillow python-scipy python-onnxruntime`
-  并 **reinstall onnxruntime**（Termux 的 python 绑定不随 python 升级自动重装），网络/体积较大，显式触发；
-- **python 绑定兜底**：`libortshim.so`（`tools/ortshim/ortshim.c` + `assets/ppocr6/py/onnxruntime.py` 的
-  ctypes 实现）让 `import onnxruntime` 在没有 python 绑定时也能工作，shim 部署到 `$PREFIX/share/ppocr6/py/`；
-- **medium 档按需下载**：`GET /ocr?engine=ppocr6&download=medium`，源顺序 ModelScope → hf-mirror →
-  HuggingFace，支持 `.part` 断点续传（det 62MB + rec 76MB + yml 150KB）；`&models=1` 查状态、
-  `&tier=medium` 切档（更慢）；
-- **无 a11y 截图回退**：`Privilege.runPrivileged`（Shizuku 优先 → su 兜底）执行系统 `screencap`，回
-  `via:"privileged-screencap"`；无 root/Shizuku 仍回 `a11y_off` 并引导开服务；`/scene` 在 ML Kit 不可用
-  或 `engine=ppocr6` 时自动用 PP-OCRv6。
+默认 OCR 使用 ML Kit。指定 `engine=ppocr6` 时，优先由 APK 内的 `onnxruntime-android`
+在 Kotlin 中运行预置 det/rec 模型，不需要安装 Python 或 Termux onnxruntime。
+`&models=1` 查看模型，`&download=medium` 按需下载 medium，`&tier=medium` 选择档位。
+
+原生运行时不可用或显式 `legacy=1&ensure=1` 时才走 Termux Python 依赖与 worker 回退，
+可能需要联网安装较大的 Python 依赖。`tools/ortshim` 只服务该兼容路径。
+没有无障碍时，PP-OCR 可尝试 Shizuku/root `screencap`；没有可用截图能力时给出结构化错误。
+`/scene` 读取节点树，仍受无障碍门禁约束。
 
 ## listId / itemIndex
 
@@ -102,9 +97,9 @@ POST /act
   顶层 `gapMs`（默认 90，范围 40–400）。`/gesture` 的 swipe 在「距离 >300px 且 duration <300ms」时回
   `warning`，提示会被当成 fling。
 
-## OCR 常驻 worker
+## Python 回退的常驻 worker
 
-`ppocr6_worker.py` 常驻进程只加载一次模型，App 按 JSON 行喂图片路径；进程崩溃/超时自动销毁并回落一次性
+仅 Termux Python 回退路径中，`ppocr6_worker.py` 常驻进程只加载一次模型，App 按 JSON 行喂图片路径；进程崩溃/超时自动销毁并回落一次性
 CLI。同一屏热调用约 1.2s，区域增量命中约 93ms，截图缓存命中 0ms。
 
 - **`ifChanged=1`**：截图哈希未变时直接回缓存（`changed:false, cached:true, costMs:0`）；**`region=1`**：
@@ -136,21 +131,21 @@ CLI。同一屏热调用约 1.2s，区域增量命中约 93ms，截图缓存命�
 
 ### 三层合并：a11y → OCR → icon
 
-`GET /scene` 是合并后的单一视图（`app/src/main/java/app/dsh/mobile/engine/AgentBridge.kt:4373`），
+`GET /scene` 是合并后的单一视图（`bridge/ScreenHandler.kt`），
 优先级从高到低：
 
 | 层 | 来源 | 提供什么 | 何时参与 |
 |---|---|---|---|
 | ① a11y 节点 | `dumpScreenJson` | 真相源：`text`/`desc`/`bounds`/`center`/`clickable`/`checked`/`listId`… | 每次必读 |
-| ② OCR 文本 | ppocr6 det+rec | 补缺失的 `text` 与坐标；落在可点节点内则继承 `clickable` | 默认开，`ocr=0` 关 |
+| ② OCR 文本 | ML Kit / 可选 PP-OCRv6 | 补缺失的 `text` 与坐标；落在可点节点内则继承 `clickable` | 默认开，`ocr=0` 关 |
 | ③ icon 检测 | 单类 `icon` YOLO | 补无文字可点控件的 `bounds`/`center` | 仅 `icon=1`（默认关，省 ~266ms/次） |
 
-**OCR 不覆盖 a11y，只做补充与归属**（`AgentBridge.kt:4495`）：落在某个**可点** a11y 节点内 →
+**OCR 不覆盖 a11y，只做补充与归属**（`bridge/ScreenHandler.kt`）：落在某个**可点** a11y 节点内 →
 `clickable:true, hint:"near-clickable", a11yIndex, a11yCenter`，意思是「文字在节点上，点它所属的容器」；
 落在空白处 → `hint:"custom control (no a11y node); tap the center if it is a button"`，意思是「可能是
 自绘按钮，点前先用 expect 校验」。
 
-**icon 只补没人覆盖的区域**（`mergeSceneIcons`，`AgentBridge.kt:1672`）：
+**icon 只补没人覆盖的区域**（`mergeSceneIcons`，`bridge/ScreenHandler.kt`）：
 
 - **去重**：检测框中心落在任一已有节点 bbox（内缩 4px）内 → 丢弃；面积超过 `1080×2376×35%` 的巨型容器
   **不算覆盖**（否则一个整屏 `ScrollView` 会把所有图标吞掉）；已加入的图标之间再互相去重；
@@ -176,7 +171,7 @@ CLI。同一屏热调用约 1.2s，区域增量命中约 93ms，截图缓存命�
 | `checkable` / `checked` / `scrollable` / `editable` / `listId` / `itemIndex` | 按需带；开关状态看 `checked` |
 | `x` / `y` / `w` / `h` / `cls` / `rid` / `hint` | 仅 `verbose=1`（`x/y` 是中心，`w/h` 是尺寸） |
 
-`tapPoint` 才是「该点哪里」（`annotateTapPoints`，`AgentBridge.kt:1583`）：
+`tapPoint` 才是「该点哪里」（`annotateTapPoints`，`bridge/ScreenHandler.kt`）：
 
 - `role=control`（可点控件）→ 几何中心 `((l+r)/2,(t+b)/2)`；
 - `role=card`（面积 ≥8% 屏或高 ≥220px 的可点容器）→ x 取 `left + w*45%`，**让开右侧 ⋮ 菜单**；

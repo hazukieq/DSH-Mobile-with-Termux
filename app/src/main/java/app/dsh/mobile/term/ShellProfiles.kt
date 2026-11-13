@@ -10,7 +10,7 @@ import java.io.File
  *
  * 会话直接跑引擎自带的 bash（`engine/bin/bash`）——与 AI 的 shell 工具**同一个环境**
  * （PATH/LD_LIBRARY_PATH/PREFIX 全部来自 [EngineConfig.buildEnv]），所以终端里能直接
- * `node`、`git`、`python3`（装了扩展的话），所见即 AI 所得。引擎运行时尚未安装时回落
+ * `node`、`git`、`python3`（已通过 pkg 安装时），所见即 AI 所得。引擎运行时尚未安装时回落
  * 到 `/system/bin/sh`（toybox），至少能用。
  *
  * 注：proot / Linux 发行版 profile 已于 2026-10-28 移除。

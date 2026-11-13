@@ -5,10 +5,10 @@ import android.util.Log
 import java.io.File
 
 /**
- * v1.9.6（提案 P1-4 收尾）：无障碍服务不可用时的截图回退。
+ * 无障碍服务不可用时的截图回退。
  *
- * 走 `Privilege.runPrivileged`（Shizuku 优先 → su 兜底）执行系统 `screencap`，
- * 这样 OCR 不再被「无障碍没开」完全挡住；没有 root/Shizuku 时返回 null，
+ * 走 `Privilege.runPrivileged` 按所选 Shizuku 或 Root 模式执行系统 `screencap`，
+ * 这样 OCR 可在已选择特权模式时回退；Normal 或对应通道不可用时返回 null，
  * 上层仍然回 `a11y_off` 并引导用户去开服务。
  */
 object ShotFallback {
@@ -31,7 +31,9 @@ object ShotFallback {
         return null
     }
 
-    fun available(ctx: Context): Boolean = runCatching {
-        Privilege.shizukuUsable() || Privilege.probe(ctx).hasRoot
-    }.getOrDefault(false)
+    fun available(ctx: Context): Boolean = when (Privilege.getMode(ctx)) {
+        PrivMode.NORMAL -> false
+        PrivMode.SHIZUKU -> Privilege.shizukuUsable()
+        PrivMode.ROOT -> Privilege.rootAvailableMinimal()
+    }
 }

@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit
 /**
  * zstd 多帧会话解压（v1.2.105）。
  *
- * ## 为什么需要（主人实测「decompress failed: session.v4.jsonl.zstd」）
+ * ## 为什么需要（设备实测「decompress failed: session.v4.jsonl.zstd」）
  * dsh 的会话日志是**多帧串联容器**：`dsh-session-persistence-jsonl` 把 header
  * 压成第一帧，之后每批事件各压一帧（源码注释：backend owns a concatenated-frame
  * container so it can append and recover batches without exposing compression

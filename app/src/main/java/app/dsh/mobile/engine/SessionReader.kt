@@ -38,7 +38,7 @@ object SessionReader {
         /**
          * 对话名 —— 取**第一条用户消息**（像聊天软件的会话标题）。
          * 为空时调用方应退回显示 id 尾号。
-         * 主人实测反馈：「对话名字还都是 16 进制数，我根本不知道哪个对话是哪个」——
+         * 用户反馈：「对话名字还都是 16 进制数，我根本不知道哪个对话是哪个」——
          * 光有 `2a1059c6` 这种 id 尾号是无法辨认的。
          */
         val title: String = "",
@@ -71,7 +71,7 @@ object SessionReader {
     /**
      * 引擎的会话**投影缓存**目录 —— 这才是真正随活动更新的数据源。
      *
-     * 🔴 主人实测反馈「我明明现在有对话在活跃，上面仍显示三个小时前」的根因：
+     * 🔴 用户反馈「我明明现在有对话在活跃，上面仍显示三个小时前」的根因：
      * 旧实现读 `sessions/<proj>/<id>/session.v4.jsonl.zstd` 的 mtime，实测该文件
      * **只写一次**（模拟器上 434 字节、mtime 停在建会话的 11:46），而引擎把真正的
      * 会话状态写在 `storages/session_projcache/sessions/<id>.json`（明文 JSON，
@@ -144,11 +144,11 @@ object SessionReader {
             val meta = if (projFile.isFile) readProjMeta(projFile) else ProjMeta()
             if (meta.lastPromptAt > t) t = meta.lastPromptAt
 
-            // 🔴 v1.2.81：空白判断**不能信投影缓存**。
+            // 空白判断**不能信投影缓存**。
             // 投影缓存是 `throttled write-behind`（延迟写入），`meta.blank` 常常还是
             // 过期的 true —— 于是刚聊过的会话被误判为「空白」过滤掉，列表里只剩
-            // 缓存恰好更新过的旧会话（主人实测：「还是不能获取到上一次对话活跃时间」）。
-            //
+            // 缓存恰好更新过的旧会话（设备实测：「还是不能获取到上一次对话活跃时间」）。
+
             // 改用**磁盘上的可靠信号**：事件流文件是否真有内容。
             // 引擎在会话第一次真正写入时才创建/增长它，空白会话只有空壳文件。
             val hasContent = eventFile.length() > 0L
@@ -212,7 +212,7 @@ object SessionReader {
             val script = "const z=require('node:zlib'),fs=require('node:fs');" +
                 "const b=z.zstdDecompressSync(fs.readFileSync(process.argv[1]));" +
                 "process.stdout.write(b);"
-            // ⚠️ v1.2.100：**必须显式设置 LD_LIBRARY_PATH**（独立审查发现同一坑）。
+            // **必须显式设置 LD_LIBRARY_PATH**（独立审查发现同一坑）。
             // 引擎 node 是动态链接的 bionic 二进制；本方法运行在 App 进程（或无障碍
             // 服务进程），那里**没有**引擎的库路径 —— 缺了它 node 直接链接失败退出
             // （`CANNOT LINK ... libz.so.1 not found`），表现为解压永远失败：

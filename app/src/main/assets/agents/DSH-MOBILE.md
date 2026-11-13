@@ -597,62 +597,23 @@ Notes:
 
 ### Background progress (notification / floating window)
 
-No accessibility needed. Settings → **后台进度提示** picks the display mode: 关闭 / 通知 / 悬浮窗
-(overlay is the default for installs that never chose). While a task runs in the background
-ProgressHub holds a 15-minute PARTIAL_WAKE_LOCK, released on foreground/done; if the WebView sandbox
-is reclaimed, onRenderProcessGone rebuilds it without restarting the engine.
+Settings → 后台进度提示 selects off, notifications, or overlay (default).
+The overlay uses a connected accessibility service, otherwise draw-over-apps permission.
+Progress reporting itself does not require accessibility. A background task can hold a timed
+PARTIAL_WAKE_LOCK; this reduces sleep interruptions but cannot guarantee background execution.
 
-* **Window**: collapsed = a ball (56 dp, measured 140x140 frame); expanded = a rounded card, 216 dp
-  wide, body capped at 132 dp with internal scroll. Created with the calling Activity token (app
-  context makes WMS mark it hidden when the app is not top); docks to the nearer **left/right** edge
-  and keeps the user's vertical position; re-docks after expand/collapse; Android hides it over
-  protected screens (system Settings, permission dialogs) by design. It is never auto-hidden while
-  the app is in the foreground; returning to the foreground does not set the user-hidden flag.
-* **Gestures**: tap the ball → expand (idle placeholder is `空闲 / 悬浮窗已开启`); tap the dot →
-  collapse; long press the dot → hide; drag the dot → move. The body only scrolls — no tap or drag
-  gesture on the text.
-* **Expanded card is three sections**: ① the reasoning/tool chain — `[思考] …`,
-  `[工具] 调用`, `[工具] 调用->完成` (or `->失败`), `[回复] …`, auto-scrolled to the newest line;
-  ② the **accessibility / app-action chain** — what the service actually did (`读屏点击/滑动/按键`,
-  `打开/跳转 <app>`), up to 4 lines, written by `POST /overlay {status,action}`, `POST /launch`,
-  `POST /open` → `StatusOverlay.setA11yAction()`, or directly `window.DshNative.a11y(line)`;
-  ③ session title + elapsed seconds (ticks every second while running, stops after done).
-* **Text budgets**: 16000 chars end-to-end (plugin / ProgressHub / overlay), single reasoning block
-  1400, tool line 420, reply keeps its last 4000 chars.
-* **Source of truth is engine events, not DOM**. The host plugin
-  (`assets/android-plugins/mobile-progress/index.js`) subscribes to the public DSH plugin API —
-  `agent/assistant-stream` (`block-start/text-delta/reasoning-delta/tool-call-delta/block-end`,
-  merged across attempts), `session/event` (`tool/call`, `tool/result`) and `agent/status`
-  (`idle` forces a final `done` flush) — and POSTs a labelled chain with `X-DSH-Token` to the
-  Android bridge `/overlay` (`kind/session/detail/elapsed`). 250 ms throttle, 2.5 s heartbeat while
-  running; done/error snapshots are never deduplicated, so the card always ends on 已完成 · Ns.
-  The browser half of the plugin is a placeholder only (`window.__dshMobileProgressPoke`).
-* **Never auto-start after a normal exit**: a persisted `user_exited` flag (set by the
-  notification's 退出 action and by `onTaskRemoved`) makes `EngineService.start()` and the
-  accessibility keep-alive watchdog skip starting the engine; only a fresh MainActivity launch
-  clears it. To start the engine, ask the user to open the app.
-* `DshNative.progress(json)`, `DshNative.a11y(line)`, `DshNative.openSettings()` are the WebUI-side
-  entry points; `POST /overlay {hide:true}` hides the window.
+The ball is 36 dp with a 14 dp dot. Tap to expand a 240 dp card with a fixed 92 dp body scroll area;
+tap the card's dot to collapse. Drag the ball or card blank area to move and dock to an edge.
+The body only scrolls. Long press does not hide it; activity state does not change the chosen shape.
 
----
+The card shows reasoning/tool/reply text, a separate app-action row, session title and elapsed seconds.
+The plugin keeps up to 16000 characters; the native body shows the latest 600. Actions keep four entries
+and display up to two lines. Use WebUI for full history. Completion stops the clock; turn/end marks
+the dot red without replacing text. Touch or new activity clears red.
 
-## Always-on skills and prompt-file protection
-
-- `$DSH_HOME/skills/evidence-discipline/SKILL.md` ships in the APK; its **body is also inlined**
-  into `AGENTS.md` under `## Always-on skill: evidence-discipline`, so every session starts with
-  the evidence rules without waiting for a `skill` call. (The engine has no
-  `alwaysPreloadSkills` knob; inlining is the L3-equivalent we can do without forking it.)
-- `$DSH_HOME/AGENTS.md` is watched while the engine runs: external writes (agent `write`/`edit`)
-  are reverted, the tampered copy is kept as `AGENTS.md.tampered-<epoch>` and an audit line is
-  appended to `$DSH_HOME/log/instructions-audit.log`. Edits through the app's settings screen are
-  app-sourced and pass. The agent must never write that file — see the integrity section of
-  `AGENTS.md`.
-
-## Environment & automation reference (moved out of AGENTS.md)
-
-These reference sections used to sit in `$DSH_HOME/AGENTS.md`, which the engine injects
-into every session with a 64 KiB budget shared with workspace instructions. They live here
-so the injected file stays small; read them on demand (`dsh-mobile doc`).
+`POST /overlay {"hide":true}` explicitly hides the window; ordinary progress does not undo it.
+Off mode and user exit prevent recreation. The preview uses the selected mode and does nothing when off.
+See `docs PROGRESS_OVERLAY` and `docs OVERLAY` for the current details and screenshot fallback behavior.
 
 ### Prefer bounds over guessing icons
 

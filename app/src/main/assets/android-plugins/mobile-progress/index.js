@@ -1,9 +1,9 @@
 /**
- * dsh-mobile-progress（host 侧，v1.3.97）
+ * dsh-mobile-progress：host 侧引擎进度订阅。
  *
  * 用 DSH 官方插件 API 直接订阅 agent/assistant-stream 与 session/event，
  * 把**结构化的思考链路**（reasoning / tool-call / tool-result / answer）推给
- * Android 的 AgentBridge（POST /overlay，X-DSH-Token 鉴权），不再靠 WebUI DOM 抓取。
+ * Android 的 AgentBridge（POST /overlay，X-DSH-Token 鉴权）。
  *
  * 参考（开源仓库 docs/cookbook/extension-cookbook.md、docs/subsystems/core.md）：
  *   ctx.on('agent/assistant-stream', ({ agent, frame }) => …)
@@ -179,9 +179,7 @@ export function apply(ctx) {
     }
   })
 
-  // Agent 状态：running→idle 是「会话真的结束了」的最可靠信号。
-  // 之前只靠 assistant-stream 的 end 帧，遇到长工具/多 attempt 时可能漏掉，
-  // 导致浮窗卡在 thinking（用户实测：23s 完成但状态没变、内容卡一半）。
+  // idle 时强制刷新 done，覆盖长工具/多 attempt 的收尾路径。
   ctx.on('agent/status', ({ agent, status }) => {
     try {
       const s = stateOf(agent)

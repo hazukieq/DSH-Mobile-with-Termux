@@ -2,17 +2,7 @@ package app.dsh.mobile
 
 import android.content.Context
 
-/**
- * 应用所有 SharedPreferences 的统一入口（Phase 5）。
- *
- * 目前集中管理三块最常被跨文件读写的偏好：
- *  - 页面缩放 `dsh_ui/page_scale`（WebView 竖屏 viewport 缩放，50..120）
- *  - 用户主动退出 `dsh_exit/user_exited`（置位后引擎保活全部跳过）
- *  - 屏幕朝向：委托 [OrientationPrefs]（三态 + 旧布尔迁移逻辑保留在原处）
- *
- * 其它 store（dsh_a11y / dsh_priv / dsh_progress / app_locale）键名仍各自持有，
- * 后续可逐步并入这里；迁移时保持「旧键名不变、写入点收敛到本对象」。
- */
+/** 页面缩放、工具栏、退出、文件管理器和朝向偏好；其他 store 由所属模块管理。 */
 object DshPrefs {
 
     const val PREFS_UI = "dsh_ui"
@@ -79,7 +69,7 @@ object DshPrefs {
             .edit().putBoolean(KEY_USER_EXITED, exited).apply()
     }
 
-    // ---- 屏幕朝向（过渡期委托原实现）----
+    // ---- 屏幕朝向 ----
 
     fun orientationMode(ctx: Context): OrientationMode = OrientationPrefs.get(ctx)
 

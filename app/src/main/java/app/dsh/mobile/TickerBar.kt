@@ -14,28 +14,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import app.dsh.mobile.engine.SessionTail
 
-/**
- * 流式悬浮条（v1.2.99）—— AI 输出贴屏顶部实时滚动。
- *
- * ## 为什么做
- * 悬浮球只在展开后显示「上一次动作」，用户得主动去看；而长任务运行时，
- * 用户想知道「AI 现在在干什么」需要切回 App。同类项目（DSHA）的流式悬浮条
- * 把 AI 输出像歌词一样贴在屏幕顶部，工具调用翻译成人话，一眼可见。
- *
- * ## 形态
- *  - 贴屏幕顶部（状态栏下方），半透明深色卡片，可拖动
- *  - 第一行：AI 当前输出（流式滚动，最多 N 行）
- *  - 后续行：最近工具调用（人话描述，最多 3 条）
- *  - 空闲时自动淡出隐藏；有新内容自动出现
- *  - 点击展开/收起行数；长按隐藏
- *
- * ## 数据来源
- * [SessionTail] 轮询活跃会话文件（引擎用 zstd 写会话，无法增量读，
- * 故按 mtime 变化触发整体解压 + 取尾部）。默认 2 秒轮询。
- *
- * ## 归实验性功能管辖
- * 与悬浮球一致：实验性开关关闭时不显示（见 DshAccessibilityService）。
- */
+/** 会话文件轮询悬浮条的保留参考实现；当前应用没有创建入口，不参与进度显示。 */
 class TickerBar(private val svc: AccessibilityService) {
 
     private val ctx: Context = svc.applicationContext
@@ -66,7 +45,7 @@ class TickerBar(private val svc: AccessibilityService) {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                // ⚠️ v1.2.101：**必须带 FLAG_NOT_TOUCHABLE**（主人实测「没输出时遮挡屏幕」）。
+                // **必须带 FLAG_NOT_TOUCHABLE**（设备实测「没输出时遮挡屏幕」）。
                 // 旧 flags 只有 NOT_FOCUSABLE + NOT_TOUCH_MODAL —— 后者仅表示「不阻塞窗口外
                 // 的触摸」，**窗口自身区域照样吃触摸**。悬浮条是 MATCH_PARENT 宽的横条，
                 // 无内容时 alpha=0（透明）但仍在吃那一条的点击 → 用户点顶部区域点不动。
@@ -78,9 +57,9 @@ class TickerBar(private val svc: AccessibilityService) {
                 PixelFormat.TRANSLUCENT,
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                // ⚠️ v1.2.106：宽度保持构造时给的 MATCH_PARENT，**不再**在这里算
+                // 宽度保持构造时给的 MATCH_PARENT，**不再**在这里算
                 // `widthPixels - 2*margin` —— 那些值只在创建时算一次，转横屏后宽度
-                // 还是竖屏的，卡片不居中、右边空一大块（主人实测）。让系统按**当前**
+                // 还是竖屏的，卡片不居中、右边空一大块（设备实测）。让系统按**当前**
                 // 屏幕给宽度；离边缘的内缩交给 XML 外层 FrameLayout 的 padding。
                 x = 0
                 y = topOffsetPx()
@@ -102,7 +81,7 @@ class TickerBar(private val svc: AccessibilityService) {
     }
 
     fun hide() {
-        // ⚠️ v1.2.100：长按隐藏也要**停轮询**（独立审查发现的小漏）——
+        // 长按隐藏也要**停轮询**（独立审查发现的小漏）——
         // 否则窗口没了但 pollLoop 每 2 秒仍在解压 zstd（会话是帧压缩、开销不低），
         // 白耗电且用户看不到任何效果。
         stopPolling()
@@ -182,7 +161,7 @@ class TickerBar(private val svc: AccessibilityService) {
         if (snap.isEmpty) {
             // 无内容分两种（v1.2.102）：
             //  · 无诊断 → 确实没有会话活动，淡出**并让窗口完全穿透触摸**（v1.2.101，
-            //    主人实测「遮挡屏幕」）。只把 alpha 降到 0 不够：透明窗口仍吃触摸。
+            //    设备实测「遮挡屏幕」）。只把 alpha 降到 0 不够：透明窗口仍吃触摸。
             //  · 有诊断 → 把「为什么取不到内容」画出来。真实用户抓不到 logcat，
             //    否则只看到一片空白，无法区分「AI 没说话」和「App 读不到会话」。
             //    仍然 NOT_TOUCHABLE，所以看得见但点得穿。
@@ -233,7 +212,7 @@ class TickerBar(private val svc: AccessibilityService) {
      * 切换窗口是否接收触摸（v1.2.101）。
      *
      * 无内容时置 FLAG_NOT_TOUCHABLE，让触摸**穿透**到下层应用 —— 否则一条
-     * MATCH_PARENT 宽的透明横条会挡住顶部区域的点击（主人实测反馈）。
+     * MATCH_PARENT 宽的透明横条会挡住顶部区域的点击（用户反馈）。
      * 有内容时才允许接收（点击展开 / 长按隐藏）。
      */
     private fun setTouchable(touchable: Boolean) {

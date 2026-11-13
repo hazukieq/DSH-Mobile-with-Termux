@@ -68,7 +68,7 @@ class EngineService : Service() {
 
         app.supervisor.start(app.appScope)
 
-        // v1.2.160：按偏好恢复「局域网访问 WebUI」代理（默认关闭）。
+        // 按偏好恢复「局域网访问 WebUI」代理（默认关闭）。
         // 刻意与引擎解耦：独立线程 + 独立端口 3090，失败只记日志，不抛出、不重启。
         runCatching {
             // ⚠️ 先注入 context：LanWebProxy.start() 需要它推导引擎目录。
@@ -81,7 +81,7 @@ class EngineService : Service() {
             }
         }.onFailure { android.util.Log.w("EngineService", "lan proxy: ${it.message}") }
 
-        // 🔴 v1.2.73 修主人实测「引擎明明在线，小字一直显示正在启动引擎」：
+        // 🔴 v1.2.73 修设备实测「引擎明明在线，小字一直显示正在启动引擎」：
         // startAsForeground() 每次都把通知重置成 status_starting，而 StateFlow 只在
         // 状态**变化**时才发事件 —— MainActivity.onResume() 每次都调 EngineService.start()，
         // 于是「重进 onStartCommand → 通知被重置为启动中 → 已 Healthy 的状态不再重发」
@@ -98,10 +98,10 @@ class EngineService : Service() {
     }
 
     /**
-     * v1.2.91：用户从「最近任务」划掉 App 时的自愈。
+     * 用户从「最近任务」划掉 App 时的自愈。
      *
      * 默认行为：划掉任务卡片会**连同前台服务一起被杀**（引擎随之停止，
-     * 后台的 AI 任务中断）。主人要求「利用已有的无障碍/悬浮窗机制保活」，
+     * 后台的 AI 任务中断）。交互约定「利用已有的无障碍/悬浮窗机制保活」，
      * 这里先做最基础也最关键的一环 —— **被划掉后立刻把自己拉回来**。
      *
      * 为什么不做更激进的（比如定时 AlarmManager 互相拉起）：
@@ -118,7 +118,7 @@ class EngineService : Service() {
             return
         }
         // v1.3.73 用户硬性要求：从最近任务划掉 = 正常退出，**绝不自动拉起**。
-        // v2.3.1（用户反馈「App 退出后悬浮窗还在」）：划掉任务就是彻底退出，
+        // 划掉任务就是彻底退出，
         // 不能只置标记把引擎/悬浮窗留后台——直接走和通知栏「退出」同一条清理路径。
         Log.i(TAG, "task removed: exiting completely (engine + overlay)")
         setUserExited(this, true)
@@ -131,9 +131,9 @@ class EngineService : Service() {
         stateJob = null
         stateScope.cancel()
         (application as DshApp).supervisor.stop()
-        // v2.3.1：服务销毁时兜底拆掉悬浮窗（进程可能还活着，窗口不会自动消失）。
-        runCatching { app.dsh.mobile.StatusOverlay.teardown(app.dsh.mobile.DshAccessibilityService.instance) }
-        runCatching { app.dsh.mobile.StatusOverlay.hideAuto(this) }
+        // 服务销毁时兜底拆掉悬浮窗（进程可能还活着，窗口不会自动消失）。
+        runCatching { app.dsh.mobile.StatusOverlay.teardown() }
+        runCatching { app.dsh.mobile.StatusOverlay.hideAuto() }
         super.onDestroy()
     }
 
@@ -193,7 +193,7 @@ class EngineService : Service() {
     }
 
     private fun updateNotification(state: EngineSupervisor.State, force: Boolean = false) {
-        // ⚠️ v1.2.73：**每个状态都要有文案**。旧版只有 Healthy/Backoff/Failed 三种，
+        // **每个状态都要有文案**。旧版只有 Healthy/Backoff/Failed 三种，
         // 其余（Idle/Installing/Starting/Stopped）直接 `return` 丢弃 —— 表现为
         // 「引擎明明已就绪，小字还停在正在启动引擎」：startAsForeground() 先写了
         // status_starting，而随后的 Starting 事件被丢弃、Healthy 事件又被
@@ -215,7 +215,7 @@ class EngineService : Service() {
         }
         if (!force && text == lastNotifText) return
         lastNotifText = text
-        // ⚠️ v1.2.44：前台服务通知必须用 startForeground 再发一次来更新 ——
+        // 前台服务通知必须用 startForeground 再发一次来更新 ——
         // 用 NotificationManager.notify() 更新 FGS 通知在 Android 13+ 常被静默忽略
         // （用户实测：通知标题正确但小字永远停在「正在启动引擎」），且该路径还依赖
         // POST_NOTIFICATIONS 权限；startForeground 对 FGS 通知始终有效。
@@ -230,7 +230,7 @@ class EngineService : Service() {
     /**
      * 彻底退出：杀引擎 → 移除通知 → 停服务。
      *
-     * 🔴 v1.2.73 修主人实测「点退出完全没有反应」：
+     * 🔴 v1.2.73 修设备实测「点退出完全没有反应」：
      * `supervisor.stop()` 内部是 `EngineProcess.stop(graceMs = 10_000)` ——
      * **阻塞式**等引擎退出（最长 10 秒，实测 TERM 后还要 `pumpThread.join(1000)`），
      * 而它跑在 **onStartCommand 的主线程**上。于是点下退出后通知栏十几秒纹丝不动，
@@ -251,7 +251,7 @@ class EngineService : Service() {
             // MainActivity 观察到后会 finishAndRemoveTask 并销毁 WebView，
             // 释放 ~380MB（v1.2.187，用户反馈「退出不彻底、后台仍占内存耗电」）。
             runCatching { (application as DshApp).supervisor.stop(graceMs = 3_000, explicit = true) }
-            // v1.2.187：这两个是**独立子进程**，不在引擎进程树里，退出时必须显式停 ——
+            // 这两个是**独立子进程**，不在引擎进程树里，退出时必须显式停 ——
             //  · 局域网 WebUI 代理（node，端口 3090）：开着时退出引擎它仍在跑
             //  · 本地推理服务（llama-server）：/local/ensure 起过就一直驻留
             // 不停的话用户看到"引擎停了"但后台仍有进程吃内存/电。
@@ -270,7 +270,7 @@ class EngineService : Service() {
                 // v1.2.157 用户实测反馈：退出引擎后悬浮窗仍在后台（球 + 3s 周期刷新 +
                 // 回空闲定时器）→ 进程持续活跃、耗电。退出时一并彻底拆掉。
                 runCatching {
-                    app.dsh.mobile.StatusOverlay.teardown(app.dsh.mobile.DshAccessibilityService.instance)
+                    app.dsh.mobile.StatusOverlay.teardown()
                 }
                 stopSelf()
             }
@@ -316,9 +316,8 @@ class EngineService : Service() {
             }.getOrDefault(false)
         } ?: false
 
-
         /**
-         * v1.3.73（用户硬性要求）：**正常退出后绝不自动启动**。
+         * **正常退出后绝不自动启动**。
          *
          * 置位时机：通知栏「退出」、从最近任务划掉 App（onTaskRemoved）。
          * 清除时机：用户主动打开 MainActivity（onCreate 且非重建）。
@@ -335,7 +334,7 @@ class EngineService : Service() {
         /**
          * 便捷启动入口（供 Activity **与保活看门狗**调用）。
          *
-         * ⚠️ v1.2.100：WebView 版本门禁判断放在这里 —— 这是**所有自动启动路径的唯一汇聚点**
+         * WebView 版本门禁判断放在这里 —— 这是**所有自动启动路径的唯一汇聚点**
          * （MainActivity.onResume、无障碍服务保活看门狗、通知点击）。旧实现只在
          * MainActivity 里判版本，看门狗会绕过它照常拉起引擎 → 低版本 WebView 设备
          * 仍然「引擎白跑 + 前端白屏」（独立审查指出）。
@@ -346,7 +345,7 @@ class EngineService : Service() {
          *  · 版本不足且用户未知情 → 不启动（让 MainActivity 去弹说明对话框）
          */
         fun start(context: Context) {
-            // v1.3.73：正常退出后（含划掉任务）任何自动路径都不得启动
+            // 正常退出后（含划掉任务）任何自动路径都不得启动
             if (userExited(context)) {
                 android.util.Log.i("EngineService", "skip start: user exited normally")
                 return

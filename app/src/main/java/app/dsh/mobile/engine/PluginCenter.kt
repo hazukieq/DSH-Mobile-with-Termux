@@ -84,7 +84,7 @@ object PluginCenter {
      *
      * 读 `$DSH_HOME/profiles/web/package.json` 的 dependencies —— 那是 dsh 官方
      * plugin manager 的真实记录（`dsh plugin add` 写的就是这里）。
-     * ⚠️ 必须查真实文件而非内存标记：主人实测「装完显示已安装，退出重进又能装」
+     * ⚠️ 必须查真实文件而非内存标记：设备实测「装完显示已安装，退出重进又能装」
      * （旧版只记 UI 内存状态，Activity 重建即丢）。
      */
     fun installedPackages(ctx: Context): Set<String> = runCatching {
@@ -106,7 +106,7 @@ object PluginCenter {
      */
     fun search(query: String, onDone: (List<PluginInfo>) -> Unit) {
         Thread({
-            // v1.2.118：**放开为全网 npm 搜索** —— 主人反馈「插件太少」。
+            // **放开为全网 npm 搜索** —— 用户反馈「插件太少」。
             // 空查询 = 浏览 dsh 生态（keywords:deepseek-harness）；有查询词 =
             // 直接搜全网 npm（用户想装什么就搜什么，不再限定生态关键词）。
             val q = if (query.isBlank()) "keywords:deepseek-harness" else query.trim()
@@ -210,7 +210,7 @@ object PluginCenter {
      * 卸载插件（v1.2.120）—— dsh plugin --profile web remove <pkg>。
      *
      * dsh plugin 转发给 pnpm（实测 --help 显示 pnpm 命令表），故卸载即
-     * `pnpm remove`。此前插件中心只能装不能卸（主人反馈），装错/不想要的
+     * `pnpm remove`。此前插件中心只能装不能卸（用户反馈），装错/不想要的
      * 插件只能靠 CLI 手工处理。
      */
     fun uninstall(ctx: Context, pkg: String, onDone: (Boolean, String) -> Unit) {

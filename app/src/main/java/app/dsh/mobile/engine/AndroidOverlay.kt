@@ -5,7 +5,7 @@ import java.io.File
 
 /**
  * Android 适配层：overlay YAML、客户端插件落地、对上游 JS 的定点 patch、
- * 门脚本注入（从 EngineConfig 拆出，Phase 3）。
+ * 门脚本注入。
  *
  * 这些操作都是幂等的「缺什么补什么」，每次引擎启动都会跑一遍；
  * 上游升级后 patch 锚点若变化会安静跳过并在日志里留痕，不会让引擎起不来。
@@ -116,13 +116,6 @@ internal object AndroidOverlay {
             |# reject every save ("this deployment did not accept these values") on this engine build, because
             |# the form round-trips the row config against the values it served.
             |#
-            |# v2.5.66: the bundled `android-fetch-auto` composite provider is gone. It
-            |# existed to route fake-IP (198.18.0.0/15) hostnames — which the engine's
-            |# own fetch provider rejected with "not a public range" — through the
-            |# official deepseek fetch API. On dsh 0.2.2 the default provider resolves
-            |# and fetches such hosts by itself (measured on device: example.com
-            |# 2s, github.com 9s, web_search 3s with the plugin absent), so shipping a
-            |# second provider only made provider selection ambiguous.
             |- id: web
             |  name: '@deepseek-ai/dsh-web'
             |
@@ -152,14 +145,10 @@ internal object AndroidOverlay {
             |    - id: android-fast-mode
             |      name: ./android-plugins/fast-mode.mjs
             |
-            |# Narrow-screen UI: handled by the engine's own Web UI since dsh 0.2.2
-            |# (sidebar collapses into a drawer, compact header, adaptive composer).
-            |# The old dsh-mobile-ui client plugin has been removed from the app: it
-            |# duplicated what the engine now does and fought the version-specific CSS hashes.
+            |# Narrow-screen layout is handled by the engine Web UI.
             |
-            |# v1.3.68 background progress: watch the current session DOM (thinking / step)
-            |# and report it to native through DshNative for the notification / floating
-            |# window. No-op in a plain browser where DshNative is absent. (ASCII only.)
+            |# Background progress: host plugin subscribes to engine events and posts
+            |# structured progress to the authenticated Android bridge.
             |- insert:
             |    - id: mobile-progress
             |      name: ./android-plugins/mobile-progress/index.js
@@ -170,7 +159,7 @@ internal object AndroidOverlay {
         val f = File(EngineConfig.engineRoot(ctx), "android-overlay.yml")
         // NOTE: keep this file free of CJK text — the i18n gate scans Kotlin string
         // literals and would flag it (explanations live in the Kotlin comments below).
-        //
+
         // Why all three rows are pinned here instead of relying on DSH_PERMISSION_MODE
         // alone: permission-presets derives its default from the *composed* pair
         // (sandbox mode + approval policy) and throws "composed sandbox and approval
@@ -179,7 +168,7 @@ internal object AndroidOverlay {
         // schema default 'ask') yields exactly {danger-full-access, ask} — which is
         // not in the table — and the entry then fails to activate on every boot.
         // Pinning the trio makes the composed pair match by construction.
-        //
+
         // ⚠️ A patch REPLACES the targeted row's whole `config` (applyEntryPatches
         // does `target[key] = value`), so each row below restates every key it owns:
         //   · permission needs the full presets table — the plugin's own schema
@@ -233,22 +222,7 @@ internal object AndroidOverlay {
         return f
     }
 
-    /**
-     * 把一个资产文本部署到引擎目录，带「重装后自愈」语义。
-     *
-     * ⚠️ v1.2.173 实测背景：每次重装 APK，Android 分配**新 uid**，而旧插件文件
-     * 属主仍是旧 uid + 权限 600 → app 自己读不了（EACCES → 引擎 "failed to import"）。
-     * 提权修复走不通（Shizuku 的 adb 身份无权访问 app 私有目录）。
-     * 但 app 对自己的目录有写权限：删掉目录里的文件只需目录写权限，不需要文件本身的
-     * 权限 → 正解 = 读不了就**删掉重建**。
-     *
-     * ⚠️ v1.2.174：判空必须写成 `!dst.isFile || …`。写成 `dst.isFile && …` 时
-     * 文件不存在会让整式为 false（stale=false），于是文件**永不创建**。
-     *
-     * @param dst 目标文件（父目录会自动创建）。
-     * @param text 期望内容。
-     * @param label 日志用标签。
-     */
+    /** 按内容部署资产；不存在或不可读的旧文件要重建，目录必须归应用所有。 */
     private fun deployOne(dst: File, text: String, label: String) {
         dst.parentFile?.mkdirs()
         val stale = !dst.isFile ||
@@ -265,17 +239,9 @@ internal object AndroidOverlay {
     }
 
     /**
-     * Agent 能力包装器（v1.1.0）：notify / scr，全模式注入。
-     * 二者都是 node fetch 到 AgentBridge (127.0.0.1:3083) 的薄包装：
-     *  - notify [message]        → POST /notify（任务完成系统通知；AGENTS.md 约定任务完成必调）
-     *  - scr dump                → GET  /screen（读屏：可见文本+坐标 JSON）
-     *  - scr tap <x> <y>         → POST /tap 坐标点击
-     *  - scr tap-text <文本>     → POST /tap 按文本点击（无障碍服务开启才可用）
-     */
-    /**
      * 引擎侧 Android 兼容补丁（幂等、按内容锚点，不绑死文件名/版本）。
      *
-     * 目前只有一条：`dsh-subprocess-local` 的进程检查器把平台限定成
+     * 其中，`dsh-subprocess-local` 的进程检查器把平台限定成
      * linux/darwin/win32，遇到 android 直接抛
      * `subprocess-local: terminal inspection is unsupported on platform android`
      * → WebUI 侧边栏终端（以及一切用 spawnTerminal 的功能）在 Android 上完全不可用。
@@ -658,7 +624,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             }
             Log.i(EngineConfig.TAG, "agent gates deployed (${AGENT_GATES.size + if (elevated) AGENT_GATES_PRIV.size else 0}, " +
                 "elevated=$elevated): ${(AGENT_GATES + if (elevated) AGENT_GATES_PRIV else emptyList()).joinToString(" ")}")
-            // v1.8.2（点击链路提案 P1-4）：PP-OCRv6 tiny 兜底 —— 脚本放 bin、模型放 share。
+            // PP-OCRv6 tiny 兜底 —— 脚本放 bin、模型放 share。
             // 只部署 tiny（6MB）；python/onnxruntime 由 /ocr?engine=ppocr6&ensure=1 显式安装。
             runCatching {
                 val share = File(root, "share/ppocr6").apply { mkdirs() }
@@ -709,7 +675,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
 
             listOf("notify", "scr", "say", "loop", "fast", "dsh-update").forEach { File(bindir, it).setExecutable(true, false) }
             // 已下线的门脚本（v1.3.0 USB 桥回退）：清掉设备上的旧副本
-            // v2.5.43：proot 子系统移除后，老设备上残留的 linux 门脚本也一并清掉
+            // proot 子系统移除后，老设备上残留的 linux 门脚本也一并清掉
             listOf("pc", "linux").forEach { runCatching { File(bindir, it).delete() } }
             File(bindir, "_dsh_http.sh").setReadable(true, false)
 
@@ -741,7 +707,7 @@ async function openAndroidPath(path, signal, env, route = "/open/file") {
             // ── Android 编译桩 jar 预置（v1.2.107）────────────────────────────
             // 动机：AGENTS.md 原先教 Agent 自己跑 `extract-android-stub.py` 去提取
             // android.jar，但那是**开发机上的脚本** —— 设备上既没有该脚本、也没有
-            // git 仓库可 pull，Agent 照着做只会扑空（主人实测反馈「那个 py 文件似乎
+            // git 仓库可 pull，Agent 照着做只会扑空（用户反馈「那个 py 文件似乎
             // 不存在」）。现在改为随包发布、启动即落位，Agent 直接 `-cp ~/android.jar`。
             // 幂等：按字节数比对（体积固定，内容变化必然反映在长度上），命中就跳过。
             runCatching {

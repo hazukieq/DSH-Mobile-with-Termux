@@ -1,8 +1,10 @@
 # 悬浮窗「点不开」修复报告（2.9.95 / versionCode 666）
 
+> 历史取证记录：结论仅适用于文中设备、版本和采样范围。当前行为与维护约束见相关使用文档；旧行号和临时文件路径不代表当前工作区。
+
 > 设备：vivo V2520A（`10CG1C1M1H0021Z`），Android 17 / OriginOS 17.0，1080×2376 @480dpi，**无 root**
 > 复现版本：2.9.94 / 665（`b4fc8c6`）→ 修复版本：2.9.95 / 666
-> 关联文档：`docs/OVERLAY.md` §3.aa（结论入册）、`scripts/probes/flicker/bridge.sh`（免 root 取证）
+> 关联文档：`docs/OVERLAY.md`（结论入册）、`scripts/probes/flicker/bridge.sh`（免 root 取证）
 
 ## 1. 用户报告与现场取证
 

@@ -8,7 +8,7 @@ import android.content.pm.ActivityInfo
  * 屏幕朝向偏好（v1.2.120）：三态 portrait / landscape / auto。
  *
  * 历史：此前只有一个布尔 `landscape`（dsh_ui prefs，默认 false=竖屏）。
- * 本次升级为字符串 `orientation` 三态；旧布尔键保留为迁移源——
+ * 使用字符串 `orientation` 三态；旧布尔键保留为迁移源——
  * `get()` 在新键缺失时读一次旧键，之后只写新键（不做破坏性清理）。
  */
 enum class OrientationMode(val key: String) {
@@ -59,7 +59,7 @@ object OrientationPrefs {
     /**
      * 把当前偏好落到某个 Activity 的 requestedOrientation。
      *
-     * v2.9.110：原生页面（设置/关于/自定义指令）此前各自硬编码
+     * 原生页面（设置/关于/自定义指令）此前各自硬编码
      * `requestedOrientation = SCREEN_ORIENTATION_PORTRAIT`，导致「主界面横屏、
      * 一进设置就跳竖屏」（平板上必现，手机上因默认竖屏看不出来）。
      * 原生页面必须和主界面共用同一套策略，否则同一个 App 里出现两种朝向行为。

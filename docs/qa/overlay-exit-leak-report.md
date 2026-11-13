@@ -1,5 +1,7 @@
 # 悬浮窗「App 已销毁却还在」修复报告（2.9.104 / 2.9.105）
 
+> 历史取证记录：结论仅适用于文中设备、版本和采样范围。当前行为与维护约束见相关使用文档；旧行号和临时文件路径不代表当前工作区。
+
 > 用户原话（m04286）：「有个bug：app彻底销毁后，悬浮窗还在」
 > 设备：vivo V2520A（10CG1C1M1H0021Z，Android 17 / OriginOS 17，1080×2376，无 root）
 > 版本：2.9.104（675）修根因，2.9.105（676）修"重开 App 球不回来"的副作用
@@ -72,8 +74,8 @@ adb shell am start -n com.termux/app.dsh.mobile.MainActivity
 
 ## 8. 文档
 
-- `docs/OVERLAY.md` §3.ab（完整根因 + 验证表 + 两条硬规则）
-- `app/src/main/assets/docs/OVERLAY.md` §3.ab（随包精简版，装机后部署到 `$HOME/docs`）
+- `docs/OVERLAY.md`（完整根因 + 验证表 + 两条硬规则）
+- `app/src/main/assets/docs/OVERLAY.md`（随包精简版，装机后部署到 `$HOME/docs`）
 
 ## 9. 2.9.106 追加：移除「长按隐藏」
 

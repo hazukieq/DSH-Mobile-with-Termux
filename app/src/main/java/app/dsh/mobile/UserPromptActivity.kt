@@ -28,7 +28,7 @@ class UserPromptActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // v2.9.110：跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
+        // 跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
         OrientationPrefs.applyTo(this)
         setContentView(R.layout.activity_user_prompt)
 

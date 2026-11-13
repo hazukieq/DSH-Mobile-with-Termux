@@ -18,7 +18,7 @@ and `getEnabledAccessibilityServiceList`):
 Both must be true before actions work; checking only "connected" misreads "granted but not yet bound"
 (fresh start, rebind after reclaim) as not granted.
 
-- `/health` reports `permissions.accessibility` (**enabled**) plus `accessibility_connected`; an
+- `/status` reports `permissions.accessibility` (**enabled**) plus `accessibility_connected`; an
   a11y-dependent endpoint waits up to **1.5s** for the bind before answering: still disconnected →
   503 `retryable: true` (retry shortly; if it persists, toggle the service off/on); not enabled →
   503 `retryable: false` (go enable it in system settings).

@@ -198,7 +198,7 @@ dsh-update rollback         # go back any time
   rolls back automatically.
 - Only the engine layer changes, so updating the engine never breaks `pkg`/`apt`.
 
-### Feed and CI
+### Feed and manual publishing
 
 - Default feed: this repository's release
   `dsh-engine-latest/engine-manifest.json`
@@ -273,4 +273,4 @@ node-pty shim  ──HTTP──▶ AgentBridge /pty/{open,write,resize,kill,clos
 | `pkg` / `apt`: not found | the bootstrap has not finished extracting; retry later and check `$PREFIX/bin/apt` |
 | WebUI sidebar: `terminal inspection is unsupported on platform android` | the engine patch did not apply: restart the engine and confirm the runtime version |
 | WebUI sidebar: `node-pty unavailable in this Android build` | the overlay was not applied: restart the engine so `applyRuntimeOverlays()` runs again |
-| `dsh-update check` shows `feed: unavailable` | this repository has no adapted engine bundle for that dsh version yet; wait for CI or upgrade with an APK that contains the new engine |
+| `dsh-update check` shows `feed: unavailable` | this repository has no adapted engine bundle for that dsh version yet; wait for an adapted bundle or upgrade with an APK that contains the new engine |

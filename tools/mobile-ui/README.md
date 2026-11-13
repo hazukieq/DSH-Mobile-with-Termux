@@ -1,5 +1,9 @@
 # dsh-mobile-ui — 把 DSH Web UI 适配成 Android App 风格
 
+> 保留的旧客户端布局实验，不随 APK 部署，也不在 android-overlay.yml 注册。
+> 当前窄屏布局由引擎 WebUI 提供。下文仅为旧版 CSS/slot 实验记录，不能作为当前安装或修复步骤。
+
+
 > 结论先说：**不需要 fork 整个 DSH 仓库重新构建**。DSH 的 Web 端由「一个 Vite 外壳 + 70 多个
 > 运行时 client 插件」组成，官方在 `slots` 契约里明确留了可覆盖的挂载点；因此可以写成
 > **一个客户端插件（原版之上的覆盖层）**，保留原版所有组件与状态机，只重排/重绘外观。
@@ -41,7 +45,7 @@
 | --- | --- | --- |
 | **A. 覆盖层插件（本实现）** | client 插件只做三件事：注入 CSS、在 `<body>` 上挂固定顶栏/遮罩、驱动原版状态机（展开侧栏）。组件与数据全部沿用原版 | ✅ 改动小、随原版升级、可随时卸载恢复；缺点：依赖原版 CSS Module 类名（带 hash，但语义后缀稳定） |
 | B. slot 覆盖（React 重写局部） | 用官方 slot 的 `replaceRisk: shadows-shipped-ui` 覆盖 `conversation.header` / `conversation.composer.bar` / `sidebar` 等，写 React 组件替换原版 | ✅ 更"正统"，不依赖类名；缺点：要跟随上游 ownerProps/standardProps 契约，工作量与升级风险都高于 A |
-| C. fork monorepo 重新 build | 拉源码 `pnpm run build:web` 出 dist 覆盖 | ❌ 本机只有发布产物（无源码、无 vite 链）；每次升级都要重做；APK 更新还会覆盖运行时目录。不建议 |
+| C. fork monorepo 重新 build | 拉源码 `pnpm run build:web` 出 dist 覆盖 | ❌ 需要对应版本源码与构建链；不能将实验产物直接覆盖受管引擎 |
 
 **推荐 A，必要时对个别区域叠加 B**（例如以后想让头部变成真正的 Material TopAppBar 组件）。
 

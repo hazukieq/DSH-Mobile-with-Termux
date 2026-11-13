@@ -1,259 +1,105 @@
-# DSH Mobile
+# DSH Mobile with Termux
 
-> **This is the upstream README kept for reference.** This repository is the fork
-> DSH Mobile with Termux - see [README.md](README.md) for the fork README, feature list and
-> license attribution.
->
-> **Current fork release: `3.0-alpha-1` (versionCode 686).** The 3.0-alpha line adds
-> transactional screenshots (`/act` + `{"shot":true}`, `capturedAt`), zero-flash
-> `takeScreenshotOfWindow` compositing, in-process PP-OCRv6 via `onnxruntime-android`,
-> `/volume`, `/install` (user confirms in the system installer), a root-free adb debug
-> channel, and a batch of overlay fixes (no flicker / tappable / closable). This repo ships
-> **no CI workflows** — build with Gradle and publish by hand. See README.md for details.
+**Run DeepSeek Harness on Android and give your agent access to phone UI, files, and command-line tools.**
 
-<p align="center">
-  <img src="docs/promo/dsh-mobile-github.png" alt="DSH Mobile — DeepSeek Harness for Android" width="100%">
-</p>
+[Download APK](https://github.com/hazukieq/DSH-Mobile-with-Termux/releases) · [Documentation](docs/README.md) · [Issues](https://github.com/hazukieq/DSH-Mobile-with-Termux/issues) · [中文](README.md) · [Deutsch](README.de.md)
 
-**The complete Android port of DeepSeek Harness — the official dsh engine running as-is inside the app sandbox. No root, no Termux, no PC needed.**
+DSH Mobile bundles an Android-adapted DeepSeek Harness engine, WebUI, Node.js, and a Termux userland.
+Use conversations, tools, and plugins on your phone without installing Termux separately. Neither Root nor a computer is required.
 
-> 🌐 [中文](README.md) · [Deutsch](README.de.md)
+The engine runs on the phone. Chat inference uses the model endpoint and API key you configure;
+the APK does not include a conversational large language model. Local OCR and optional icon detection help read phone UI.
 
+## Features
 
-[![CI](https://github.com/Soodok/Deepseek-Harness-Local-Android/actions/workflows/android-build.yml/badge.svg)](https://github.com/Soodok/Deepseek-Harness-Local-Android/actions/workflows/android-build.yml)
-![Release](https://img.shields.io/badge/release-v1.3.0-blue)
-![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-green)
-![License](https://img.shields.io/badge/license-MIT-brightgreen)
-
-[中文](README.md) · [English](#introduction)
-
----
-
-## Introduction
-
-DSH Mobile is the **complete Android port of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — DeepSeek's open-source Agent framework. A complete Node.js Agent engine runs inside the app sandbox, listening on the `127.0.0.1` loopback — sessions, credentials, and workspaces **stay on your phone**. Install and go; whether model requests leave the device depends on the model service endpoint you configure.
-
-## 🎯 What This Is · What This Is Not
-
-**This is**: the **complete Android port of DeepSeek Harness** (`@deepseek-ai/dsh`). The engine is the official upstream code (pinned to `0.2.0-rc.2`) — plugin system, WebUI, and tool-calling chain all come from upstream. What this project supplies is the Android-side runtime: a self-built bionic Node.js runtime with a verified dependency closure, foreground-service keep-alive, privilege tiers, and a complete Termux userland. **Anything desktop dsh can do, this can do** — just inside the phone's sandbox.
-
-**This is not**:
-
-- ❌ **Not a self-built AI agent framework** — agent logic, plugin system, and context management all belong to DeepSeek Harness. This project is a **port**, not a replacement, and it does not compete with upstream
-- ❌ **Not an on-device LLM app** — no model weights, no local inference. Models are reached through the API endpoint you configure, exactly as with desktop dsh
-- ❌ **Not a phone-automation agent** — accessibility screen reading/tapping is **one of the tools** handed to the agent, not the product itself
-- ❌ **Not a container-first solution** — the Node.js runtime and the whole toolchain ship as native Android (bionic) binaries inside the APK: install and go, with no container to initialise. A **native terminal** runs the agent's own shell for hands-on work
-
-In one line: **looking for a way to run dsh on Android without Termux? This is it.**
-
-## ⚡ Measured Performance
-
-All figures come from real-device / emulator testing, not theory:
-
-| Metric | Measured | Environment |
-|---|---|---|
-| **Cold start to engine ready** | **< 10 s** | OnePlus 15T (Android 16), real device |
-| **Memory with parallel services** | **< 400 MB** | Engine + multiple toolchains running together |
-| **Android compatibility** | **8.0 → 16** | Requires WebView ≥ Chrome 85 (see below) |
-| **APK size** | **~144 MB** | Full Node.js runtime + toolchain closure for 19 extensions |
-| **Installed size** | **~500 MB** | After runtime extraction |
-
-The runtime and toolchain ship in the APK, so you can start the upstream dsh engine without first setting up Termux or a proot/Ubuntu container.
-
-## ✨ What It Can Do on a Phone
-
-**A real native terminal (2026-10-18)**
-The app ships a **native terminal** — VT100/xterm emulation over a real PTY, not a WebView wrapper: its own launcher icon, multiple sessions, 5000 rows of scrollback, CJK wide characters, 256/true colour, an extra-keys row (Esc / Ctrl / Tab / arrows / PgUp…), adjustable font size and whole-buffer copy. It starts in **the same environment the agent uses** (same PATH, same extension toolchain), so whatever the agent can run, you can type yourself.
-
-> Changed 2026-10-28: the optional proot/Linux-distro userland was removed from the app.
-> The native terminal stays; there are no Alpine/Ubuntu sessions and no `linux` gate any more.
-
-
-**Run the full Agent engine on your phone**
-The official dsh engine (pinned to `0.2.0-rc.2`) runs in the Android app sandbox with its bionic Node.js runtime and toolchain bundled in the APK. No Root, Termux, PC, or proot/Ubuntu container is required. The Agent can work with files, run shell commands, search text, and manage projects; its engine endpoint listens on `127.0.0.1`.
-
-**Preview results where they run**
-The Agent can start a local HTTP service and return a `http://127.0.0.1:port` link. Tap it to preview a page or service on the phone, without moving the project to a computer first.
-
-**Make the phone a real Agent workstation**
-The app uses Termux's package name (`com.termux`), so `<files>/usr` is a genuine `$PREFIX`: `apt`, `dpkg` and `pkg` work natively. Install Python, Git, Clang, FFmpeg or ImageMagick with a single `pkg install` — no root, no extension store, and the agent can do it on its own too.
-
-**Bring the dsh plugin ecosystem along**
-Settings → Extensions → **Community plugins** lets you search npm for dsh ecosystem plugins and install or uninstall them in the app. Compatibility-filtered results, progress, and failure reasons make plugin setup visible; installed plugins appear in the WebUI panel. **Plugins extend Agent capabilities; environment extensions provide command-line tools.**
-
-**Operate apps with a verified local loop**
-Enable the accessibility service and the Agent can control the phone through **21 action primitives**, including taps, text input, swipes, scrolling and search, gestures, launch/intent, repeat, conditions, and collection. Each step follows **PICK → ACT → VERIFY → RETRY**. Screen understanding layers accessibility nodes, OCR, icon recognition, and frame differences; on failure, it can change its anchor, action, or route and return the failure evidence instead of blindly repeating a tap. Conditional `when` branches, optimistic execution, and scenario memory help it handle variation and reuse successful paths.
-
-The timings are measured: a single closed-loop step takes about **1.45 s** (1.13 s to tap + 69 ms to verify); compact verification takes about **5 ms** and is roughly **1/7** the size of a full JSON dump. The OCR chain takes **326–393 ms**, about **4× faster** than the prior 1370–1588 ms measurement; settle adapts to page state (**355–1566 ms**) rather than waiting a fixed 900 ms. A combined multi-function task completed in **7 calls / 64.7 s**; all **7 noisy test pages** passed, and cross-app browser → Settings → return-to-app tasks run reliably. Fast mode thinks on the first accessibility step only. Human-like curved, slightly varied swipe paths and small randomized tap offsets complement the visual checks.
-
-**Accessibility and background at a glance**
-A draggable floating status ball shows engine state and the latest action. From the third consecutive accessibility action, a notification updates with the current step; it disappears after 10 seconds without activity. The Agent can also send task-completion notifications. On exit, the app stops the engine and its separate child processes, closes the screen, and destroys the WebView to release about **380 MB** of runtime memory. See [docs/ACCESSIBILITY.en.md](docs/ACCESSIBILITY.en.md) and [docs/NOTIFICATIONS.en.md](docs/NOTIFICATIONS.en.md).
-
-**Voice input (no entry point right now)**
-The recognition chain (system `SpeechRecognizer`, then a cloud OpenAI-compatible ASR) and the editable bottom panel still exist in the code, but nothing opens them: the floating-ball microphone was removed and the app no longer requests the record-audio permission. Treat voice as unavailable until an entry is wired back in.
-
-**Use the native WebUI from a computer over LAN**
-Settings → Extensions → **LAN WebUI access** exposes the phone's running WebUI at `http://<phone-IP>:3090` on the local network. Each enable generates a random **6-digit code**, copies it automatically, and displays it once. A persistent notification reminds you while access is on; its Stop button really stops the proxy, including in Normal mode, and exiting the engine stops it too. The app-layer proxy supplies the secure-context features the browser needs (random UUID, loopback checks, `/api` same-origin, and WebSocket upgrade) without modifying engine files. The upstream engine refuses `0.0.0.0` binding; LAN access is an explicit app-level switch. See [docs/LAN_WEBUI.en.md](docs/LAN_WEBUI.en.md).
-
-**Keep data and permissions under your control**
-The engine listens only on `127.0.0.1`; sessions, credentials, and workspaces stay in the phone's private storage — whether model requests leave the device depends on the model endpoint you configure.
-
-- Sessions and workspaces live under **`Android/data/app.dsh.mobile/files/dshdata`** on external storage — visible in a file manager and easy to copy as a backup
-- Upgrading from an older build **migrates** data automatically (copy → verify entry count → delete the old copy; on a count mismatch the original is kept)
-- If the external directory is unavailable the app falls back to private storage (uninstalling then loses data)
-- ⚠️ **Note**: `Android/data/` is app-specific external storage and is **removed when you uninstall**. Copy it out regularly if you need it long-term; `profiles/` (which holds credentials) always stays in private storage.
-
-The capability bridge listens only on `127.0.0.1:3083`, uses a random token generated at each launch, and injects it only into the engine environment; another app without the token gets `unauthorised`. Normal mode stays in the app sandbox, Shizuku adds adb-level commands, and Root enables full-device access. In Normal mode, a `su` gate blocks child-process escalation.
-
-**Make narrow-screen UI feel native**
-Client-side plugins let the sidebar take the full row in portrait while the conversation flow yields; landscape and wide layouts remain unchanged. Settings reflows vertically with a horizontally scrollable top navigation, and the right-side change/code-diff panel becomes a full-screen overlay on narrow screens. All three use the engine's official `dsh.client` mechanism: no engine-source edits, no overwrite on engine upgrades, and uninstall to restore. Four plugin test suites passed **30, 26, 36, and 28 assertions**. See [docs/NARROW_UI.en.md](docs/NARROW_UI.en.md).
-
-**Three privilege tiers, chosen explicitly**
-Normal mode is the sandbox default; options whose capability isn't ready are greyed out, and switching tiers restarts the engine. Shizuku offers adb-level access without Root; Root provides full-device read/write. Choose the smallest permission level that fits the task.
-
-## 📚 Feature deep-dives
-
-Every capability has its own document (design trade-offs, measured numbers, troubleshooting):
-
-| Document | What's inside |
+| Capability | What it provides |
 |---|---|
-| [Accessibility control](docs/ACCESSIBILITY.en.md) | read/tap/type/swipe/long-press/drag via 21 primitives; layered vision, per-step verification; measured ~1.45 s/step |
-| [Narrow-screen UI plugins](docs/NARROW_UI.en.md) | full-width sidebar / settings reflow / full-screen right panel (three client plugins) |
-| [LAN WebUI](docs/LAN_WEBUI.en.md) | reverse proxy, 6-digit code, persistent reminder and stop chain |
-| [Notifications & background](docs/NOTIFICATIONS.en.md) | AI progress, task completion, LAN reminder, clean exit |
-| [Fast-path picker](docs/FAST_PATH_PICKER.md) | on-device UI element selection and discrimination |
-| [Native terminal](docs/TERMINAL_AND_LINUX.en.md) | native PTY/VT100 terminal running the same environment as the agent |
+| Conversations and tools | Embedded WebUI with sessions, tools, and plugins; narrow-screen layout comes from the engine WebUI |
+| Phone control | Read UI, tap, swipe, type, and capture screenshots through an authorized accessibility service and the local device bridge |
+| UI recognition | Bundled ML Kit by default, optional in-process PP-OCRv6 and icon detection; OCR needs no Python installation |
+| Terminal and files | PTY terminal sharing the engine's Termux environment, `pkg` / `apt` package management, file handling and sharing |
+| Background progress | Floating ball/card, notifications, or no progress display; scrollable text, edge snapping, session and elapsed time |
+| Android integration | Open apps and links, share, play media, control volume, and hand APK installation to the system installer for confirmation |
+| LAN access | Optional LAN WebUI proxy with an access code, letting another device use the engine running on your phone |
 
-## ⛔ Limits (please be aware)
+## Get started
 
-- **WebView must be Chrome 85+ (2020-06 or later)**: the app itself supports Android 8.0 → 16, but the UI renders in the system WebView, and the engine frontend uses modern syntax (`??=`, class fields) — a **parse-time** feature that polyfills cannot patch. Devices whose system WebView is older than Chrome 85 show a blank page (export the log from Settings to confirm: it records the `SyntaxError` and the WebView version). **On Android 8.0+ the WebView is an independently updatable system component** (Google Play / OEM stores), so updating it to 85+ is all it takes; the few Chinese ROMs that can never update their WebView are a known limitation.
-- **No desktop environment**: Linux GUI desktop apps can't run; visual outputs are previewed via local HTTP + the built-in WebView
-- **Bring your own toolchain with pkg**: `pkg install` Python, Clang, Go, Rust, FFmpeg and friends from the official Termux repository — no root, no extension store
-- **Screen reading is "half-blind"**: `scr dump` reads the accessibility node tree (text + coordinates + clickability), which is useless for pure-graphics or game canvases; complex UI automation stays limited
-- **Android 13+ asks for confirmation when enabling accessibility**: for sideloaded apps the system shows an "Allow full control of your device" dialog that must be accepted by hand; writing the setting over adb gets reverted by the system. Follow the in-app guide to the system UI.
-- **Long tasks are not immortal**: the foreground service maximally avoids system reclamation, but a force-stop or extreme battery saver can still interrupt (the engine auto-restarts; in-flight tasks must be re-dispatched)
-- **Escalation carries risk**: in Root mode the AI has full-device read/write and misoperations can damage the system — see the disclaimer below
+1. Download a compatible APK from [Releases](https://github.com/hazukieq/DSH-Mobile-with-Termux/releases). The usual device build is `arm64-v8a`.
+2. Open the app and choose language, orientation, and permission mode. Start with **Normal** mode.
+3. Wait for the bundled runtime to unpack and the engine to start, then configure your model endpoint and API key in the WebUI.
+4. Grant notifications, file access, or accessibility when needed for your tasks.
 
-## 🌟 What the Termux Routes Can't Give You
+The source minimum is Android 8.0 (API 26); runtime and UI support also depend on the device and WebView.
+Cross-app screenshots require Android 11 (API 30) or later and a connected accessibility service.
+The app prompts for an update when the WebView is too old.
 
-Same dsh, different delivery — and every one of the following is engineering this project had to build itself. This is also why it is called a **port** rather than a repack:
+**Termux package conflict:** this app uses `com.termux` and cannot coexist with another app using that package name.
+Back up existing Termux data before switching. APKs signed with different keys cannot update each other in place.
+See the [terminal guide](docs/TERMINAL_AND_LINUX.en.md).
 
-**Cross-version compatibility, already paid for**
-The app itself supports Android 8.0 → 16; rendering depends on the system WebView and **requires Chrome 85+ (2020-06)** — the engine frontend uses `??=` and friends, a parse-time feature polyfills cannot patch (see Limits). Since many Chinese ROMs can never update their WebView, the build injects a polyfill into the frontend (13 modern APIs including `AbortSignal.any` / `Promise.withResolvers` / `URL.parse`), pulling the API-level floor down from Chrome 126 to 85; every `.so` is **16 KB page-aligned** for modern kernels. On the Termux routes, these are per-device adventures.
+## Permissions and progress
 
-**Plugin system works out of the box — no compiler engineering required**
-dsh's "everything is a plugin" architecture is preserved as-is: hot plugin loading and JSONL session persistence work exactly as upstream. Missing language environments (Python / Go / Rust / Clang / OpenJDK…) come from **19 one-tap extensions**, with dependency closures pre-resolved in CI and ELF-verified. On the Termux routes, native modules like `sharp` / `koffi` / `node-pty` failing to build is the norm — the community even maintains separate prebuilt-module projects just for this.
+Normal mode supports the engine, terminal, file tools, and accessibility-based phone control.
+Phone control and floating progress do not require Root.
 
-**Survives background reclamation, notifies on completion**
-specialUse foreground service + exponential-backoff supervisor against system reclamation; long tasks keep running with the screen off, and a system notification fires when a task completes. Keeping a Termux session alive under aggressive Chinese-ROM battery savers is everyone's private superstition.
+| Option | Scope |
+|---|---|
+| Normal | Engine runs as the app UID; built-in maintenance and fallback paths do not automatically invoke su or Shizuku |
+| Shizuku | Authorized shell capabilities; the engine keeps the app UID and a failed channel does not fall back to Root |
+| Root | Explicitly runs the engine with Root privileges, expanding what the agent can read and modify |
+| Accessibility | Reads other apps' UI, injects actions, captures the screen, and receives related events; ordinary engine, terminal, sharing, and file operations remain independent |
+| Display over other apps | Needed for application overlays when accessibility is disconnected; a connected accessibility service can host the progress overlay directly |
+| Notifications and files | Enable notification delivery and file access within the granted scope |
 
-## 🆚 Routes to Running an Agent on Android
+Tap the ball to expand, tap the card's left dot to collapse, and drag to reposition.
+Choose overlay, notifications, or off in settings. Turning progress off leaves accessibility, OCR, and the terminal available.
+The notification's Exit action stops the engine and removes the overlay; opening the app restores operation.
 
-| | Termux manual setup | Termux one-click script | proot + Ubuntu | APK snapshot repack | **DSH Mobile** |
-|---|---|---|---|---|---|
-| Install experience | Install Termux, configure, install deps | Script does it for you | Install container + distro | Install & go | **Install & go** |
-| Runtime form | Live environment (extensible) | Live environment (extensible) | glibc inside a container (extensible) | Dead snapshot, frozen at build | **Self-built bionic closure, collected & verified by CI** |
-| License compliance | — | — | — | ⚠️ Snapshot repacks GPL components; compliance questionable | **MIT/BSD/ISC/Zlib components only** |
-| Background reliability | Depends on Termux session keep-alive | Same | Same | Watchdog brute force | **specialUse foreground service + exponential-backoff supervisor** |
-| Privilege tiers | None | None | None | None | **Three-tier modes + su gate + Shizuku adb bridge** |
-| Build engineering | — | Partially reproducible | — | No CI; not reproducible from source | **Dual-arch CI: collect → closure checks → 16KB alignment → APK** |
-| First launch | Minutes after manual setup | Minutes after script | Minutes for container init | Minutes to unpack snapshot | **Cold start < 10 s** (measured on device) |
-| Old WebView support | — | — | — | — | **polyfill injection** (API floor 126 → 85) |
-| Termux dependency | Requires Termux app | Requires Termux app | Requires Termux app | Snapshot *is* Termux | **Zero** (hardcoded paths relocated) |
-| Environment extensions | Manual install, extensible | Manual install, extensible | apt, extensible | Dead snapshot, not extensible | **19 one-tap extensions + agent self-install, official icons, three-state management** |
-| Cross-version compatibility | Per-device trial and error | Same | Same | Same | **8.0→16 supported + WebView polyfill + 16KB alignment** |
-| Plugins usable out of the box | Fight native modules one by one | Depends on the script's patch coverage | Same | Frozen at build time | **CI pre-resolved dependency closure + 19 one-tap extensions** |
+See [accessibility requirements](docs/A11Y-SCOPE.en.md) and [progress display](docs/PROGRESS_OVERLAY.md).
 
-> These routes are not replacements for one another: Termux-family solutions **build a Linux environment** on Android and run dsh inside it (advantage: live and freely extensible via pkg/apt); this project **packs dsh's runtime into the APK** (advantage: install-and-go, zero external dependency). **Both routes run the same dsh** — pick by how much setup cost you're willing to pay for a live environment.
->
-> 📄 Full write-up of all five routes — mechanics, trade-offs, and how to choose — in **[docs/android-agent-routes.md](docs/android-agent-routes.md)** ([中文](docs/android-agent-routes.zh.md)).
+## Data and network
 
-## Privilege Modes
+The engine WebUI defaults to `127.0.0.1:3080`; the device bridge uses `127.0.0.1:3083` with request-token validation.
+LAN access is off by default and uses a separate proxy with an access code when enabled.
 
-| | Normal | Shizuku | Root |
-|---|---|---|---|
-| Engine identity | App sandbox | App sandbox | uid 0, full device |
-| Agent power | In-sandbox commands | + adb-level commands (`shz`) | Full read/write |
-| Prerequisite | None | Install & start [Shizuku](https://shizuku.rikka.app/) | Rooted device |
-| Safeguards | su gate blocks escalation | su gate blocks escalation | Double high-risk confirmation + automatic pre-start backup |
+Configuration and credentials live in app-private storage. Sessions and workspaces may be moved to shared storage.
+Model requests, search, web fetching, TTS, downloads, and plugin execution may use the network.
+External data transmission depends on your configured services and tasks. Check actual private and external storage
+locations when backing up; a logical path alone does not tell you what survives uninstalling.
 
-Normal mode is the default; choose Shizuku or Root only when the task requires a wider device boundary.
+See [permissions and audit notes](docs/SECURITY-AUDIT.md) for network entry points, data, debug access, and APK checks.
 
-## 📦 Installation
+## Build from source
 
-**Download a Release (recommended)**: grab the APK from [Releases](https://github.com/Soodok/Deepseek-Harness-Local-Android/releases) (pick `arm64-v8a` for phones; latest is **v1.3.0**), then install with unknown sources allowed. Any v1.0.0+ build can be installed over the top.
+Use JDK 17, Gradle 8.9, Android SDK 36, CMake 3.22.1, and a corresponding NDK. There is no Gradle wrapper.
 
-> 📦 **Which file to pick**: normal users want **`dsh-mobile-*-arm64-v8a.apk`** (release-signed).
-> Names ending in **`-debug`** are debug-signed builds - for log capture, or for users already on a
-> debug-channel install who need a matching signature to update. Packages tagged `x86_64` are for
-> emulators only. Release and debug builds **cannot be installed over each other** (signature
-> mismatch) - switching requires uninstalling first.
+**Prepare runtime assets first.** The Termux bootstrap and adapted engine archives are large files excluded from Git;
+a source clone alone is insufficient to produce a usable APK. Follow the [build environment](docs/DEVELOPMENT-ENV.md)
+and [engine build guide](docs/ENGINE-BUILD.md), including pnpm and native dependency payloads, then run:
 
-**Build from source** (JDK 17 + Android SDK, NDK r26+, CMake 3.22.1):
-
-```bash
-./scripts/collect-termux-runtime.sh app/src/main/assets/runtime.zip aarch64
-gradle assembleDebug -Pabi=arm64-v8a
+```sh
+export ANDROID_HOME="$HOME/Android/Sdk"
+bash scripts/acceptance.sh --static
+gradle testDebugUnitTest
+gradle assembleRelease -Pabi=arm64-v8a
 ```
 
-> **In mainland China**: Gradle may fail against Maven Central with
-> `Remote host terminated the handshake` (the TLS handshake is cut by the network or a
-> side-router), even though `curl` reaches the same URL. Use the mirror init script shipped here:
->
-> ```bash
-> gradle -I scripts/gradle-mirror.gradle assembleDebug -Pabi=arm64-v8a
-> ```
->
-> To keep it for every local build: `cp scripts/gradle-mirror.gradle ~/.gradle/init.d/10-cn-mirrors.gradle`.
-> The script only reorders repositories (Aliyun mirrors first, the original ones still act as a
-> fallback) and changes no dependency versions.
+Output: `app/build/outputs/apk/release/app-release.apk`. Use the project's Gradle workflow rather than `android build`.
+Configure release signing through `keystore.properties` or environment variables; without it, release builds use a debug key.
+See [signing and validation](docs/DEVELOPMENT-ENV.md).
 
-Alternatively, fork the repo and run the **android-build** workflow on GitHub Actions for a cloud build.
+Prefer the android CLI for device installation, capture, and interaction; see the [CLI guide](docs/ANDROID-CLI.md).
+The [physical-device overlay report](docs/qa/overlay-physical-normal-report.md) records the tested build, device, results, and coverage limits.
 
-**Requirements**: Android 8.0+ (**WebView ≥ Chrome 85**, see Limits) · arm64-v8a / x86_64 · **700MB+ free storage recommended** (APK ~144MB plus the unpacked runtime).
+## Documentation and credits
 
-## 🚀 Quick Start
+Start with the [documentation index](docs/README.md), [phone control](docs/ACCESSIBILITY.en.md),
+[terminal](docs/TERMINAL_AND_LINUX.en.md), [overlay behavior](docs/OVERLAY.md), or [LAN WebUI](docs/LAN_WEBUI.en.md).
+Some detailed development documents are in Chinese.
 
-1. On first launch, pick the display orientation and privilege mode (choose **Normal** if unsure)
-2. Wait for runtime extraction (real progress) and engine startup
-3. Start chatting and hand the Agent tasks; tap the gear for settings; tap any `127.0.0.1` link the Agent gives you to preview its work
-4. Voice input and the floating window are always available — no switch needed
-5. To let the Agent operate the screen: enable the **DSH Screen Tap** accessibility service in system settings (on Android 13+ the system asks "Allow full control of your device" — tap **Allow**)
+Forked from [Soodok/Deepseek-Harness-Local-Android](https://github.com/Soodok/Deepseek-Harness-Local-Android),
+built on [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and [Termux](https://github.com/termux/termux-app),
+with ML Kit, PaddleOCR, ONNX Runtime, and other components.
 
-## ❓ FAQ
-
-**Does it require Root?** No. Normal mode covers the vast majority of use cases; Root/Shizuku are optional advanced tiers.
-
-**How does this relate to the Termux approach?** Parallel routes, not replacements. The Termux route **builds a Linux environment** on Android (manual setup / one-click script / proot + Ubuntu) and runs dsh inside it; this project **packs dsh's runtime into the APK** so you install and go, at the cost of a ~144 MB package. **Both run the same dsh** — choose by how much setup cost you're willing to pay for a live environment.
-
-**Does it reimplement the agent itself?** No. Agent logic, plugin system, and WebUI all come from the official [`@deepseek-ai/dsh`](https://github.com/deepseek-ai/deepseek-harness); this project only provides the Android-side runtime (bionic Node.js runtime, foreground service, privilege tiers, Termux userland). That is why it is described as a **port**, not a framework.
-
-**Is my data uploaded?** The engine, sessions, and workspace are all local; whether data leaves the device depends on the model service endpoint you configure.
-
-**Why is the APK ~144MB?** It bundles the complete bionic Node.js runtime, the toolchain closure for 19 extensions, and dsh's dependency tree — the price of "no Termux required, install and go". Termux-family routes keep that setup external and installed by the user, so their package is smaller but first use requires environment setup.
-
-**How does the Agent show me a web page?** Ask it to start a local HTTP server and give you a `http://127.0.0.1:port` link; tap to preview.
-
-**Why can't I enable touch injection?** Android requires accessibility services to be enabled manually in system settings; the in-app button just takes you there. On Android 13+ the first activation also shows a system confirmation dialog ("Allow full control of your device") that must be accepted with **Allow**.
-
-## ⚠️ Disclaimer
-
-> **Please read this section carefully before use.**
-
-1. This software is provided "as is", without warranty of any kind, express or implied. The author shall not be liable for any direct or indirect damages arising from the use, misuse, or inability to use this software.
-2. **In Root mode, the engine runs with the highest privilege (uid 0), and commands generated by the AI have full read/write access to the entire device.** The AI may produce erroneous, unexpected, or destructive actions — including but not limited to deleting system files, corrupting partitions, or rendering the device unbootable. **Any device damage, data loss, or warranty void resulting from such actions is the sole responsibility of the user; the author bears no liability whatsoever.**
-3. In Shizuku mode the Agent can perform adb-level operations, which carry similar risks of accidental damage; use your own judgment.
-4. Use this software only on devices **you own or are explicitly authorized to control**. Consequences of using it on unauthorized devices or for unlawful purposes rest entirely with the user.
-5. Root and Shizuku modes are optional. Without them, the Agent is strictly confined to the app sandbox. **If you are unwilling to accept any risk, stay in Normal mode.**
-
-**Installing this app or enabling a high-privilege mode constitutes your acknowledgment that you have read, understood, and accepted all of the above.**
-
-## Feedback
-
-Found a bug or have a feature request? Open an [Issue](https://github.com/Soodok/Deepseek-Harness-Local-Android/issues). For crash reports, please attach the `logcat` output or the engine log available in the app.
-
-## License
-
-[MIT](LICENSE). Runtime components retain their original licenses (MIT / BSD / ISC / Zlib); `@deepseek-ai/dsh` is owned by DeepSeek AI.
-
-This is an independent community project, not affiliated with DeepSeek.
+Repository code is under the [MIT license](LICENSE), retaining the original copyright notices.
+Bundled runtimes, dependencies, and models retain their own licenses. See [credits and distribution notes](docs/CREDITS.md).

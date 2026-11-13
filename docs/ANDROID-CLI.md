@@ -6,7 +6,7 @@
 
 `android` CLI 是我们做 Android 侧工作的首选工具（见根 `AGENTS.md`「Android CLI 优先」）。
 它把「装机 / 看屏幕 / 点控件 / 读布局 / 查文档 / 查 APK / 管 SDK / 管技能」都收在一个命令里，
-比裸 `adb` 快（增量安装、annotated 截图）也更稳（不猜坐标、不猜组件名）。
+装机与截图优先走 CLI；测试工具影响被测能力时，用普通 adb shell 兜底并记录原因。
 
 ## 1. 环境
 
@@ -38,7 +38,7 @@
 
 - 规范：open-standard agent skills（`https://agentskills.io/home`）—— 每个技能是一个目录，核心是 `SKILL.md`，
   frontmatter 至少含 `name` / `description`（官方还有 `license` / `metadata.keywords`），正文写触发条件、工作流、代码骨架、反例。
-- 仓库：`https://github.com/android/skills`（Google 官方，2026-11 时 **36 个技能 / 15 个分类**）：
+- 仓库：`https://github.com/android/skills`（Google 官方）：
   `build-system`、`camera`、`cars`、`device-ai`、`devtools`、`identity`、`jetpack-compose`、`media`、
   `navigation`、`performance`、`play`、`profilers`、`security`、`system`、`testing`、`tv`、`wear`、`xr`。
 - 官方说明：这些技能聚焦「LLM 容易做错的用例与工作流」，不重复模型已擅长的内容（如基础 Compose 写法）。
@@ -54,16 +54,13 @@ android skills add <skill-id>            # 或 --all
 cp -a ~/.claude/skills/<skill-id>/. ~/.dsh/skills/<skill-id>/
 ```
 
-我们已把 36 个官方技能全部装进 `~/.dsh/skills`（与自建技能合计 59 个）。
-
-**软链方案（已启用，免手动同步）**：把 DSH 侧的技能目录指向 Claude 侧，`android skills update` 后自动生效。
+**软链方案（可选，免手动同步）**：把 DSH 侧的技能目录指向 Claude 侧，`android skills update` 后自动生效。
 
 ```bash
 trash ~/.dsh/skills/<skill-id>          # 删掉旧副本（先确认没本地改动）
 ln -s ~/.claude/skills/<skill-id> ~/.dsh/skills/<skill-id>
 ```
 
-已对 `android-cli` 做了这个切换（`android-cli -> /home/hazukie/.claude/skills/android-cli`，可正常读到 SKILL.md）。
 DSH 侧扫描技能时按路径读 `SKILL.md`，`fs.readFile` 会跟随符号链接，所以内容与 Claude 侧实时一致。
 若某天某技能在 DSH 里没被加载，退回 `cp -a` 拷贝即可（保留硬副本，代价是每次 update 要重拷）。
 
@@ -83,3 +80,10 @@ DSH 侧扫描技能时按路径读 `SKILL.md`，`fs.readFile` 会跟随符号链
 - `android skills list --agent=dsh` 不支持（合法 agent 列表里没有 dsh）→ 只能先装到 claude 目录再 `cp -a`。
 - `android layout` / `screen resolve` 首次会往设备装 instrumentation server，设备存储紧张或网络差时要留时间。
 - `android screen capture` 拿到的是真实当前画面（锁屏/黑屏也会如实拍），不要拿它当「App 已在前台」的证据。
+
+- 2026-11-13 在 Android 17 真机验证：`android input` 的
+  `com.android.cli.interact.instrumentation` 持有 UiAutomation 时会使其他无障碍服务解绑。
+  测试 DSH 无障碍手势或 60 秒保活时，先执行
+  `adb -s <serial> shell am force-stop com.android.cli.interact.instrumentation`，
+  再查询 `content://com.termux.adb/state`，确认 `a11yConnected=true` 后开始计时。
+  这类测试用已核实坐标的 `adb shell input` 兜底；关闭助手后不需要 Root。

@@ -7,7 +7,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 
 /**
- * WebView 文件选择器控制器（Phase 1.7 从 MainActivity 提取）。
+ * WebView 文件选择器控制器。
  *
  * `<input type=file>` 请求交给系统 SAF 选择器，结果经 `onActivityResult` 回传。
  *

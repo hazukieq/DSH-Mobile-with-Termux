@@ -1,10 +1,4 @@
-/**
- * dsh-mobile-progress（browser 侧占位，v1.3.97）
- *
- * 进度改由 host 侧插件订阅 agent/assistant-stream / session/event 直推 Android，
- * 不再从 WebUI DOM 抓取。这里只保留 poke 占位，避免 MainActivity 的
- * evaluateJavascript 调用报错。引擎浏览器插件必须走 __ModuleLoader__ 包装。
- */
+/** 浏览器端兼容占位；实际进度由 host 插件订阅引擎事件后推送。 */
 window.__ModuleLoader__.load({
   id: 'dsh-mobile-progress',
   factory: () => {

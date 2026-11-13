@@ -155,7 +155,7 @@ object LanWebProxy {
                 // PREFIX / TMPDIR 等；手写会漏，实测漏 OPENSSL_CONF 导致 node exit=13）
                 val engineEnv: Array<String> = EngineConfig.buildEnv(ctx, EngineConfig.DEFAULT_PORT)
                 // 清掉上一次可能残留的代理进程：否则新进程会撞 EADDRINUSE。
-                // 自己拉起的子进程优先用 destroy（不需要提权），su 兜底覆盖"换进程后残留"。
+                // 自己拉起的子进程优先用 destroy；残留进程按同 UID 和当前授权模式清理。
                 killStaleProxy(ctx)
                 Thread.sleep(600L)   // 给端口释放一点时间（TIME_WAIT）
 
@@ -187,12 +187,12 @@ object LanWebProxy {
                     }
                 }.getOrDefault(false)
                 Log.i(TAG, if (ok) "proxy verified listening on $PORT" else "proxy NOT listening on $PORT (see $logPath)")
-                // v1.2.188：确认端口真的在监听后再弹「已开启」常驻通知 ——
+                // 确认端口真的在监听后再弹「已开启」常驻通知 ——
                 // 否则启动失败也弹，用户会被误导（以为电脑能连上）。
                 // 复查：自检这 1.5s + 600ms 里用户可能已经点了「关闭」/关了开关
                 //（审查 P2：否则陈旧通知会在关闭后又弹出来）
                 if (ok && app.dsh.mobile.DshApp.lanWebEnabled(ctx)) showLanNotice(ctx)
-                // v1.2.188（审查）：旧实现无条件 running.set(false) —— 启动成功后
+                // 旧实现无条件 running.set(false) —— 启动成功后
                 // isRunning() 也为 false，语义错乱。按自检结果落位。
                 // 复查偏好：自检成功但用户已关闭（或 stop() 恰好落在自检后、
                 // 本句前）→ 不置 running=true，避免"已关闭却挡住下次启动"。
@@ -211,7 +211,7 @@ object LanWebProxy {
      * su 闸门会拒绝（gate: mode=SHIZUKU, su denied），于是 pkill 从未生效 →
      * 旧代理进程一直占着 3090、用**旧的验证码**服务 → 用户输新码永远打不开
      * （实测症状：日志刷 "port 3090 busy, retrying"）。
-     * 现在：**Shizuku 通道优先**（adb 身份，能杀 app 自己的进程），su 兜底。
+     * 现在：先清理同 UID 残留，再按所选模式使用 Shizuku 或 Root，不跨模式回退。
      */
     private fun killStaleProxy(ctx: android.content.Context) {
         val cmd = "pkill -f lan-web-proxy 2>/dev/null; echo done"
@@ -229,10 +229,10 @@ object LanWebProxy {
         if (c != null) runCatching { c.destroyForcibly() }
         // ② Shizuku（换进程后旧代理可能不属于本进程树；adb 身份可能无权限，仅兜底）
         runCatching {
-            if (Privilege.shizukuUsable()) Privilege.shizukuExec(ctx, cmd)
+            if (Privilege.getMode(ctx) == PrivMode.SHIZUKU && Privilege.shizukuUsable()) Privilege.shizukuExec(ctx, cmd)
         }
         // ③ su（root 模式）
-        runCatching { Privilege.runSu(cmd) }
+        if (Privilege.getMode(ctx) == PrivMode.ROOT) runCatching { Privilege.runSu(cmd) }
         child = null
     }
 
@@ -320,7 +320,7 @@ object LanWebProxy {
 
     fun stop() {
         running.set(false)
-        // v1.2.188：关掉代理时同步撤掉「已开启」常驻通知
+        // 关掉代理时同步撤掉「已开启」常驻通知
         //（覆盖三种入口：设置页开关、通知里的「关闭」按钮、引擎退出一并停代理）
         appCtx?.let { hideLanNotice(it) }
         // ⚠️ v1.2.160 实测修复（用户反馈"关掉开关后电脑仍能访问"）：

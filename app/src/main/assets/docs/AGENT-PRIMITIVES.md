@@ -168,3 +168,13 @@ POST /act
 | `action_detail` | `op:"transient"` 成功回执 | `{from:[x,y], to:[x,y], duration_ms}`：对「命中控件后在预算内完成的那次动作」的参数留痕。 |
 
 判断「时长到底透传没透传」的正确姿势：看 `gesture.duration_ms`（或 `action_detail.duration_ms`），**不要**看 `elapsedMs`。
+
+## 滚动排障（v2.9.43，来自 retro-alarm-scroll 复盘）
+
+| 现象 | 先用的手段 | 回执要看的字段 |
+|---|---|---|
+| 不知道往哪滚 | `op:"scroll-probe"` 两个方向各一次 | `first_before` / `first_after` / `content_changed`（不要只看 `moved`） |
+| 长列表粗定位 | `op:"scroll-node"` `direction:"forward"/"backward"` `count<=12` | `via`（`none` = 无滚动容器，换手势）/ `steps` |
+| 中距离定位 | `POST /scroll-center {"text":…,"maxSwipes":<=6}`，可重复调用 | `ok` / `capped`（一次只滚 6 拍，别塞 40） |
+| swipe 回执 ok 但画面不动 | 看 `/gesture` 回执 | `ownOverlay:true` → 起手点在自家悬浮窗上；改起点或 `hideOverlay:true` |
+| 一批动作要连续滚动 | `POST /act {"steps":[…],"hideOverlay":true}` | 整批期间悬浮窗 `FLAG_NOT_TOUCHABLE`，结束自动复位 |

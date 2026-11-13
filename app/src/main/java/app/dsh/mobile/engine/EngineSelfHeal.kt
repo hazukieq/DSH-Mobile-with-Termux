@@ -5,7 +5,7 @@ import java.io.File
 
 /**
  * 启动期自愈：Termux shebang 修复、内置 pnpm、门脚本补装、移动端 UI 重置
- * （从 EngineConfig 拆出，Phase 3）。全部幂等，失败只记日志不阻断启动。
+ * 。全部幂等，失败只记日志不阻断启动。
  */
 internal object EngineSelfHeal {
 

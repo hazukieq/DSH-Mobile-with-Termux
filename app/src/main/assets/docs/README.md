@@ -1,47 +1,37 @@
-# docs 索引
+# 文档索引
 
-> 这份目录随 App 打包（当前 22 篇）：安装/升级后在设备上用 `docs` 门读（`docs` 列目录、
-> `docs ACCESSIBILITY` 打印单篇），落盘位置 `$DSH_HOME/docs`，每次 App 更新按内容比对自动刷新。
-> 想立刻拿到仓库最新文档而不用等发版：`docs --fetch`（可加 `--dry-run` 先看差异，
-> 或 `docs --fetch v2.5.52` 指定 tag/branch）；它是覆盖式更新，**不删**仓库里已没有的本地文件。
-> **不随包**的只有两类：`CREDITS.md`（许可与分发义务，仓库内查阅；`docs --fetch` 会一并拉下来，
-> 便于离线看许可证）与 `testing/`（仓库内的回归实测记录）。
+App 内 agent 首读 `assets/agents/DSH-MOBILE.md`。随包文档以
+`app/src/main/assets/docs/` 为准，安装后部署到 `$DSH_HOME/docs`，升级时按内容刷新。
+设备内用 `docs` 列目录，`docs ACCESSIBILITY` 阅读单篇。
+`docs --fetch [tag或分支]` 从仓库更新文档，`--dry-run` 预览差异；更新不会删除本地旧文件。
 
-App 内置文档是 `app/src/main/assets/agents/DSH-MOBILE.md`（agent 首读）；这里放细节展开与实测记录。
-按问题找文件：
+## 使用说明（随包）
 
-## 能做什么 / 怎么用
-- `ACCESSIBILITY.md` · `ACCESSIBILITY.en.md` —— 无障碍能力全景：端点语义、坐标 tap 语义与回归修复、
-  §8.7 `ownOverlay` 命中与绕行、§9 能力矩阵、§10 回执必读 / 坐标来源两条纪律。
-- `CLICK_CHAIN_UPGRADE.md` —— 多步点击链的写法与失败重试策略。
-- 依赖许可与分发义务见仓库根 `docs/CREDITS.md`（**不随包**，不上机）。
-- `DEVELOPMENT-ENV.md` —— **开发工具与环境配置**：主机/设备工具与版本、构建与签名变量、
-  引擎层构建链、交叉编译、验收与审计入口、镜像与代理、环境变量总表、从零搭环境与踩坑对照。
-- `CROSS_COMPILE.md` —— 交叉编译指南：Android 上没有 wheel 的 Python 包（C/C++/Rust 扩展）如何在设备内或主机 NDK 上编出来。
-- `android-agent-routes.md` · `android-agent-routes.zh.md` —— AgentBridge 路由清单（端点级）。
-- `A11Y-SCOPE.md` · `A11Y-SCOPE.en.md` —— 无障碍服务的边界：哪些操作需要它、哪些绝不需要。
+- `ACCESSIBILITY.md` / `.en.md`：读屏、点击、坐标与回执。
+- `A11Y-SCOPE.md` / `.en.md`：无障碍依赖边界。
+- `CLICK_CHAIN_UPGRADE.md`：点击链、OCR、事务操作。
+- `android-agent-routes.md` / `.zh.md`：Android 运行环境与交付方式。
+- `AGENT-PRIMITIVES.md`：动作原语。
+- `PROGRESS_OVERLAY.md`：后台进度与浮窗使用。
+- `OVERLAY.md`：浮窗当前行为、生命周期与避让约束。
+- `NOTIFICATIONS.md` / `.en.md`：通知读取与发送。
+- `PAYMENT-LINKS.md`：支付链接交接。
+- `TERMINAL_AND_LINUX.md` / `.en.md`：内置终端与 Termux 环境。
+- `LAN_WEBUI.md` / `.en.md`：局域网代理。
+- `ENGINE_RESTART.md`：受控引擎重启与返回行为。
+- `ENGINE-BUILD.md`、`CROSS_COMPILE.md`：引擎闭包与原生依赖构建。
+- `DEVELOPMENT-ENV.md`：构建环境与验证入口。
+- `FAST_PATH_PICKER.md`：精确/语义选择与可选本地模型。
+- `SECURITY-AUDIT.md`：权限、组件、网络面与验证方法。
+- `translation-mapping.md`：翻译映射。
 
-## 通知 / 悬浮窗 / 支付跳转
-- `NOTIFICATIONS.md` · `NOTIFICATIONS.en.md` —— 通知栏读写、shade 场景。
-- `PROGRESS_OVERLAY.md` —— 悬浮窗进度与折叠布局。
-- `OVERLAY.md` —— 悬浮窗（StatusOverlay）结构与解耦约束、三形态、回归清单。
-- `AGENT-PRIMITIVES.md` —— App Agent 自动化原语，统一走 `POST /act` 的 steps（`op`: motion / scroll-probe / drag-fast / skip / transient）。
-- `PAYMENT-LINKS.md` —— 支付宝/微信支付链接与 `intent://` 改写。
+## 仓库开发与证据（不随包）
 
-## 终端 / 引擎 / 网络
-- `ENGINE-BUILD.md` —— 引擎层构建：§1 只换 JS 闭包（20 秒滚动升级）、§2 Android 独有库
-  十字编（NDK / C++ / Rust / Python / N-API + bionic 错误对照表）、§3 收集 Termux 运行时。
-- `TERMINAL_AND_LINUX.md` · `TERMINAL_AND_LINUX.en.md` —— 内置终端（PTY / VT100，与 AI 同环境）。
-- `ENGINE_RESTART.md` —— 引擎重启与 WebView 返回栈。
-- `LAN_WEBUI.md` · `LAN_WEBUI.en.md` —— 局域网 WebUI 与代理。
+- `ANDROID-CLI.md`：本项目 android CLI 使用约定。
+- 根目录 `refactor_guide.md`、`code_review.md`：当前模块边界与审计记录。
+- `ADB-DEBUG-CHANNEL.md`：主机调试桥接通道。
+- `CREDITS.md`：许可与分发说明。
+- `qa/`：带设备/版本范围的回归证据，不是当前实现规范。
+- `APP-CASES/`：场景示例；`promo/`：宣传素材与生成脚本。
 
-## 安全 / 审计
-- `SECURITY-AUDIT.md` —— 权限表、对外组件、网络面、数据落盘、供应链校验、审计 prompt。
-  取证脚本在**仓库**里（不随包）：`scripts/audit-apk.sh` + `scripts/lib/manifest-components.py`；
-  手机上要跑就先 `pkg install git` 再 `git clone` 本仓库（或直接在 PC 上跑）。
-
-## 实测记录（回归证据，按日期）
-- 仅仓库内 `testing/`（**不随包**）：一个主题一份，含设备/版本/方法/结论。
-
-## 发布
-- 根目录 `README.md` 的「安装」段与 GitHub Releases；版本号与改动见 release notes。
+安装、构建与发布入口见仓库根目录 `README.md`；历史版本变更见对应 release notes。

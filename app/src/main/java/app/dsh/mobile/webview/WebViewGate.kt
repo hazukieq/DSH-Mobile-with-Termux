@@ -9,7 +9,7 @@ import app.dsh.mobile.AppGate
 import app.dsh.mobile.R
 
 /**
- * Web 内核版本门禁（Phase 1.4 从 MainActivity 提取，v1.2.100 逻辑原样）。
+ * Web 内核版本门禁。
  *
  * ## 为什么需要
  * 引擎前端用了 `??=` / 类字段等**解析期**语法（Chrome 85+），polyfill 只能补

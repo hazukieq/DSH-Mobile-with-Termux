@@ -1,5 +1,7 @@
 # 悬浮窗闪烁 / 输入可达性：真机取证判据
 
+> 历史取证记录：结论仅适用于文中设备、版本和采样范围。当前行为与维护约束见相关使用文档；旧行号和临时文件路径不代表当前工作区。
+
 > 真机：`5f08bc20` / M2012K11AC（alioth）/ **LineageOS 23.2 = Android 16 (SDK 36)** / build `BP4A.251205.006` / userdebug / Magisk root（`su -c id` → `uid=0(root) context=u:r:magisk:s0`）。
 > 被测：`com.termux`（本轮覆盖 2.9.64/635 → 2.9.74/643）。悬浮窗 type **两种都可能**：
 > **`TYPE_APPLICATION_OVERLAY`（2038）** 当 app 已获 `SYSTEM_ALERT_WINDOW`（重装后通常已在）——

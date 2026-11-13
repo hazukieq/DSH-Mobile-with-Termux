@@ -371,7 +371,7 @@ CC=$CC CFLAGS="$CFLAGS" LDSHARED="$CC -shared" \
 
 - 上游 npm 包里自带的 `*.node`（如 `koffi`、`node-pty`、`sherpa-onnx`）基本都是 glibc x64/arm64 预编译，
   **在 bionic 上不可 dlopen**；本项目用纯 JS 兜底或直接不用；
-- CI 在 x86_64 上 `npm install` 会按宿主平台装 `*-linux-x64` 的 optional 包，必须删掉
+- 宿主机在 x86_64 上 `npm install` 会按宿主平台装 `*-linux-x64` 的 optional 包，必须删掉
   （`collect-termux-runtime.sh` 里已显式 `rm -rf sharp-linux-x64 / sherpa-onnx-linux-x64 / …`），
   否则白占 ~50MB 且永远加载不了。
 

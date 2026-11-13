@@ -37,7 +37,7 @@ import app.dsh.mobile.engine.TtsManager
 import app.dsh.mobile.engine.AgentBridge
 
 /**
- * AppHandler：Phase 2 从 AgentBridge 拆出的端点组（成员原样迁移，行为不变）。
+ * AppHandler：对应能力的桥端点实现。
  *
  * 函数体包 `with(bridge)`，因此原文件里对 AgentBridge 成员的裸引用不用改名；
  * 跨组裸调用由本包的 AgentBridge 扩展别名（CrossCalls.kt）兜住。
@@ -222,7 +222,7 @@ internal class AppHandler(private val bridge: AgentBridge) {
         }
         val waited = android.os.SystemClock.elapsedRealtime() - startedAt
         val changed = after != null && before != null && after != before
-        // v2.5.6：跳转别的 App（微信/支付宝/浏览器…）→ 写进悬浮窗第④段动作链
+        // 跳转别的 App（微信/支付宝/浏览器…）→ 写进悬浮窗独立动作行
         noteOpen(ctx, launched)
         return 200 to JSONObject().apply {
             put("ok", true)
@@ -687,7 +687,7 @@ internal class AppHandler(private val bridge: AgentBridge) {
         }
     }
 
-    internal fun webViewDebugEnabled(ctx: android.content.Context): Boolean = with(bridge) { 
+    internal fun webViewDebugEnabled(ctx: android.content.Context): Boolean = with(bridge) {
         runCatching {
             ctx.getExternalFilesDir(null)?.let { java.io.File(it, "webview-debug-off") }?.isFile != true
         }.getOrDefault(true)
@@ -713,7 +713,7 @@ internal class AppHandler(private val bridge: AgentBridge) {
 
     internal fun engineRestart(ctx: Context, body: String = ""): Pair<Int, String> {
         with(bridge) {
-        // v1.7.1：支持 body {"delayMs":N}（0..30000，默认 500）。dsh-update 用 8000ms，
+        // 支持 body {"delayMs":N}（0..30000，默认 500）。dsh-update 用 8000ms，
         // 让门脚本先打印结果、agent 先回复，再真正停引擎——否则调用方随引擎一起被杀，
         // 用户看到的就是「命令没反应」。
         val delayMs = runCatching {

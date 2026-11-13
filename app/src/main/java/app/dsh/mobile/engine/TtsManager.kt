@@ -74,7 +74,7 @@ object TtsManager {
         if (clean.isEmpty()) return "empty text"
 
         // Edge 神经网络语音优先（v1.2.78）：**客户端直连微软，不经任何中转服务器**
-        // （主人决策：中转服务器不保险）。失败自动回落系统 TTS，不会彻底没声音。
+        // （设计约定：中转服务器不保险）。失败自动回落系统 TTS，不会彻底没声音。
         if (EdgeTts.enabled(ctx)) {
             val r = EdgeTts.speak(ctx, clean, flush)
             if (r.startsWith("edge tts speaking")) return r

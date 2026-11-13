@@ -1,0 +1,69 @@
+Release instrumentation
+INSTRUMENTATION_RESULT: appUid=10278
+INSTRUMENTATION_RESULT: privMode=normal
+INSTRUMENTATION_RESULT: stream=PASS: attach, expand, final frame, overlapping avoidance, callback cleanup, content restore, preview, off, exit/resume
+
+INSTRUMENTATION_CODE: -1
+
+Physical gestures
+PASS: outside long press 1, delivered 4000ms
+PASS: overlap long press 2, delivered 4000ms
+PASS: overlap long press 3, delivered 4000ms
+{"appUid": 10278, "privMode": "normal", "passed": 3}
+
+Exit while accessibility stays connected
+t=4.1s
+Row: 0 key=versionName, value=3.0-alpha-1
+Row: 1 key=pid, value=12666
+Row: 2 key=a11yConnected, value=true
+Row: 3 key=engineRunning, value=false
+Row: 4 key=overlay, value=root=null attached=null live=0 level=1 pos=null,null size=nullxnull flags=0x? touchable=? hideRefs=0 type=0
+Row: 5 key=token, value=ready
+t=36.1s
+Row: 0 key=versionName, value=3.0-alpha-1
+Row: 1 key=pid, value=12666
+Row: 2 key=a11yConnected, value=true
+Row: 3 key=engineRunning, value=false
+Row: 4 key=overlay, value=root=null attached=null live=0 level=1 pos=null,null size=nullxnull flags=0x? touchable=? hideRefs=0 type=0
+Row: 5 key=token, value=ready
+t=73.1s
+Row: 0 key=versionName, value=3.0-alpha-1
+Row: 1 key=pid, value=12666
+Row: 2 key=a11yConnected, value=true
+Row: 3 key=engineRunning, value=false
+Row: 4 key=overlay, value=root=null attached=null live=0 level=1 pos=null,null size=nullxnull flags=0x? touchable=? hideRefs=0 type=0
+Row: 5 key=token, value=ready
+
+Acceptance
+== 1/4 静态门禁
+  OK   i18n 一致性
+  OK   文档端点/子命令
+  OK   开发文档未随包
+  OK   悬浮窗避让边界
+  OK   内置 pnpm 完整性
+  OK   JVM 单测
+== 2/4 构建 release APK
+  SKIP (--skip-build)
+== 3/4 APK 断言
+  OK   包名/版本/ABI
+  OK   引擎层资产
+  OK   mobile-ui 已移除
+  OK   产物文档
+  OK   无开发文档
+
+PASS (11 项)
+
+Release JVM: 23 tests, 0 failures, 0 errors
+Progress stream: 40 frames, 0 new hide logs; final frame 40/40 visually verified
+Native capture: via=composite, 1080x2400
+
+Final clean startup
+Row: 0 key=versionName, value=3.0-alpha-1
+Row: 1 key=pid, value=14035
+Row: 2 key=a11yConnected, value=true
+Row: 3 key=engineRunning, value=true
+Row: 4 key=overlay, value=root=62043092 attached=true live=1 level=0 pos=959,330 size=99x99 flags=0x1000028 touchable=true hideRefs=0 type=2032
+Row: 5 key=token, value=ready
+u0_a278      14035  1048 com.termux
+u0_a278      14250 14035 node-bin
+PrivMode=normal; SYSTEM_ALERT_WINDOW=allow; test APK uninstalled; CLI input helper stopped

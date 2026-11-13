@@ -18,21 +18,12 @@ import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.roundToInt
 
-/**
- * 仿系统「验证码已复制」提示条（v1.2.162）。
- *
- * ## 为什么用 Activity 内浮层，而不是系统浮层
- * 用户实测：无障碍通道（TYPE_ACCESSIBILITY_OVERLAY）依赖服务在位——重装 APK 后系统会
- * 停用无障碍，浮层就不出现；退化成 Toast 又被系统限流（日志 "Toast already killed"），
- * 结果**什么都看不到**。用户明确要求："这种东西应该不用依赖无障碍服务吧？就是弄个伪弹窗"。
- *
- * 正解：**直接加在当前 Activity 的窗口里**（`addContentView`）——零权限、零依赖、
- * 必定可见，长得和系统验证码提示条一样。离开设置页时视图随 Activity 一起销毁，无残留。
- */
+/** Activity 内的访问码提示条，无需系统悬浮窗或无障碍权限。 */
 object CodeToast {
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var current: View? = null
+    private var dismissTask: Runnable? = null
 
     /**
      * 在 [activity] 顶部显示"验证码已复制"提示条。
@@ -40,11 +31,9 @@ object CodeToast {
      * @param host 可选的访问地址（显示在验证码下方）
      */
     fun show(activity: Activity, code: String, host: String? = null) {
-        // ⚠️ v1.2.162 实测修复（用户反馈"完全没弹窗"）：这里原本 `main.post{}` 包一层，
-        // 而 dismiss() 内部**也**是 post —— 于是 show 里那句 dismiss() 被排到
-        // "addContentView 之后"才执行，等于**刚加进去就被删掉**（只闪现一帧，肉眼看不到）。
-        // 改为：已在主线程则同步执行，避免这类"自己删自己"的时序坑。
+        // show/dismiss 在主线程同步执行，防止旧的 dismiss 排在新窗口创建之后。
         mainThread {
+            if (activity.isFinishing || activity.isDestroyed) return@mainThread
             runCatching {
                 dismiss()
                 val v = buildView(activity, code, host)
@@ -59,8 +48,10 @@ object CodeToast {
                 // 加在 Activity 内容之上（decorView 的 content 层）——无需任何权限
                 activity.addContentView(v, lp)
                 current = v
-                android.util.Log.i("CodeToast", "shown code=$code host=$host")
-                main.postDelayed({ dismiss() }, 9_000L)
+                android.util.Log.i("CodeToast", "access code notice shown")
+                val task = Runnable { dismiss() }
+                dismissTask = task
+                main.postDelayed(task, 9_000L)
             }.onFailure {
                 android.util.Log.w("CodeToast", "addContentView failed: ${it.message}")
                 // 最后兜底：Toast（至少要有反馈）
@@ -73,6 +64,8 @@ object CodeToast {
 
     fun dismiss() {
         mainThread {
+            dismissTask?.let { main.removeCallbacks(it) }
+            dismissTask = null
             runCatching {
                 (current?.parent as? ViewGroup)?.removeView(current)
             }

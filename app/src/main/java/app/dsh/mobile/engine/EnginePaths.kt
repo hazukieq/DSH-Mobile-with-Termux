@@ -5,7 +5,7 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * 引擎目录拓扑与用户数据位置（从 EngineConfig 拆出，Phase 3）。
+ * 引擎目录拓扑与用户数据位置。
  *
  * 只负责「路径怎么算、数据放哪儿、外置目录怎么软链」；运行时启动、环境变量、
  * Android overlay 各自有独立协作者。EngineConfig 保留原公开入口做薄委托，
@@ -38,7 +38,7 @@ internal object EnginePaths {
      * 而实际 `listFiles()` / 读取会被拒绝 —— 实测（模拟器）：
      *   `canWrite()=true` 但 `ls /storage/emulated/0/Android/data/<pkg>/files/` → Permission denied
      * 只看 canWrite 就采用该目录，会造成「报告成功、实际读不到」的静默失败
-     * （主人实测：悬浮条永远空白且无任何错误日志）。
+     * （设备实测：悬浮条永远空白且无任何错误日志）。
      */
     private fun isDirUsable(dir: File): Boolean = runCatching {
         val probe = File(dir, ".dsh-probe")
@@ -50,12 +50,12 @@ internal object EnginePaths {
     }.getOrDefault(false)
 
     private fun publicDataRoot(ctx: android.content.Context): File? = runCatching {
-        // ⚠️ v1.2.110：**Documents 升为首选**（用户反馈：卸载重装后对话无法恢复）。
+        // **Documents 升为首选**（用户反馈：卸载重装后对话无法恢复）。
         // 旧首选 `Android/data/<pkg>/files` 在**卸载时被系统清除**：覆盖升级数据在，
         // 卸载重装全丢 —— 已有人实际遇到。`Documents/` 是共享存储，卸载后保留。
         // 代价是需要 MANAGE_EXTERNAL_STORAGE（设置页「权限中心」可授）；未授权时
         // 探针失败自动回退 app external（至少保证覆盖升级不丢数据）。
-        //
+
         // 探针为什么必须用「写入→读回→列目录」三步（isDirUsable）而不是 canWrite：
         // Android 11+ 的 FUSE（scoped storage）下 canWrite() 可能返回 true 而实际
         // list()/读取被拒（文件属 media_rw 组、mode 660）—— 历史踩坑两次：
@@ -150,7 +150,7 @@ internal object EnginePaths {
             "externalise $name: pub=${pub.absolutePath} link=$isLink privExists=${priv.exists()} privFiles=${runCatching { priv.list()?.size }.getOrNull()}",
         )
 
-        // ⚠️ v1.2.110：pubRoot 变更（app external → Documents）后，软链还指向旧位置、
+        // pubRoot 变更（app external → Documents）后，软链还指向旧位置、
         // 数据也还躺在旧位置 —— 必须「重指向 + 搬数据」两步都做，否则会话继续写旧
         // 位置，卸载重装依然全丢（用户反馈「删了应用重新下回来对话无法恢复」）。
         // ① 重指向：软链目标与当前 pub 不一致 → 删旧软链重建（数据在目标目录里，删链不删数据）
@@ -232,7 +232,7 @@ internal object EnginePaths {
                 " " + q + "$pub" + q +
                 " 2>/dev/null; chmod -R u+rwX " + q + "$pub" + q +
                 " 2>/dev/null; echo ok"
-            val fixed = runCatching { Privilege.runSu(suCmd)?.contains("ok") == true }
+            val fixed = Privilege.getMode(ctx) == PrivMode.ROOT && runCatching { Privilege.runSu(suCmd)?.contains("ok") == true }
                 .onFailure { Log.w(EngineConfig.TAG, "$name: su chown failed: ${it.message}") }
                 .getOrDefault(false)
             val retried = fixed && runCatching {
@@ -258,7 +258,7 @@ internal object EnginePaths {
         if (isLink && pub.exists()) return true
 
         // ---- 迁移：把私有目录的真实数据搬到公开位置 ----
-        //
+
         // ⚠️ v1.2.100 二次修复（独立审查发现的数据丢失风险）：
         // 旧实现的条件是 `!pub.exists()`，且删 priv 前**不核对内容**。两条丢数据路径：
         //  ① 上次迁移中途失败（ENOSPC/IO）→ pub 残留部分数据、priv 仍是全量。
@@ -270,7 +270,7 @@ internal object EnginePaths {
         Log.i(EngineConfig.TAG, "externalise $name: privHasData=$privHasData (list=${runCatching { priv.list()?.joinToString() }.getOrNull()})")
         if (privHasData) {
             runCatching {
-                // ⚠️ v1.2.111：**逐文件合并**取代 copyRecursively(overwrite=false)。
+                // **逐文件合并**取代 copyRecursively(overwrite=false)。
                 // 实测踩坑：pub 里已存在同名文件时 copyRecursively 抛
                 // FileAlreadyExistsException 中断整次迁移 → sessions 整个不外置，
                 // 数据留在私有目录（sessions=false）→ 卸载重装即丢。
@@ -338,7 +338,7 @@ internal object EnginePaths {
     }
 
     /**
-     * v1.2.110：旧首选外置位置（app external，卸载即被系统清除）。
+     * 旧首选外置位置（app external，卸载即被系统清除）。
      * 仅用于升级迁移检测 —— pubRoot 从它改为 Documents 后，把残留数据搬过去。
      */
     private fun legacyPublicRoot(ctx: android.content.Context): File? = runCatching {
@@ -356,7 +356,7 @@ internal object EnginePaths {
             File(ctx.filesDir, "dsh-home").mkdirs()
             val a = externaliseSubdir(ctx, "sessions")
             val b = externaliseSubdir(ctx, "workspaces")
-            // v2.3.0：工作区/回收站加 .nomedia，避免内部产物被系统相册扫描
+            // 工作区/回收站加 .nomedia，避免内部产物被系统相册扫描
             MediaHygiene.ensureAll(ctx)
             // ⚠️ 迁移后必须把 storages/workspace.json 里的 path 改成**规范真实路径**。
             // 原因（issue-workspace-migration-canonical-path）：引擎给会话 cwd 做 fs.realpath

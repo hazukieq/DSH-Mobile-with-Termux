@@ -33,8 +33,6 @@ class OnboardingActivity : Activity() {
     private var pendingAllFiles = false
     private var allFilesAsked = false
 
-
-
     private var selectedOrientation: OrientationMode = OrientationMode.PORTRAIT
     private var selectedPriv = PrivMode.NORMAL
     private var selectedLang = LocaleHelper.DEFAULT
@@ -102,17 +100,9 @@ class OnboardingActivity : Activity() {
         }
         privGroup.check(R.id.privNormal)
 
-        // 能力检测（Root 用 su 实测；Shizuku 用官方 binder ping + 授权态）
-        //
-        // ⚠️ v1.2.100：**移到后台线程**。probeRoot 最坏要依次试 3 种 su 语法、
-        // 每种 2s 超时（首次还会弹 Magisk 授权框），放主线程最坏阻塞 6s+ → ANR 风险。
-        // 先显示「检测中」，结果回填 UI。
-        findViewById<TextView>(R.id.capRoot).apply {
-            text = getString(R.string.ob_cap_root_checking)
-            setTextColor(0xFF6B7280.toInt())
-        }
+        // 首屏只读 Root 存在线索，不在用户选择前执行 su 探测。
         Thread({
-            val hasRoot = Privilege.probe(this).hasRoot
+            val hasRoot = Privilege.rootAvailableMinimal()
             runOnUiThread {
                 findViewById<TextView>(R.id.capRoot).apply {
                     text = getString(
@@ -152,7 +142,7 @@ class OnboardingActivity : Activity() {
     }
 
     /** 返回键：以普通模式完成引导进入主界面，绝不卡死 */
-    @Deprecated("Deprecated in Java")
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onBackPressed() {
         commit()
     }

@@ -4,7 +4,7 @@ import android.util.Log
 import java.io.File
 
 /**
- * 引擎子进程环境变量构建（从 EngineConfig 拆出，Phase 3）。
+ * 引擎子进程环境变量构建。
  *
  * buildEnv 是引擎与终端共用的唯一环境来源：PATH / LD_LIBRARY_PATH / DSH_HOME /
  * 权限模式闸门（su / shz）都在这里拼装。EngineConfig.buildEnv 保留薄委托。
@@ -16,7 +16,7 @@ internal object EngineEnvBuilder {
      *
      * 首选自带 bash（`<EngineConfig.engineRoot>/bin/bash`，门脚本与 /dev/tcp 都依赖 bash 特性）；
      * 若因解压不完整等原因缺失，退回 runtime 里的 `bin/sh`，再退回系统 toybox sh。
-     * 绝不返回 Termux 前缀——那条路径在本机永远不存在。
+     * Termux 前缀缺少可执行 shell 时才回退到系统 shell。
      */
     private fun shellPathFor(root: File): String {
         val bash = File(root, "bin/bash")
@@ -48,14 +48,14 @@ internal object EngineEnvBuilder {
         // m1.30：Shizuku 模式注入 shz 包装器（AI 显式 `shz <adb命令>` 走 ADB 级执行）；
         // 其他模式删除，AI 调 shz 将无命令。
         applyShzGate(root, privMode, port)
-        // v1.1.0：notify/scr 包装器（所有模式可用——通知与无障碍是 App 自身能力，
+        // notify/scr 包装器（所有模式可用——通知与无障碍是 App 自身能力，
         // 经 AgentBridge 127.0.0.1:3083 转发）。
         AndroidOverlay.applyAgentGates(ctx, root)
         // 运行时 overlay（2026-10-18）：把 assets/runtime-overlay 覆盖进引擎根。
         // 当前只有一项 —— node-pty 的**真**实现（转发到 App 的 libdshpty.so），
         // 替换构建期那个「spawn() 直接 throw」的空壳，WebUI 侧边栏终端才能用。
         AndroidOverlay.applyRuntimeOverlays(ctx, root)
-        // v2.5.45：补齐 npm/pnpm/corepack 入口。运行时只带 node + corepack 本体
+        // 补齐 npm/pnpm/corepack 入口。运行时只带 node + corepack 本体
         // （lib/node_modules/corepack），bin/ 里没有 npm/pnpm/npx，导致 dsh-market
         // 的自动配置与 `dsh plugin add` 全部报「找不到 npm/corepack」。
         AndroidOverlay.ensureNodeTooling(ctx, root)

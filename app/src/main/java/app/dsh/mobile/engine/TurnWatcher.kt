@@ -99,7 +99,7 @@ object TurnWatcher {
         val logs = root.walkTopDown()
             .maxDepth(4)
             .filter {
-            // v1.2.105：与 SessionTail 同步放宽（.json.zstd 也收）
+            // 与 SessionTail 同步放宽（.json.zstd 也收）
             it.isFile && (it.name.endsWith(".jsonl") || it.name.endsWith(".jsonl.zstd") ||
                 it.name.endsWith(".json.zstd"))
         }
@@ -181,7 +181,6 @@ object TurnWatcher {
         repeat(hits) { onTurnEnd(f.name) }
     }
 
-
     /** 已处理过的 zstd 会话文件签名（路径 → 解压后内容长度），避免重复上报 */
     private val zstdSeen = HashMap<String, Int>()
 
@@ -202,7 +201,7 @@ object TurnWatcher {
         synchronized(zstdMtime) { zstdMtime[key] = stamp }
         if (prev != null && prev == stamp) return
 
-        // v1.2.105：改用共享的多帧解压（旧实现只吃第一帧 = header，什么都没读到）。
+        // 改用共享的多帧解压（旧实现只吃第一帧 = header，什么都没读到）。
         // **必须全解**（keepFrames=0）：下面按「解压后文本长度」判断有无新增，
         // 只解尾部帧会让长度不再单调增长，turn/end 检测会静默失效。
         val text = ZstdTail.read(ctx, f, keepFrames = 0).first ?: return
@@ -219,7 +218,6 @@ object TurnWatcher {
         }
         repeat(hits) { onTurnEnd(f.name) }
     }
-
 
     /**
      * 该行是否为 `turn/end` 事件。

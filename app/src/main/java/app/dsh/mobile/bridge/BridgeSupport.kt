@@ -3,7 +3,7 @@ package app.dsh.mobile.bridge
 import org.json.JSONObject
 
 /**
- * 桥处理器共用的小工具（Phase 2 拆分时从 AgentBridge 提出）。
+ * 桥处理器共用的小工具。
  *
  * 只放「纯函数、无状态、无 Context」的东西：query 解析、202/409 回执、URL 解码。
  * AgentBridge 里保留同名私有方法做一行委托，调用点不用改。

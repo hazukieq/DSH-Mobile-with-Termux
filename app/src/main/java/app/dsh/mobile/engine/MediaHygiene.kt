@@ -9,8 +9,7 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * v2.3.0（ISSUE-工作区与回收站不应被相册扫描）：
- *
+ * *
  * - 工作区根与回收站根自动放 `.nomedia`（目录级屏蔽整棵子树的 images/video/audio 索引）；
  * - 提供唯一“导出给用户”出口：默认 `Download/DSH/`，仅对可见目标触发 MediaScanner；
  *   用户指定 `pictures` 时才进相册目录，`custom:<dir>` 不触发扫描。

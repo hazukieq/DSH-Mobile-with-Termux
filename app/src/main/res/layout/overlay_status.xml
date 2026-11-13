@@ -1,10 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  悬浮窗布局（2026-11 重写版）：一个文件描述两种形态。
-  · 折叠态：只显示 overlayBallDot，窗口由 applyWindowSize() 固定成正方形。
-  · 展开态：overlayRow = [dot] + [可滚动文字]；空闲时滚动区贴合文字，工作时固定 92dp。
-  尺寸一律 wrap_content，窗口大小由 StatusOverlay.applyWindowSize() 决定，本文件不再写死宽度。
--->
+<!-- 折叠球与展开卡片共用布局；StatusOverlay 控制窗口尺寸与固定 92dp 正文高度。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/overlayRoot"
     android:layout_width="wrap_content"
@@ -63,7 +58,7 @@
         </ScrollView>
     </LinearLayout>
 
-    <!-- 无障碍分类行（仅工作态显示） -->
+    <!-- 动作行：展开且有内容时显示 -->
     <TextView
         android:id="@+id/overlayA11y"
         android:layout_width="match_parent"
@@ -76,7 +71,7 @@
         android:textColor="#8FA0B8"
         android:visibility="gone" />
 
-    <!-- 底部行：会话标题 + 耗时（仅工作态显示） -->
+    <!-- 底部行：展开时显示会话标题与耗时 -->
     <LinearLayout
         android:id="@+id/overlayFoot"
         android:layout_width="match_parent"

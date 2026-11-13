@@ -212,7 +212,7 @@ class EngineSupervisor(private val ctx: Context) {
         loopJob?.cancel()
         process?.stop(graceMs)
         process = null
-        // v1.2.188（审查 P2）：stop() 只 cancel 不 join 监督循环 —— 若恰好在
+        // stop() 只 cancel 不 join 监督循环 —— 若恰好在
         // spawnEngine() 的阻塞段里，已 fork 的 node 可能没有引用、无人 stop。
         // 这里补一次孤儿清理（端口占用检测 + 同 uid pkill），覆盖该窗口。
         runCatching { cleanupOrphanEngine() }
@@ -357,7 +357,7 @@ class EngineSupervisor(private val ctx: Context) {
                 step("bridge")
 
                 // 属性自愈（v1.3.1 扩展到**所有模式**，含 Root）。
-                //
+
                 // ⚠️ 旧实现只在非 Root 模式跑（`mode != ROOT`），漏掉了两类真实故障
                 // （用户反馈「安卓 11 上异常退出后无法使用，删掉重装又好了」）：
                 //   · Root 引擎以 uid 0 写出的文件属主是 root，而 **App 自己**（非 root）
@@ -505,7 +505,7 @@ class EngineSupervisor(private val ctx: Context) {
             } catch (e: EngineStartException) {
                 if (userStop) break
                 Log.e(TAG, "supervision failure", e)
-                // ⚠️ v1.3.1：su 探测失败（"no usable su"）是**环境瞬时问题**，不是坏配置。
+                // su 探测失败（"no usable su"）是**环境瞬时问题**，不是坏配置。
                 // 场景：App 被强杀后立刻重启，magiskd 对该 app 的 su 会话尚未重建、
                 // 或设备刚开机 daemon 还没就绪 —— 三个探针各 2s 超时 → usableSuPrefix()
                 // 返回 null。旧实现把它当确定性崩溃计入 guardian（签名 "null:<hash>"），
@@ -689,7 +689,7 @@ class EngineSupervisor(private val ctx: Context) {
     private fun inode_matches(ino: String, set: Set<String>) = set.contains(ino)
 
     /**
-     * v1.6.3：杀掉**不是本 App 引擎子进程**、却占着引擎端口的进程。
+     * 杀掉**不是本 App 引擎子进程**、却占着引擎端口的进程。
      *
      * 背景（issue: dshmarket 立即重启与 EngineService 竞争）：市场 helper 会 SIGTERM 当前
      * host 并 detached spawn 一个自己的 `dsh web`；本 App 监督器同时重启受管引擎，两者
@@ -709,7 +709,6 @@ class EngineSupervisor(private val ctx: Context) {
     /**
      * 等端口释放（最多 ms），避免刚 kill 完立刻 spawn 又撞 EADDRINUSE。
      *
-     * Phase 0.3：原实现用 `Thread.sleep` 轮询，会**阻塞所在工作线程且不可取消**
      * （引擎重启时若正好在等端口，协程取消要等到下一次 sleep 返回才生效）。
      * 改成 suspend + `delay`：同样 100 ms 间隔，但让线程空出来、可被取消。
      */
@@ -726,7 +725,7 @@ class EngineSupervisor(private val ctx: Context) {
         // EADDRINUSE 无限重启（用户实测 62 次）。pkill 只匹配我们的引擎路径，
         // 不会误伤其他进程；正常重启（旧引擎已 stop）端口已释放，此处为 no-op。
         cleanupOrphanEngine()
-        // v1.6.3：dshmarket 的自重启 helper 可能已经/即将在 3080 上起一个独立 dsh web。
+        // dshmarket 的自重启 helper 可能已经/即将在 3080 上起一个独立 dsh web。
         // spawn 前清掉外来监听者并等端口真正释放，避免两条重启路径抢端口导致 WebView 反复断线。
         runCatching { killForeignPortHolders(EngineConfig.DEFAULT_PORT) }
         runCatching { waitPortFreeAsync(EngineConfig.DEFAULT_PORT, 2_000L) }
@@ -741,13 +740,13 @@ class EngineSupervisor(private val ctx: Context) {
             // Root 保护壳：先备份用户资产 dsh-home，再以 su 整体提权启动引擎。
             // 即便 Root 引擎误改 dsh-home，用户仍可回滚；备份失败不阻断启动，仅告警。
             val backup = Privilege.backupHome(ctx)
-            Log.w(TAG, if (backup != null) "ROOT mode: dsh-home backed up to $backup" 
+            Log.w(TAG, if (backup != null) "ROOT mode: dsh-home backed up to $backup"
                   else "ROOT mode: WARNING — dsh-home backup failed")
             suPath = Privilege.findSu() ?: throw EngineStartException(
                 ctx.getString(R.string.error_root_no_su)
             )
         }
-        // v1.2.159：启动前自愈 engine/bin 的 Termux shebang（真机 37 个 wrapper 指向不存在的
+        // 启动前自愈 engine/bin 的 Termux shebang（真机 37 个 wrapper 指向不存在的
         // 路径 → getprop/logcat/node 直接崩）。幂等，仅改第一行。
         runCatching { EngineConfig.healTermuxShebangs(ctx) }
         return EngineProcess.spawn(
@@ -800,7 +799,7 @@ class EngineSupervisor(private val ctx: Context) {
      * `files/engine/bin/node`，误杀会让「局域网访问」在每次引擎重启后静默失效。
      */
     /**
-     * v2.3.4：Root 模式孤儿清理改用**脚本文件**执行，不再拼一长串带引号的 shell。
+     * Root 模式孤儿清理改用**脚本文件**执行，不再拼一长串带引号的 shell。
      *
      * 实测教训：app 里 `su -c "<几百字符的 case/regex>"` 的引号在多层拼接后会被破坏，
      * su 侧 shell 直接语法错误退出（日志只有 usableSuPrefix，没有 kill），
@@ -848,14 +847,15 @@ class EngineSupervisor(private val ctx: Context) {
                 .redirectErrorStream(true).start().inputStream.bufferedReader().use { it.readText() }
             if (out.isNotBlank()) Log.i(TAG, "same-uid kill: ${out.trim().take(300)}")
         }
-        // ② root：su 只执行 `sh <脚本>`（不再拼引号）
-        runCatching {
+        // Root 回退仅用于用户选中的 Root 模式。
+        val rootAllowed = Privilege.getMode(ctx) == PrivMode.ROOT
+        if (rootAllowed) runCatching {
             val out = Privilege.runSu("sh ${script?.absolutePath} $port", timeoutMs = 15_000L)
             if (!out.isNullOrBlank()) Log.i(TAG, "su kill: ${out.trim().take(300)}")
         }
         var freed = waitPortFree(3_000)
         var round = 1
-        while (!freed && round < 3) {
+        while (rootAllowed && !freed && round < 3) {
             Log.w(TAG, "port $port still held after sweep #$round — retrying via su")
             runCatching { Privilege.runSu("sh ${script?.absolutePath} $port", timeoutMs = 12_000L) }
             freed = waitPortFree(3_000)

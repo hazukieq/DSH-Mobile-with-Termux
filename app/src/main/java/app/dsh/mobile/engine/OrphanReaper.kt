@@ -7,7 +7,7 @@ import java.io.File
 /**
  * 孤儿进程回收（v1.2.104）。
  *
- * ## 为什么需要（主人反馈：AI 起的进程没及时销毁 → 阻塞）
+ * ## 为什么需要（用户反馈：AI 起的进程没及时销毁 → 阻塞）
  * 引擎用 `setsid()` 脱离会话（node-pty 需要真实 tty 语义），父进程死后它和它的
  * 后代不会自动消失。而历史上这些进程**继承了 app 的监听 socket** —— 3080/3083
  * 两个 `java.net.ServerSocket` 都不带 `O_CLOEXEC`（2026-10-09 实测：3083 的
@@ -91,7 +91,7 @@ object OrphanReaper {
      * 这才是真正收得掉孤儿的那条路。仍坚持「cmdline 必须含本 app 的 engine/dsh-home
      * 绝对路径」，绝不误杀用户自己的进程。
      *
-     * ⚠️ v1.3.1：**不再只认 `ppid == 1`**（用户报「Root 模式被杀死后二次启动起不来」）。
+     * **不再只认 `ppid == 1`**（用户报「Root 模式被杀死后二次启动起不来」）。
      * 旧实现的 ppid 过滤有个致命盲区：Root 引擎链是
      * `App → (PTY fork) → su 外壳 → magiskd/ksud → node`，如果 **su 外壳或
      * magiskd 仍活着**（App 被 kill -9 时 PDEATHSIG 只挂到 su 外壳上，node 完全

@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 
 /**
- * WebView 注入脚本的资产加载器（Phase 4）。
+ * WebView 注入脚本的资产加载器。
  *
  * 脚本正文放在 assets/js 目录下的独立 js 文件，好处是可被编辑器/lint 当 JS 检查、也能直接在
  * WebView DevTools 里对照源码，而 Kotlin 侧只保留占位符替换与缓存。

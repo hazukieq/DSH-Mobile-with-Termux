@@ -2,21 +2,7 @@ package app.dsh.mobile.engine
 
 import android.content.Context
 
-/**
- * 「AI 上一次做了什么」的持久化记录（v1.2.88）。
- *
- * ## 为什么需要
- * 主人要求悬浮窗展开后「直接显示 AI 上一次做了什么以及上一次 AI 是在什么时候做的」。
- * 这些信息本来只在内存里（`StatusOverlay.setAction`），**进程重启就没了**；
- * 而用户往往是在"AI 做完事之后"才去看悬浮窗，所以必须落盘。
- *
- * ## 存什么
- *  · `action` —— 动作描述（如 `tap-text "搜索"`）
- *  · `at`     —— 该动作发生的**时间戳**（毫秒）
- *
- * 用 SharedPreferences 而非文件：数据极小、读写频繁（每次动作都写）、不需要复杂结构。
- * `apply()` 是异步落盘，不阻塞动作派发路径。
- */
+/** 持久记录最近设备动作与时间，供状态诊断读取；浮窗动作行另由 StatusOverlay 维护。 */
 object LastAction {
 
     private const val PREFS = "last_action"

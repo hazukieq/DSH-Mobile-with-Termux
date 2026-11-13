@@ -11,7 +11,7 @@ import app.dsh.mobile.R
 import app.dsh.mobile.engine.EngineSupervisor
 
 /**
- * 顶部原生 chrome 控制器（Phase 1.6 从 MainActivity 提取）。
+ * 顶部原生 chrome 控制器。
  *
  * 负责「引擎已就绪 · url / 重启 / 隐藏 / 齿轮」这一条状态栏、启动进度条、
  * 预览模式返回按钮、工具栏收起/唤回把手，以及引擎生命周期 → 状态栏文案的映射。
@@ -70,7 +70,7 @@ class NativeChrome(
         }
         // 工具栏收起/唤回：点横栏文字空白区收起（网页全屏）
         statusBar.setOnClickListener { toggleToolbar() }
-        // v2.9.111：默认收起工具栏（用户反馈每次都要点「隐藏」）。用户的手动选择会被记住。
+        // 默认收起工具栏（用户反馈每次都要点「隐藏」）。用户的手动选择会被记住。
         applyToolbarHidden(app.dsh.mobile.DshPrefs.toolbarHidden(activity))
         // 把手：可拖到屏幕边缘任意位置（避让遮挡）；移动距离小于阈值视为点击唤回工具栏
         setupHandleBar()

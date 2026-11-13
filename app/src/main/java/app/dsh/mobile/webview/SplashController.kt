@@ -8,7 +8,7 @@ import android.widget.TextView
 import app.dsh.mobile.R
 
 /**
- * 启动遮罩控制器（Phase 1.1 从 MainActivity 提取）。
+ * 启动遮罩控制器。
  *
  * 逻辑与 v1.3.1 完全一致，只改变物理位置：遮罩不是纯装饰——它同时承载
  * **真实解压进度**与引擎阶段文案，让冷启动那段时间「有东西看、也知道在干什么」。

@@ -18,7 +18,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 设置系统闹钟（交给时钟 App 建，用户能在系统时钟列表里看到/编辑） -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
-    <!-- v1.2.161：验证码提示条用普通浮层通道（无障碍不在位时也能显示） -->
+    <!-- 无障碍服务不可用时，进度窗口使用应用悬浮窗通道。 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 所有文件访问：普通模式下授权 AI 在共享存储（/sdcard）建目录与读写 ——
          权限中心跳系统设置授予（isExternalStorageManager），引擎进程与 App 同 uid 继承 -->
@@ -152,13 +152,13 @@
             android:theme="@style/Theme.Dsh.Light"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density" />
 
-        <!-- 扩展中心（v1.2.0）：环境扩展下载/激活管理 -->
+
 
         <!-- 终端（2026-10-18）：原生 VT100/xterm 终端 + PTY 会话。
              注册为**第二个 LAUNCHER 入口**：它本身就是一个完整的终端 App
              （桌面上有独立图标），从设置页也能进。singleTask + onNewIntent
              支持复用同一页面而不是堆 Activity。 -->
-        <!-- v2.9.89：adb 调试豁免通道（只读）。readPermission=DUMP：仅 shell/root/system 可查。
+        <!-- v2.9.89：adb 调试通道（查询与应用环境 exec）。readPermission=DUMP：仅 shell/root/system 可查。
              关闭方式：adb shell settings put global dsh_adb_bridge 0 -->
         <provider
             android:name=".bridge.AdbDebugProvider"

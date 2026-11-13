@@ -20,7 +20,7 @@ class AboutActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // v2.9.110：跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
+        // 跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
         OrientationPrefs.applyTo(this)
         setContentView(R.layout.activity_about)
 
@@ -28,7 +28,7 @@ class AboutActivity : Activity() {
         findViewById<TextView>(R.id.txtVersion).text =
             getString(R.string.about_version, versionName())
 
-        // v2.5.43：引擎版本动态显示（BootstrapInstaller.ENGINE_VERSION = dsh-engine-0.2.1-rc.2-20261019）
+        // 引擎版本动态显示（BootstrapInstaller.ENGINE_VERSION = dsh-engine-0.2.1-rc.2-20261019）
         val engineRaw = app.dsh.mobile.engine.BootstrapInstaller.ENGINE_VERSION
         val engineLabel = Regex("""dsh-engine-([0-9][^-]*(?:-[a-zA-Z0-9.]+)?)""")
             .find(engineRaw)?.groupValues?.getOrNull(1) ?: engineRaw

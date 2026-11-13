@@ -1,5 +1,7 @@
 # `AccessibilityService.takeScreenshotOfWindow` 语义研究（API 34+）
 
+> 历史取证记录：结论仅适用于文中设备、版本和采样范围。当前行为与维护约束见相关使用文档；旧行号和临时文件路径不代表当前工作区。
+
 > 目的：把 `takeScreenshotOfWindow` 的行为钉死在**源码 + CTS + 官方文档**三档证据上，供
 > `GET /screenshot` 从「先藏悬浮窗再截整屏」迁移到「截目标窗口、悬浮窗保持可见」的方案做决策。
 >

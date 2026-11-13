@@ -16,7 +16,7 @@ Android 的无障碍服务有两个独立状态（参考
 
 两个都为 true 才能动作；只看「已连接」会把「授权过但绑定还没完成」（刚启动、被回收后重绑）误判成未授权。
 
-- `/health` 的 `permissions.accessibility` 报**已启用**，另给 `accessibility_connected`；需要无障碍
+- `/status` 的 `permissions.accessibility` 报**已启用**，另给 `accessibility_connected`；需要无障碍
   的端点进入前等最多 **1.5s** 完成绑定：仍未连接 → 503 `retryable: true`（稍后重试，持续出现就
   关/开一次服务）；未启用 → 503 `retryable: false`（去系统设置启用）。
 - 设置页「无障碍（可选）」区分「已连接 / 已开启（未连接）/ 已授权但被系统停用 / 未授权」；首次连接

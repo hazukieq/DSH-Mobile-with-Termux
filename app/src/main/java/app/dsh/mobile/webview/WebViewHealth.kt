@@ -6,7 +6,7 @@ import android.os.Looper
 import android.webkit.WebView
 
 /**
- * WebView 卡死自愈 + 诊断日志（Phase 1.5 从 MainActivity 提取，v1.2.100 逻辑原样）。
+ * WebView 卡死自愈 + 诊断日志。
  *
  * ## 问题
  * 用户反馈：「运行到一半会话内容卡住，计时器还在正常计数，模型仍在运行，

@@ -81,7 +81,7 @@ object ShizukuHttpBridge {
         try {
             sock.use { s ->
                 s.soTimeout = 15000
-                // ⚠️ v1.2.43：与 AgentBridge 同步改为**字节级**解析。旧实现按字符数读
+                // 与 AgentBridge 同步改为**字节级**解析。旧实现按字符数读
                 // Content-Length 字节数 → UTF-8 中文命令（每字 3 字节）永远读不满 → 超时。
                 val ins = s.getInputStream()
                 val head = java.io.ByteArrayOutputStream()

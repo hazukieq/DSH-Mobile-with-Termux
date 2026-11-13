@@ -33,7 +33,7 @@ import app.dsh.mobile.engine.Privilege
 import app.dsh.mobile.engine.AgentBridge
 
 /**
- * ActionHandler：Phase 2 从 AgentBridge 拆出的端点组（成员原样迁移，行为不变）。
+ * ActionHandler：对应能力的桥端点实现。
  *
  * 函数体包 `with(bridge)`，因此原文件里对 AgentBridge 成员的裸引用不用改名；
  * 跨组裸调用由本包的 AgentBridge 扩展别名（CrossCalls.kt）兜住。
@@ -139,7 +139,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             }
 
             val index = if (obj.has("index")) obj.getInt("index") else -1
-            // v1.8.2（提案 P1-6）：按 (listId, itemIndex) 点击列表行 —— 坐标由 App 实时算，
+            // 按 (listId, itemIndex) 点击列表行 —— 坐标由 App 实时算，
             // 滚动后也不会拿旧坐标点错。
             val listId = obj.optString("listId").takeIf { it.isNotBlank() }
             val itemIndex = if (obj.has("itemIndex")) obj.getInt("itemIndex") else -1
@@ -174,7 +174,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                     t.optString("text").takeIf { it.isNotBlank() }?.let { put("text", it) }
                 }.toString()
             }
-            // v2.5.25：显式走提权通道（部分 App 拒绝无障碍注入，见 tapViaShell 注释）
+            // 显式走提权通道（部分 App 拒绝无障碍注入，见 tapViaShell 注释）
             val via = obj.optString("via").lowercase()
             if (via == "shell") {
                 val pt: Pair<Float, Float>? = when {
@@ -220,7 +220,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 obj.has("x") && obj.has("y") -> {
                     val x = obj.getDouble("x").toFloat()
                     val y = obj.getDouble("y").toFloat()
-                    // v2.5.30（用户实测“tap xy 变得不可靠”）：坐标调用语义是像素，默认只发合成手势；
+                    // 坐标调用语义是像素，默认只发合成手势；
                     // 需要节点语义时用 via:auto|node（或 smart:true）。
                     val smart = via == "node" || via == "auto" || obj.optBoolean("smart", false)
                     lastTapDetail = tapDispatch(svc, x, y, smart)
@@ -245,7 +245,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             // 故在响应里带上 dispatched 语义 + 提示，让调用方知道要自行校验。
             // 每步自动截图（v1.2.70）：路径直接给 AI，省掉它自己再调一次截图接口
             val shot = if (ok && !obj.optBoolean("noShot", false)) captureStepShot() else null
-            // v1.8.0（点击链路提案 P0-3）：tap 支持内联期望，点完就地校验，省掉一轮 dump。
+            // tap 支持内联期望，点完就地校验，省掉一轮 dump。
             // 例：{"text":"搜索","expect":{"anyText":["综合","番剧"],"timeoutMs":4000}}
             val expectObj = obj.optJSONObject("expect")
             if (ok && expectObj != null) {
@@ -353,7 +353,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 } else ""
             }.getOrDefault("")
             val ok = when (obj.optString("type")) {
-                // v1.2.149：默认**拟人化**滑动（弧线+变速+抖动）；human=false 精确直线
+                // 默认**拟人化**滑动（弧线+变速+抖动）；human=false 精确直线
                 "swipe" -> if (obj.optBoolean("human", true)) svc.dispatchSwipeHuman(
                     obj.getDouble("x1").toFloat(), obj.getDouble("y1").toFloat(),
                     obj.getDouble("x2").toFloat(), obj.getDouble("y2").toFloat(),
@@ -390,7 +390,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 }
                 if (runCatching { svc.pointInOwnOverlay(px, py) }.getOrDefault(false)) {
                     out.put("ownOverlay", true)
-                    out.put("ownOverlayHint", "gesture start point is inside our own overlay; the swipe may be swallowed — pass hideOverlay:true to /act, or use op:scroll-node")
+                    out.put("ownOverlayHint", "gesture starts inside our overlay; geometric avoidance applies before injection; verify the target UI after completion")
                 }
                 if (gestureWarn.isNotBlank()) out.put("warning", gestureWarn)
                 200 to out.toString()
@@ -498,10 +498,9 @@ internal class ActionHandler(private val bridge: AgentBridge) {
         val results = JSONArray()
         var allOk = true
         var failedAt = -1
-        // hideOverlay:true —— 整批动作期间悬浮窗「不吃手势」（复盘：swipe 起点落在我家卡片上时
-        // 30 次滑动全部无效，且 /gesture 回执看不出原因）。这里复用 opsAvoid 的 NOT_TOUCHABLE 机制。
+        // 显式隐藏覆盖整批动作；仍使用 visibility，不改变触摸 flags。
         val hideOverlay = runCatching { JSONObject(body).optBoolean("hideOverlay", false) }.getOrDefault(false)
-        if (hideOverlay) runCatching { app.dsh.mobile.StatusOverlay.beginOpsAvoid() }
+        val avoidLease = if (hideOverlay) StatusOverlay.beginOpsAvoid() else null
         try {
         val before = if (returnScreens) runCatching { svc.dumpScreenCompact("all").take(2500) }.getOrDefault("") else ""
 
@@ -510,8 +509,8 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             var stepResult: String? = null
             val stepStart = System.currentTimeMillis()
             val r = JSONObject()
-            // v2.9.93（B站播放页 issue）：事务内截图——「几秒后自动隐藏」的瞬时浮层
-            // 只有「动作后立刻拍」才拍得到（scr tap + scr shot 组合 ≥3.2s，必然错过）。
+            // 事务内截图——「几秒后自动隐藏」的瞬时浮层
+            // 动作与截图放在同一事务，减少瞬时控件消失前的往返。
             // 用法：把 {"shot":true} 当成一步，前面紧跟 {"tapXY":[x,y]}、后面可跟 {"sleepMs":N}。
             if (st.optBoolean("shot", false)) {
                 val shotPath = captureStepShot()
@@ -717,7 +716,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
             out.put("screenHash", runCatching { svc.dumpScreenCompact("all").hashCode() }.getOrDefault(0))
             out.put("hint", "inspect steps[failedAt]; re-read /scene, or retry with a looser expect/selector")
         }
-        // v2.9.93：整批结束后自动补一张（"afterShot":true）——省掉调用方再发一次 /screenshot，
+        // 整批结束后自动补一张（"afterShot":true）——省掉调用方再发一次 /screenshot，
         // 也就省掉那 ~0.5s 往返，更容易抢在浮层隐藏前拿到画面。
         if (obj.optBoolean("afterShot", false)) {
             val p = captureStepShot()
@@ -729,7 +728,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
         return 200 to out.toString()
         } finally {
             // hideOverlay 必须成对复位：否则整批结束后悬浮窗永久不可点（历史上就是这种「只能看」状态）
-            if (hideOverlay) runCatching { app.dsh.mobile.StatusOverlay.endOpsAvoid() }
+            StatusOverlay.endOpsAvoid(avoidLease)
         }
         }
     }
@@ -991,7 +990,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
         return try {
             val obj = JSONObject(body)
             if (obj.optBoolean("hide", false)) {
-                StatusOverlay.hide(DshAccessibilityService.instance)
+                StatusOverlay.hide()
                 return 200 to """{"ok":true,"visible":false}"""
             }
             // v1.3.97：host 侧插件直推的结构化链路（kind/session/detail/elapsed）
@@ -1010,7 +1009,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
                 )
                 return 200 to """{"ok":true,"structured":true}"""
             }
-            // v1.5.7：无障碍/自动化的 status/action 走独立 notice 布局，不覆盖思考链
+            // status/action 追加到独立动作行，不覆盖正文。
             val notice = listOfNotNull(
                 obj.optString("status").takeIf { it.isNotBlank() },
                 obj.optString("action").takeIf { it.isNotBlank() },
@@ -1054,7 +1053,7 @@ internal class ActionHandler(private val bridge: AgentBridge) {
         }
     }
 
-    internal fun routeGuarded(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> = with(bridge) { 
+    internal fun routeGuarded(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> = with(bridge) {
         try {
             var r = route(ctx, method, path, query, body)
             if (path == "/scene" && r.first == 200) r = annotateTapPoints(r)

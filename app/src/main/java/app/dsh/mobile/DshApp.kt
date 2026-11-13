@@ -16,14 +16,12 @@ class DshApp : Application() {
     lateinit var supervisor: EngineSupervisor
         private set
 
-    /** 全局唯一扩展管理器单例：扩展中心 UI 与 AI 通道（AgentBridge）共享下载任务状态 */
-
     override fun onCreate() {
         super.onCreate()
         processStartElapsed = android.os.SystemClock.elapsedRealtime()
         JsAssets.init(this)
         CoordAutoCalibrator.install(this)
-        // ⚠️ v1.2.110：全局崩溃捕获 —— 用户反馈「进程异常退出」（1.2.97 升级后 ×2 人，
+        // 全局崩溃捕获 —— 用户反馈「进程异常退出」（1.2.97 升级后 ×2 人，
         // Android 16 未复现，疑为 Android 17 兼容问题）。没有现场日志无法定位，
         // 现在任何 Java 崩溃都会落盘 `filesDir/crash-last.txt`（时间、线程、堆栈），
         // 用户或支持把该文件发回来即可定位。若该文件为空，说明是 native 崩溃
@@ -134,7 +132,6 @@ class DshApp : Application() {
             context.getSharedPreferences(PREFS_UI, android.content.Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_LAN_WEB_PW_PENDING, false).apply()
         }
-
 
     }
 }

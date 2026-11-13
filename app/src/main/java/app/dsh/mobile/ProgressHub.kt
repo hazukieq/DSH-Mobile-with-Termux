@@ -11,24 +11,8 @@ import android.os.Looper
 import android.util.Log
 import org.json.JSONObject
 
-/**
- * 后台进度提示（v1.3.68）。
- *
- * 目标：用户离开 App 后仍能知道「当前在思考什么 / 做到哪一步」，且**不依赖无障碍**。
- *
- * 数据源：
- *  - WebUI 注入的 mobile-progress 插件监听会话 DOM，通过 `DshNative.progress(json)`
- *    JS Bridge 上报快照（主要来源，无需无障碍）；
- *  - Agent 仍可走 `POST /overlay`（兼容旧行为），也会汇入这里。
- *
- * 呈现：
- *  - `notify`（默认）：低打扰持续通知，锁屏只显示状态、隐藏正文（VISIBILITY_PRIVATE）；
- *  - `overlay`：优先应用悬浮窗（SYSTEM_ALERT_WINDOW）；无权限时回退无障碍窗口；
- *    两者都不可用则回退通知；
- *  - `off`：全部关闭。
- */
+/** 引擎进度分发到悬浮窗或通知；显示关闭不影响无障碍与 OCR。 */
 object ProgressHub {
-    @Volatile private var lastKindWasActive = false
     private const val TAG = "ProgressHub"
     private const val PREFS = "dsh_progress"
     private const val KEY_MODE = "mode"
@@ -38,8 +22,8 @@ object ProgressHub {
 
     private const val CHANNEL_ID = "dsh_progress"
     private const val NOTIF_ID = 4301
+    private val ACTIVE_KINDS = setOf("thinking", "tool", "working")
 
-    /** 悬浮窗无权限时只提示一次，避免反复占用通知栏。 */
     private var overlayDeniedHintShown = false
 
     private val main = Handler(Looper.getMainLooper())
@@ -51,24 +35,23 @@ object ProgressHub {
         val session: String,
         val elapsed: Long,
         val at: Long,
-        /** v2.5.8：工具行并回 detail（思考链），不再单独存一份动作链。 */
+
         val think: String = "",
     )
 
     @Volatile private var last: Snapshot? = null
     @Volatile private var appVisible = false
     @Volatile private var lastPublishAt = 0L
-    /** sessionId -> 会话标题缓存（插件只带 id，标题由原生读引擎投影缓存解析）。 */
+    private var pendingPublish: Runnable? = null
+
     private val sessionTitles = java.util.concurrent.ConcurrentHashMap<String, String>()
     @Volatile private var doneClearRunnable: Runnable? = null
 
-    /** 后台有任务在跑时抓一个 PARTIAL_WAKE_LOCK，减少 Doze/省电策略把引擎冻死的概率。 */
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     fun mode(ctx: Context): String {
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        // v1.4.5：默认改成「悬浮窗」——用户明确要求「总是显示悬浮窗最好」。
-        // 旧安装若已显式选择过，保留原值；从未选过（缺少 key）时才落到新的默认。
+
         if (!prefs.contains(KEY_MODE)) {
             prefs.edit().putString(KEY_MODE, MODE_OVERLAY).apply()
             return MODE_OVERLAY
@@ -79,28 +62,23 @@ object ProgressHub {
     fun setMode(ctx: Context, mode: String) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_MODE, mode).apply()
         when (mode) {
-            MODE_OFF -> { clearAll(ctx); runCatching { StatusOverlay.hideAuto(ctx) } }
+            MODE_OFF -> clearAll(ctx)
             MODE_OVERLAY -> {
-                // v1.4.7：切到悬浮窗必须**立刻出现**，不能等下一次进度事件
-                //（用户实测：设置里切完返回，什么都没有）。
+
+                StatusOverlay.resetHidden()
                 ensureOverlayVisible(ctx, placeholder = true)
             }
             else -> {
-                runCatching { StatusOverlay.hideAuto(ctx) }
+                runCatching { StatusOverlay.hideAuto() }
                 maybePublish(ctx, force = true)
             }
         }
     }
 
-    /**
-     * 悬浮窗模式下确保窗口已经显示；没有进度快照时放一个「等待任务」占位，
-     * 让用户切完设置/回到 App 就能看到它。
-     */
+    /** 无障碍窗口不要求 SYSTEM_ALERT_WINDOW，是否能建窗由 StatusOverlay 决定。 */
     fun ensureOverlayVisible(ctx: Context, placeholder: Boolean = false) {
         if (mode(ctx) != MODE_OVERLAY) return
-        if (!android.provider.Settings.canDrawOverlays(ctx)) return
-        // 窗口随 Activity 销毁而消失时，root 字段仍是旧引用 → 先丢掉再重建
-        if (!StatusOverlay.isAttached()) StatusOverlay.dropStaleRoot()
+
         val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
         if (!shown) return
         val snap = last
@@ -111,7 +89,7 @@ object ProgressHub {
         if (placeholder) {
             runCatching {
                 StatusOverlay.resetHidden()
-                StatusOverlay.setStatus(ctx.getString(R.string.overlay_idle))
+                StatusOverlay.setIdle()
             }
         }
     }
@@ -124,13 +102,11 @@ object ProgressHub {
         },
     )
 
-    /** App 前后台变化：前台时收起提示，回到后台立刻展示当前快照。 */
     fun onAppVisibility(ctx: Context, visible: Boolean) {
         appVisible = visible
         maybePublish(ctx, force = true)
     }
 
-    /** JS Bridge 上报（字符串避免 Kotlin/JS 类型转换成本）。 */
     fun onJsProgress(ctx: Context, payload: String) {
         runCatching {
             val o = JSONObject(payload)
@@ -142,18 +118,11 @@ object ProgressHub {
         }.onFailure { Log.w(TAG, "bad progress payload: ${it.message}") }
     }
 
-    /** Agent 的 POST /overlay 兼容入口。 */
     fun onAgentProgress(ctx: Context, status: String?, action: String?, complete: Boolean) {
-        // v1.5.7：无障碍/自动化的 POST（status/action）走悬浮窗底部独立 notice，
-        // 不再写进思考链（之前会把链路覆盖成「点击/滑动」）。
-        if (!complete) {
+        if (mode(ctx) == MODE_OVERLAY) {
             val notice = listOfNotNull(status, action).filter { it.isNotBlank() }.joinToString(" · ")
-            if (notice.isNotBlank() && mode(ctx) == MODE_OVERLAY) {
-                // v2.5.6：无障碍/自动化动作进「第④段动作链」（工具链下方的独立 layout），
-                // 不再塞进底部 notice 小条——那一条留给 DshNative.notice 的临时提示。
-                runCatching { StatusOverlay.setA11yAction(notice) }
-                return
-            }
+            if (notice.isNotBlank()) StatusOverlay.setA11yAction(notice)
+            return
         }
         if (complete) {
             update(ctx, "done", "", status ?: ctx.getString(R.string.progress_state_done), "", 0)
@@ -173,6 +142,11 @@ object ProgressHub {
         elapsed: Long = 0,
         think: String = "",
     ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { update(ctx.applicationContext, kind, title, detail, session, elapsed, think) }
+            return
+        }
+        if (app.dsh.mobile.service.EngineService.userExited(ctx)) return
         val k = when (kind) {
             "thinking", "tool", "done", "error", "idle", "working" -> kind
             else -> "working"
@@ -184,15 +158,13 @@ object ProgressHub {
             think = think.trim().take(4000),
         )
         val prev = last
-        // 新一轮开始 → 清掉上一轮的无障碍动作链（只在 working 的进入沿清一次）
-        // 只有「上一轮确实结束了」才算新一轮开始；首帧（prev==null）不清，
-        // 否则插件先发的无障碍动作会被随后的第一帧 working 冲掉（v2.5.6 实测）。
-        if (k == "working" && prev != null && prev.kind != "working") {
+
+        if (k in ACTIVE_KINDS && prev != null && (prev.kind !in ACTIVE_KINDS || prev.session != sess)) {
             runCatching { StatusOverlay.clearA11yChain() }
         }
-        // done/error 永远发布：会话结束时内容可能与上一帧相同，但状态必须切到「完成」
+
         if (k != "done" && k != "error" && prev != null && prev.kind == s.kind &&
-            prev.detail == s.detail && prev.title == s.title && prev.think == s.think && prev.elapsed / 1000L == s.elapsed / 1000L
+            prev.session == s.session && prev.detail == s.detail && prev.title == s.title && prev.think == s.think && prev.elapsed / 1000L == s.elapsed / 1000L
         ) {
             return
         }
@@ -206,7 +178,6 @@ object ProgressHub {
         maybePublish(ctx, force = (k == "done" || k == "error"))
     }
 
-    /** 从引擎会话投影缓存解析会话标题（保持原有后台线程习惯，失败静默）。 */
     private fun resolveSessionTitle(ctx: Context, session: String) {
         if (sessionTitles.containsKey(session)) return
         Thread({
@@ -216,9 +187,12 @@ object ProgressHub {
                     val t = app.dsh.mobile.engine.SessionReader.titleOf(ctx, info)
                     if (t.isNotBlank()) {
                         sessionTitles[session] = t
-                        last?.let { cur ->
-                            if (cur.session == session) {
-                                update(ctx, cur.kind, t, cur.detail, session, cur.elapsed, cur.think)
+                        main.post {
+                            last?.let { cur ->
+                                if (cur.session == session) {
+                                    last = cur.copy(title = t)
+                                    maybePublish(ctx.applicationContext, force = true)
+                                }
                             }
                         }
                     }
@@ -229,40 +203,48 @@ object ProgressHub {
 
     private fun maybePublish(ctx: Context, force: Boolean) {
         val m = mode(ctx)
-        if (m == MODE_OFF) { clearAll(ctx); return }
+        if (m == MODE_OFF || app.dsh.mobile.service.EngineService.userExited(ctx)) { clearAll(ctx); return }
         val snap = last
         if (snap == null) return
         val gap = if (m == MODE_OVERLAY) 120L else 600L
-        if (!force && System.currentTimeMillis() - lastPublishAt < gap) return
-        lastPublishAt = System.currentTimeMillis()
+        val now = android.os.SystemClock.uptimeMillis()
+        val remaining = gap - (now - lastPublishAt)
+        if (!force && remaining > 0) {
+            // 节流合并中间帧，但保留一次尾部发布，流结束时仍显示最新快照。
+            if (pendingPublish == null) {
+                pendingPublish = Runnable {
+                    pendingPublish = null
+                    maybePublish(ctx.applicationContext, force = false)
+                }.also { main.postDelayed(it, remaining) }
+            }
+            return
+        }
+        pendingPublish?.let { main.removeCallbacks(it) }
+        pendingPublish = null
+        lastPublishAt = now
 
-        // 后台有任务在跑：保持一个短暂的 partial wakelock（屏幕熄灭/Doze 时引擎仍能继续跑）
         updateWakeLock(ctx, snap)
 
-        // App 在前台时：通知不打扰；但悬浮窗按用户要求**始终显示**（不再隐藏）。
         if (appVisible && snap.kind != "done" && snap.kind != "error") {
             cancelNotification(ctx)
             if (m != MODE_OVERLAY) {
-                runCatching { StatusOverlay.hideAuto(ctx) }
+                runCatching { StatusOverlay.hideAuto() }
                 return
             }
         }
 
         if (m == MODE_OVERLAY) {
-            // 后台时重新挂一次窗口：部分 ROM 会把应用悬浮窗 surface 置 hidden
+
             if (!appVisible) runCatching { StatusOverlay.reassertVisible() }
-            // v2.5.5：窗口被 hideAuto 收起后 root==null，show() 之前会因 hidden 直接返回；
-            // 之前这里返回 true 且没重建 → 一次收起之后整个进程周期都看不到悬浮窗。
-            runCatching { StatusOverlay.resetHidden() }
+
             val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
             if (shown) {
                 runCatching {
-                    // v2.5.8：工具行已并回思考链（detail 即完整链路），只剩
-                    // ① 思考链（含 [工具] 行）② 无障碍/打开应用 ③ 会话标题 + 耗时
+
                     val think = snap.think.ifBlank { snap.detail }
-                    StatusOverlay.setStatus(think.ifBlank { stateLabel(ctx, snap.kind) })
-                    val secs = snap.elapsed / 1000L
                     val running = snap.kind == "thinking" || snap.kind == "tool" || snap.kind == "working"
+                    StatusOverlay.setStatus(think.ifBlank { stateLabel(ctx, snap.kind) }, running)
+                    val secs = snap.elapsed / 1000L
                     StatusOverlay.setElapsed(secs, running)
                     val label = when (snap.kind) {
                         "done" -> ctx.getString(R.string.progress_state_done)
@@ -271,26 +253,13 @@ object ProgressHub {
                     }
                     val title = snap.title.take(60).ifBlank { stateLabel(ctx, snap.kind) }
                     StatusOverlay.setSession(if (label.isNotBlank()) "$title · $label" else title)
-                    // v2.5.98：原来是 `&& snap.detail.isBlank()` 才标红 —— 但真实一轮对话
-                    // detail（思考链/工具行）永远不空，于是「回复结束变红」从来不会触发
-                    //（用户实测：圆点颜色从没变过）。现在只要 kind=done/error 就标红。
-                    // v2.5.98：真实一轮的收尾 kind 是 done/error 或直接回 idle，且 detail 从不为空；
-                    // 旧条件 (done||error) && detail.isBlank() 永不成立 → 圆点从没变红。
-                    // 现在按「活动态 → 非活动态」的转换标红。
-                    val active = snap.kind == "thinking" || snap.kind == "tool" || snap.kind == "working"
-                    // 实测（logcat 06:55:39）：一轮结束只收到 kind=done 的快照，
-                    // 中间没有活动态快照 → 不能依赖「活动→非活动」转换。直接认 done/error。
-                    // 标红只由「整轮对话结束」触发（AgentBridge.onTurnEnd，来自 WebUI 的 turn/end），
-                    // 这里只记录活动态，不再自行标红 —— 否则一轮里多个 done 会误报。
-                    lastKindWasActive = active
                 }
                 cancelNotification(ctx)
                 return
             }
-            // 没有悬浮窗权限且没有无障碍 → 回退通知
         }
         if (m == MODE_OVERLAY && !android.provider.Settings.canDrawOverlays(ctx)) {
-            // 选的是悬浮窗但没权限：只提示一次，且不占长驻（不给 setOngoing）
+
             if (!overlayDeniedHintShown) {
                 overlayDeniedHintShown = true
                 publishNotification(
@@ -302,9 +271,7 @@ object ProgressHub {
             return
         }
         if (m == MODE_OVERLAY) {
-            /* 悬浮窗模式但窗口没显示出来（被收起 / 没权限 / 初始化失败）：
-             * 不接管、也不更新任何通知 —— 通知位属于引擎的常驻通知，
-             * 进度信息只能在悬浮窗里展示。 */
+
             cancelNotification(ctx)
             return
         }
@@ -331,7 +298,7 @@ object ProgressHub {
     }
 
     private fun publishNotification(ctx: Context, snap: Snapshot, ongoing: Boolean = true) {
-        // 悬浮窗模式且悬浮窗在场时，不再发"进度"通知（用户反馈：开了悬浮窗仍有通知残留一闪而过）
+
         if (mode(ctx) == MODE_OVERLAY && StatusOverlay.isAttached()) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureChannel(nm, ctx)
@@ -350,7 +317,7 @@ object ProgressHub {
             .setContentIntent(open)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            // 锁屏不显示正文（只显示状态），解锁后才展示详情
+
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .addAction(Notification.Action.Builder(null, ctx.getString(R.string.progress_open), open).build())
         val finished = snap.kind == "done" || snap.kind == "error"
@@ -398,32 +365,26 @@ object ProgressHub {
     }
 
     fun clearAll(ctx: Context) {
+        pendingPublish?.let { main.removeCallbacks(it) }
+        pendingPublish = null
+        lastPublishAt = 0L
         runCatching { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
         cancelNotification(ctx)
-        runCatching { StatusOverlay.hideAuto(ctx) }
+        doneClearRunnable?.let { main.removeCallbacks(it) }
+        doneClearRunnable = null
+        runCatching { StatusOverlay.hideAuto() }
         last = null
     }
 
-    /** 设置页「预览一次」。 */
+    /** 预览沿用当前模式，不清空刚显示的窗口。 */
     fun preview(ctx: Context) {
-        if (mode(ctx) == MODE_OVERLAY && android.provider.Settings.canDrawOverlays(ctx)) {
-            // 悬浮窗模式下预览必须真的显示悬浮窗（旧实现只发通知，用户以为浮窗坏了）
-            val shown = runCatching { StatusOverlay.show(ctx) }.getOrDefault(false)
-            if (shown) {
-                runCatching {
-                    StatusOverlay.resetHidden()
-                    StatusOverlay.setStatus(ctx.getString(R.string.progress_preview_text))
-                    }
-                clearAll(ctx)
-                return
-            }
-        }
-        val s = Snapshot("thinking", ctx.getString(R.string.progress_channel), ctx.getString(R.string.progress_preview_text), "preview", 0, System.currentTimeMillis())
-        last = s
-        publishNotification(ctx, s)
+        if (mode(ctx) == MODE_OFF) return
+        StatusOverlay.resetHidden()
+        update(ctx, "thinking", ctx.getString(R.string.progress_channel),
+            ctx.getString(R.string.progress_preview_text), "preview")
+        maybePublish(ctx, force = true)
     }
 
-    /** 通知权限是否可用（13+ 需要 POST_NOTIFICATIONS）。 */
     fun notificationsEnabled(ctx: Context): Boolean = runCatching {
         (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).areNotificationsEnabled()
     }.getOrDefault(true)

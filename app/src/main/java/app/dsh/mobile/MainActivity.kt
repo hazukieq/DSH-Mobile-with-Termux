@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
 class MainActivity : Activity() {
 
     private lateinit var webView: WebView
-    /** 顶部原生 chrome（状态条/按钮/把手/进度/预览返回），Phase 1.6 起独立成类。 */
+    /** 顶部原生工具栏：状态、导航按钮、把手与进度。 */
     private val chrome: NativeChrome by lazy {
         NativeChrome(this, (application as DshApp).supervisor, splashController, object : NativeChrome.Host {
             override fun resetUrlLoaded() { urlLoaded = false }
@@ -69,15 +69,15 @@ class MainActivity : Activity() {
     /** 页面缩放百分比（竖屏时应用；等价浏览器 Ctrl+/Ctrl-）。横屏桌面模式交给 1280px meta，不叠加 */
     private var pageScale = DshPrefs.PAGE_SCALE_DEFAULT
 
-    /** 分享正文投递（Phase 1.7 起独立成类）：写入/读回/补写三步走。 */
+    /** 分享正文投递：写入/读回/补写三步走。 */
     private val shareDelivery: ShareDelivery by lazy {
         ShareDelivery(this) { runCatching { webView }.getOrNull() }
     }
-    /** WebView 文件选择器（Phase 1.7 起独立成类）。 */
+    /** WebView 文件选择器。 */
     private val fileChooser: FileChooser by lazy {
         FileChooser(this) { logWebView(it) }
     }
-    /** WebView 装配器（Phase 1.3 起独立成类）。 */
+    /** WebView 装配器。 */
     private lateinit var webViewManager: WebViewManager
     /** 分享入口（收 Intent → 复制文件进 inbox → 交给 [ShareDelivery] 预填输入框）。 */
     private lateinit var shareHandler: ShareHandler
@@ -99,13 +99,13 @@ class MainActivity : Activity() {
         finishAndRemoveTask()
     }
 
-    // ---------- 启动动画（v1.3.1；Phase 1.1 起由 SplashController 负责） ----------
+    // ---------- 启动动画（SplashController） ----------
     private lateinit var splashController: SplashController
 
-    /** Web 内核版本门禁（Phase 1.4 起独立成类）。 */
+    /** Web 内核版本门禁。 */
     private lateinit var webViewGate: WebViewGate
 
-    /** WebView 卡死自愈 + 诊断日志（Phase 1.5 起独立成类）。 */
+    /** WebView 卡死恢复与诊断。 */
     private val webViewHealth: WebViewHealth by lazy {
         WebViewHealth(this, object : WebViewHealth.Host {
             override fun currentWebView(): WebView? = runCatching { webView }.getOrNull()
@@ -137,18 +137,17 @@ class MainActivity : Activity() {
             return
         }
         setContentView(R.layout.activity_main)
-        // v1.3.73：只有「用户主动打开 App」才清除正常退出标记并允许启动引擎；
+        // 只有「用户主动打开 App」才清除正常退出标记并允许启动引擎；
         // 旋转/系统重建（savedInstanceState != null）不算。
         if (savedInstanceState == null) {
             runCatching {
                 app.dsh.mobile.service.EngineService.setUserExited(this, false)
                 (application as DshApp).supervisor.clearUserStop("user opened the app")
-                // v2.9.104：退出时被抑制的悬浮窗，用户重开 App 要立刻回来
+                // 退出时被抑制的悬浮窗，用户重开 App 要立刻回来
                 // （否则要等无障碍看门狗 60s 心跳，用户以为"球没了"）。
                 if (StatusOverlay.resumeAfterExit()) StatusOverlay.show(this)
             }
         }
-
 
         // 记录本页生效的语言（onResume 里比对，设置页改过就重建本页）
         appliedLocale = LocaleHelper.get(this)
@@ -188,12 +187,12 @@ class MainActivity : Activity() {
         }
         webView = globalWebView
         setupWebView()
-        // v1.3.44：冷启动时若由其它 App 分享拉起，处理分享内容
+        // 冷启动时若由其它 App 分享拉起，处理分享内容
         runCatching { handleIncomingShare(intent) }
         // 读回用户保存的页面缩放与屏幕朝向偏好
         readUiPrefs()
         applyOrientation(orientationMode)
-        // v1.2.120：冷启动也要把桌面渲染落到偏好 —— 旧实现只在 onResume 的「偏好变化」
+        // 冷启动也要把桌面渲染落到偏好 —— 旧实现只在 onResume 的「偏好变化」
         // 分支里 setDesktop，导致 landscape=true 冷启动时 UA/视口/缩放手势全是竖屏那套，
         // 直到用户在设置里动过一次或旋转设备才恢复。
         setDesktop(shouldUseDesktop())
@@ -215,8 +214,8 @@ class MainActivity : Activity() {
         super.onResume()
         app.dsh.mobile.engine.AppShot.register(this)
         app.dsh.mobile.engine.AppState.onResume(this)
-        // 🔴 v1.2.91：恢复 WebView 的 JS 定时器。
-        // 主人实测「回到后台时通过语音发送消息，消息发出去了但模型不响应，
+        // 恢复 WebView 的 JS 定时器。
+        // 设备实测「回到后台时通过语音发送消息，消息发出去了但模型不响应，
         // 切回前台才开始响应」—— 根因就是这里缺 webView.onResume()：
         // Android 在 Activity 进入后台时会**冻结 WebView 的 JS 定时器**
         // （前端靠定时器/轮询驱动流式渲染），所以后台期间 AI 的回复渲染不出来。
@@ -224,9 +223,9 @@ class MainActivity : Activity() {
             runCatching { webView.onResume() }
             runCatching { webView.resumeTimers() }
         }
-        // v1.3.68：回到前台收起后台进度提示
+        // 回到前台收起后台进度提示
         runCatching { ProgressHub.onAppVisibility(this, true) }
-        // v1.4.7：悬浮窗模式下打开 App 就确保它已经在（不再等第一次进度事件）
+        // 悬浮窗模式下打开 App 就确保它已经在（不再等第一次进度事件）
         runCatching { ProgressHub.ensureOverlayVisible(this, placeholder = true) }
         // Web 内核版本门禁（v1.2.100，酷安用户反馈引出的需求）：
         // WebView < Chrome 85 时引擎前端必白屏（??= 等解析期语法 polyfill 补不了），
@@ -268,7 +267,7 @@ class MainActivity : Activity() {
     }
 
     /**
-     * v1.2.91：**不**暂停 WebView。
+     * **不**暂停 WebView。
      *
      * 默认实现（或主动调 `webView.onPause()`）会冻结 JS 定时器 —— 那正是
      * 「后台时 AI 不响应、切回前台才响应」的根因。
@@ -284,13 +283,13 @@ class MainActivity : Activity() {
         // 不在前台就不再提供「App 内部截图」窗口
         app.dsh.mobile.engine.AppShot.unregister(this)
         app.dsh.mobile.engine.AppState.onPause(this)
-        // v1.3.77：离开 App 前让 WebUI 立刻上报一次当前思考/步骤，避免浮窗/通知先出现空白再等下一轮。
+        // 离开 App 前让 WebUI 立刻上报一次当前思考/步骤，避免浮窗/通知先出现空白再等下一轮。
         if (::webView.isInitialized) {
             runCatching {
                 webView.evaluateJavascript("window.__dshMobileProgressPoke&&window.__dshMobileProgressPoke()", null)
             }
         }
-        // v1.3.68：离开 App 后展示当前进度（通知/悬浮窗）
+        // 离开 App 后展示当前进度（通知/悬浮窗）
         runCatching { ProgressHub.onAppVisibility(this, false) }
         // 刻意不调用 super.onPause() 里的 WebView 暂停逻辑；
         // 同时显式 resumeTimers，确保切后台瞬间定时器仍在跑。
@@ -340,7 +339,7 @@ class MainActivity : Activity() {
     }
 
     /**
-     * v1.2.120：当前是否应该走桌面渲染。
+     * 当前是否应该走桌面渲染。
      * landscape = 恒桌面；portrait = 恒移动；auto = 看**实际**朝向
      * （物理横屏 → 桌面布局，竖屏 → 移动布局），旋转时由
      * onConfigurationChanged 重新求值。
@@ -370,13 +369,7 @@ class MainActivity : Activity() {
         webViewManager.configure()
     }
 
-    /**
-     * WebView 首屏完成后的 Activity 侧动作。
-     *
-     * （Phase 1.3 从旧 `onPageFinished` 原样搬出：清历史、环境自检、收遮罩、
-     *  按横竖屏改写 viewport —— 这些都要读 Activity 的字段，所以留在 Activity。）
-     */
-
+    /** 首屏完成后清历史、执行环境自检并收起启动遮罩。 */
     private fun onEnginePageFinished(view: WebView, url: String?) {
         DshApp.coldStart("webview.pageFinished")
         // 引擎重启（token 变了）→ 旧页面的返回栈必须作废：否则 BACK 会退回
@@ -457,7 +450,7 @@ class MainActivity : Activity() {
         // （2.9.109 之前这里无条件 webView.reload()）。
         // 改为直接重写 viewport meta（和 onPageFinished 用的是同一套 JS），
         // 页面不重新导航，状态自然保住。
-        // v1.2.120：auto 模式下桌面渲染跟随**实际**朝向——旋转后先按新朝向求值，
+        // auto 模式下桌面渲染跟随**实际**朝向——旋转后先按新朝向求值，
         // 否则横屏后仍是竖屏那套 UA/视口。setDesktop 自身不 reload。
         setDesktop(shouldUseDesktop())
         applyZoomControls(desktopMode)
@@ -563,7 +556,7 @@ class MainActivity : Activity() {
     /**
      * 文件选择器结果回传（实现见 [FileChooser]，必须调用 onReceiveValue 否则页面永久等待）。
      */
-    @Deprecated("startActivityForResult is the established contract for the WebView file chooser")
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (fileChooser.onActivityResult(requestCode, resultCode, data)) return
         super.onActivityResult(requestCode, resultCode, data)
@@ -586,10 +579,10 @@ class MainActivity : Activity() {
         runCatching { splashController.cancelWatchdog() }
         // 释放未完成的文件选择请求，否则 WebView 侧回调悬空
         if (::webView.isInitialized) fileChooser.release()
-        // v2.3.1（用户反馈「App 退出后悬浮窗还在」）：Activity 真正结束（不是旋转/recreate）
+        // Activity 真正结束（不是旋转/recreate）
         // 时收起悬浮窗；引擎/服务仍活着时下次打开会重新显示。
         if (isFinishing && !isChangingConfigurations) {
-            runCatching { StatusOverlay.hideAuto(this) }
+            runCatching { StatusOverlay.hideAuto() }
         }
         if (::webView.isInitialized && isFinishing && !isChangingConfigurations) {
             WebViewHolder.destroy()

@@ -42,7 +42,7 @@ class EngineProcess private constructor(
 
     private val waitThread = Thread({
         val status = Pty.nativeWaitChild()
-        // ⚠️ v1.2.110：解析并记录退出原因 —— 用户反馈「进程异常退出」且升级路径必现、
+        // 解析并记录退出原因 —— 用户反馈「进程异常退出」且升级路径必现、
         // 卸载重装正常，说明是旧数据/旧状态触发。引擎是被信号杀的（native crash、
         // OOM kill）还是正常退出，这行一眼可见；配合 boot step 日志能圈出是哪一步。
         // waitpid status：低 7 位 = 终止信号（0 = 正常退出），高 8 位 = 退出码。
@@ -148,12 +148,12 @@ class EngineProcess private constructor(
         // 孙进程成孤儿继续霸占 3080 → 普通引擎 EADDRINUSE 反复重启（「异常退出」循环
         // 但页面/AI 正常，服务的是孤儿）。进程组 + 子进程双保险击杀。
         if (suUsed && pid > 0) {
-            // v1.2.108：改走 Privilege.runSu —— 旧实现硬编码 `su -c`（toybox 风格 su 会报
+            // 改走 Privilege.runSu —— 旧实现硬编码 `su -c`（toybox 风格 su 会报
             // `invalid uid/gid '-c'` 并被 runCatching 吞掉，击杀静默失败），
             // 且自带一份**不完整**的 su 路径表（漏了 /vendor/bin、/data/adb/magisk、
             // /data/adb/ksu），Magisk/KernelSU 设备上会直接跳过击杀 → 孤儿占着 3080/3083。
             // runSu 内部用 findSu() 覆盖全部路径，并按设备实测挑可用的 su 形式。
-            // v2.3.3：实测 Root 模式下 `su -c` 会 fork 出 shell 再 exec node，
+            // 实测 Root 模式下 `su -c` 会 fork 出 shell 再 exec node，
             // 杀掉 su 的 pid 后 node 仍以 root 变孤儿（ps 里 UID 0 的 node-bin 继续占 3080）。
             // 因此这里先按 cmdline 精准杀 node（实测路径 .../lib/dsh-engine/node-bin），
             // 再兜底进程组/子进程；su 本身可能慢，超时放宽到 12s。
@@ -204,13 +204,13 @@ class EngineProcess private constructor(
             }.toTypedArray()
             if (suPath != null) {
                 // Root 整体提权启动。
-                //
-                // ⚠️ v1.2.100：**不能固定拼 `su -c`** —— 酷安用户（Android 15）反馈
+
+                // **不能固定拼 `su -c`** —— 酷安用户（Android 15）反馈
                 // 「授予 root 后检测不到 su」，根因就是那台设备的 su 是 toybox 版：
                 //     su: invalid uid/gid '-c'
                 // 它只认位置参数（`su 0 <cmd>`），不认 `-c`。旧实现写死 -c → 引擎起不来。
                 // 现在由 Privilege.usableSuPrefix() 实测挑出可用形式（-c / 0 / root -c）。
-                //
+
                 // ⚠️⚠️ 但 **cmd 必须保持绝对路径**（实测回归教训）：native 层
                 // `dsh_pty.c` 用 `execve(cmd, ...)`，**execve 不搜索 PATH** —— 传裸
                 // "su" 会按相对路径解析，而子进程已 chdir 到 workspaces，那里没有 su，
@@ -220,7 +220,7 @@ class EngineProcess private constructor(
                 val inner = StringBuilder()
                 inner.append("exec ").append(nodeBin.absolutePath)
                 args.forEach { inner.append(' ').append(shellQuote(it)) }
-                // ⚠️ v1.2.108：**su 会把 HOME 重置成目标用户的家目录**（root → "/"），
+                // **su 会把 HOME 重置成目标用户的家目录**（root → "/"），
                 // 我们在 env 里注入的 `HOME=$DSH_HOME` 根本穿透不过来。
                 // 后果不是「少了点便利」而是**包管理工具开箱就坏** —— 内置测试实测：
                 // root 模式下 `pnpm -v` 直接
@@ -253,7 +253,7 @@ class EngineProcess private constructor(
                         append(" && ")
                     },
                 )
-                // ⚠️ v1.3.1：su 探测失败通常是**瞬时**的（App 被强杀后立刻重启，
+                // su 探测失败通常是**瞬时**的（App 被强杀后立刻重启，
                 // magiskd 尚未重建会话 / 设备刚开机 daemon 未就绪）。旧实现一次探测
                 // 失败就直接抛 EngineStartException，配合退避 fast-path 会让「二次启动」
                 // 在前几轮必然失败。这里给两次短重试，把窗口让给 daemon 恢复。

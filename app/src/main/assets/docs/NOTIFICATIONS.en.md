@@ -12,6 +12,7 @@
 | `engine` | Engine status | LOW (persistent) | foreground service: ready/starting; carries the **Exit** action |
 | `agent_notify` | Agent notifications | DEFAULT | task-complete pushes; progress for long accessibility sequences |
 | `lan_web` | LAN WebUI | LOW | persistent "is on" reminder with a **Stop** action |
+| `dsh_progress` | Task progress | LOW | Notification-mode progress; finished snapshots clear after about 2 minutes |
 
 Android 13+ requires notification permission. Without it:
 - the foreground service still runs (its notification is just invisible);
@@ -68,11 +69,11 @@ only the engine leaves that memory parked in the background.
 teardown) does not. Reopening the app after an exit shows the normal "Start engine" state — it does
 not instantly close.
 
-## 6. Floating-ball status (not a system notification)
+## 6. Floating progress
 
-The floating ball also shows state: idle / working / listening / done, expandable to the latest
-action. It lives in the accessibility overlay, doesn't occupy the notification shade, and never
-spams while the AI works.
+The ball/card shows engine-event progress, app actions, session title and elapsed time.
+It uses the connected accessibility service when available, otherwise application overlay permission.
+There is no listening/microphone state. See [PROGRESS_OVERLAY.md](PROGRESS_OVERLAY.md).
 
 ## 7. FAQ
 
@@ -81,4 +82,4 @@ spams while the AI works.
 | No notifications at all | check notification permission (Android 13+) and per-channel settings / Do Not Disturb |
 | No notification while the AI works | fewer than 3 steps; screen reads don't count; `/loop/run` qualifies immediately |
 | Notification never disappears | it auto-dismisses 10 s after the last action; persistent ones (engine/LAN) are meant to stay |
-| Processes remain after exit | update to a build with same-uid kill; this build stops the LAN proxy and local inference too |
+| Processes remain after exit | check EngineService, LanWebProxy and LocalModel shutdown logs; inspect remaining PIDs |

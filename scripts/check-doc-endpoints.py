@@ -4,9 +4,9 @@
 背景：文档多次写了不存在的端点（例如 GET /notify —— 真实的是 GET /notif），
 会让 agent 照着调然后 404。这个脚本把「实现」当唯一真源：
 
-  * 端点：解析 AgentBridge.kt 里 `method == "X" && path == "Y"` 的 when 分支；
+  * 端点：解析 AgentBridge.kt / bridge/Router.kt 里 `method == "X" && path == "Y"` 的 when 分支；
   * 子命令：解析 assets/termux/webview-cdp.mjs 里的 `case 'xxx'`；
-  * 文档：扫描 assets/agents/*.md、assets/gates/native 里 `GET|POST /path` 与
+  * 文档：扫描根 README、docs/*.md、随包 docs/agents 与 assets/gates/native 里 `GET|POST /path` 与
     `dsh-mobile <sub>` / `dsh-mobile cdp <sub>` 的写法。
 
 发现「文档写了但没有」或「实现有但拼错」就 exit 1。构建前跑一次：
@@ -17,13 +17,14 @@ import re
 import sys
 
 ROOT = "app/src/main"
-# 路由实现已从 AgentBridge 拆到 bridge/Router.kt（Phase 2），两处都要扫：
+# 服务入口与路由分发共同构成端点清单。
 BRIDGE_FILES = [
     f"{ROOT}/java/app/dsh/mobile/engine/AgentBridge.kt",
     f"{ROOT}/java/app/dsh/mobile/bridge/Router.kt",
 ]
 HELPER = f"{ROOT}/assets/termux/webview-cdp.mjs"
-DOCS = glob.glob(f"{ROOT}/assets/agents/*.md") + [f"{ROOT}/assets/gates/native"]
+DOCS = (glob.glob(f"{ROOT}/assets/agents/*.md") + glob.glob(f"{ROOT}/assets/docs/*.md")
+        + glob.glob("docs/*.md") + glob.glob("README*.md") + [f"{ROOT}/assets/gates/native"])
 
 
 def routes():

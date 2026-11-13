@@ -1,6 +1,6 @@
 # 无障碍（a11y）依赖范围：哪些端点需要，哪些永远不需要
 
-> **一条规则。** 只有同时满足下面三条之一的端点才需要无障碍服务：
+> **一条规则。** 只有满足下面三条之一的端点才需要无障碍服务：
 > (a) 读**别的 App** 的 UI 节点树或屏幕像素；
 > (b) 往**别的 App** 注入手势/按键/文本；
 > (c) 消费无障碍事件（节点/窗口/触摸干预/通知事件）。
@@ -12,11 +12,11 @@
 
 ## 1. 本文件的用途
 
-门禁集合由逐路径原因表派生（`A11Y_DEPENDENT_REASONS`，见 `AgentBridge.kt`）：要进集合必须同时
+门禁集合由逐路径原因表派生（`A11Y_DEPENDENT_REASONS`，见 `bridge/A11yGate.kt`）：要进集合必须同时
 写清「为什么需要」，不能只加路径不解释。归类一律按 handler 的实现机制判定，不按端点名、文件名或
 类别臆测。本文档是那份分类的人读版；**代码是唯一事实来源**，两者不一致时以代码为准并修本文。
 
-## 2. 需要无障碍的端点（硬门禁，共 28 个）
+## 2. 需要无障碍的端点（硬门禁，以 A11yGate 为准）
 
 服务不可用时，这些端点由 `route()` 开头的门禁直接返回结构化 503（见 §4）；每个 handler 都确实在
 拿 `DshAccessibilityService.instance` 完成主功能。
@@ -67,7 +67,7 @@ SAF/DocumentsProvider 文件访问、读写本 App 设置。
 
 ## 5. 有条件依赖的端点（故意不进硬门禁，由 handler 自己判定）
 
-下面共 7 个端点（6 种行为 —— `/memory/lookup` 与 `/memory/store` 共用一条），它们存在
+以下端点（`/memory/lookup` 与 `/memory/store` 共用一条），它们存在
 「不需要无障碍也能成功」的路径，静态门禁会把可用场景误杀；handler 负责在真的需要却不可用时
 返回**说清原因和开法**的错误。
 
@@ -76,7 +76,6 @@ SAF/DocumentsProvider 文件访问、读写本 App 设置。
 | `GET /ocr` | 默认路径用无障碍截图做 OCR | `engine=ppocr6` 可走特权 `screencap`（Shizuku/root）；`ensure`/`download`/`models` 分支完全不需要 a11y |
 | `POST /wait-app` | 等**别的** App 的前台状态 | 目标是本 App 时走 Activity 生命周期，无需 a11y；等第三方才 503 `a11y_unavailable` |
 | `POST /memory/lookup`、`POST /memory/store` | 需要用当前屏幕算场景指纹 | body 带 `dump`（调用方自己给节点树）时完全不读屏；指纹里的包名可空 |
-| `POST /overlay` | `hide=true` 时顺手收掉悬浮窗 | **这是 agent 的思考进度推送通道**（`ProgressHub.update` / `setA11yAction`），思考时每 ~250ms 一条；更新/显示进度条完全不依赖 a11y，`StatusOverlay.hide(svc)` 接受 null。**因此它绝不能进任何「避让」逻辑**——否则每条进度都会让悬浮窗闪一下（真机事故见 `docs/OVERLAY.md` §3.p） |
 | `POST /activity` | 只影响回执里的 `bal_exempt.accessibility` 提示 | 启动走 `startActivity`，照常 200 |
 | `POST /open` | 只用于读跳转前后的前台包名做「是否真的切过去了」验证 | 服务关着仍 200，回执带 `hint` 说明未验证 |
 
@@ -93,7 +92,7 @@ SAF/DocumentsProvider 文件访问、读写本 App 设置。
 
 ## 7. 代码侧不变式与维护规则
 
-1. `A11Y_DEPENDENT_REASONS`（`AgentBridge.kt`）**就是**门禁集合：门禁遍历它的 key。加路径必须在
+1. `A11Y_DEPENDENT_REASONS`（`bridge/A11yGate.kt`）**就是**门禁集合：门禁遍历它的 key。加路径必须在
    同一张表里写人读原因 —— 写不出原因就说明分类没想清楚。
 2. `A11Y_INDEPENDENT_ACTIONS` 是反例集：启动/交接/分享/媒体/自家窗口等明确不需要无障碍的端点。
    启动时若与门禁表重叠，会 `Log.e` 打出 `a11y path classification conflict`，按本文修正。

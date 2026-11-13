@@ -18,8 +18,9 @@ OK=(); FAIL=()
 run() { local n="$1"; shift; if "$@" >/tmp/acc.log 2>&1; then OK+=("$n"); printf '  OK   %s\n' "$n";
         else FAIL+=("$n"); printf '  FAIL %s (log /tmp/acc.log)\n' "$n"; tail -4 /tmp/acc.log|sed 's/^/       /'; fi; }
 
-has()  { unzip -l "$APK" | grep -q "$1"; }
-nothas(){ ! unzip -l "$APK" | grep -qE "$1"; }
+# grep 消费完整清单，避免 -q 提前退出使 unzip 在 pipefail 下因 SIGPIPE 误报。
+has()  { unzip -Z1 "$APK" | grep -F "$1" >/dev/null; }
+nothas(){ ! unzip -Z1 "$APK" | grep -E "$1" >/dev/null; }
 SDK=${ANDROID_HOME:-$HOME/Android/Sdk}
 AAPT2=${AAPT2:-$(ls -d "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)}
 [ -x "$AAPT2" ] || { echo "找不到 aapt2（检查 $SDK/build-tools）" >&2; exit 2; }

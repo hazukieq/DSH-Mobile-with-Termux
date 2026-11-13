@@ -205,9 +205,7 @@ internal class ShortcutHandler(private val bridge: AgentBridge) {
 
     /** dumpsys shortcut 里的 intent 拼出来直接 startActivity（特权通道；无特权返回 false）。 */
     private fun launchDynamicById(ctx: Context, pkg: String, id: String): Boolean {
-        val dump = runCatching { app.dsh.mobile.engine.Privilege.runSu("dumpsys shortcut", 30_000L) }.getOrNull()
-            ?: runCatching { app.dsh.mobile.engine.Privilege.shizukuExec(ctx, "dumpsys shortcut") }.getOrNull()
-            ?: return false
+        val dump = app.dsh.mobile.engine.Privilege.runPrivileged(ctx, "dumpsys shortcut") ?: return false
         var inPkg = false
         var inTarget = false
         var component: String? = null

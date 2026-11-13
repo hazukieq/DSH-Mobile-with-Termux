@@ -9,7 +9,7 @@ class AndroidOverlayTest {
     private val doc = AndroidOverlay.overlayDocument()
 
     private val requiredPlugins = listOf(
-        "mobile-ui", "mobile-progress", "android-fast-mode",
+        "mobile-progress", "android-fast-mode",
         "android-priv-mode", "android-bridge-token", "android-plugin-health",
     )
 
@@ -40,5 +40,11 @@ class AndroidOverlayTest {
         assertTrue(doc.contains("port: !!js ctx.webStartup.port ?? 3080"))
         assertTrue(doc.contains("- id: web"))
         assertTrue(doc.contains("name: '@deepseek-ai/dsh-web'"))
+    }
+
+    @Test
+    fun `已停用的客户端插件不得重新注册`() {
+        val ids = Regex("""- id: ([\w-]+)""").findAll(doc).map { it.groupValues[1] }.toSet()
+        assertTrue("mobile-ui" !in ids)
     }
 }

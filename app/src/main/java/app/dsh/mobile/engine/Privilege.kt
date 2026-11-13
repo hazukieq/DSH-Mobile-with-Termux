@@ -39,7 +39,7 @@ object Privilege {
     private val SU_PATHS = listOf(
         "/system/bin/su", "/system/xbin/su",
         "/sbin/su", "/vendor/bin/su", "/su/bin/su",
-        // ⚠️ v1.2.112：Magisk 25+ 的 su 在 `magisk --path`（默认 /debug_ramdisk/su）——
+        // Magisk 25+ 的 su 在 `magisk --path`（默认 /debug_ramdisk/su）——
         // 不在任何 PATH 目录里，裸 `su` 找不到（KernelSU 的 /system/bin/su 在 PATH，
         // 所以此前 KernelSU 正常、Magisk 用户反馈「root 检测不到」）
         "/debug_ramdisk/su",
@@ -165,41 +165,15 @@ object Privilege {
         out
     }.getOrNull()
 
-    /**
-     * 统一提权执行（v1.2.173）：**Shizuku 优先 → su 兜底**。
-     *
-     * ## 为什么要这个入口（实测踩坑）
-     * 本机是 **Shizuku 模式**，`engine/bin/su` 是一个会主动拒绝的 shim
-     * （`su gate: priv mode != ROOT, deny su`）→ `runSu()` 永远失败。
-     * 而所有依赖提权的自愈逻辑（属主修复、杀残留进程）此前都只走 `runSu`
-     * → **在 Shizuku 模式下全部静默失效**（实测症状：重装 APK 后 uid 变化，
-     * 插件文件属主过期 → app 读不了 → 引擎报 `failed to import`；局域网代理
-     * 同样起不来）。
-     *
-     * ## 为什么 Shizuku 能修 app 私有目录
-     * Shizuku 以 **adb(2000) 身份**执行命令，shell 对 `/data/user/0/<pkg>/` 有
-     * 访问权（可 chown/chmod/kill），这正是我们需要的，且**不需要 ROOT**。
-     *
-     * @return 命令输出；两条通道都不可用时返回 null
-     */
-    fun runPrivileged(ctx: android.content.Context, command: String): String? {
-        // ① Shizuku 通道（本机主路径）
-        val viaShizuku = runCatching {
-            if (shizukuUsable()) {
-                val out = shizukuExec(ctx, command)
-                Log.i(TAG, "runPrivileged via shizuku: ${out.trim().take(80)}")
-                return out
-            }
-        }.onFailure { Log.w(TAG, "runPrivileged shizuku failed: ${it.message}") }
-        Unit
-        // ② su 兜底（ROOT 模式 / 普通设备）
-        runSu(command, timeoutMs = 8_000L)?.let {
-            Log.i(TAG, "runPrivileged via su: ${it.trim().take(80)}")
-            return it
-        }
-        Log.w(TAG, "runPrivileged: neither shizuku nor su available")
-        return null
-    }
+    /** 严格遵守所选模式；普通模式不提权，Shizuku 失败不跨越到 Root。 */
+    fun runPrivileged(ctx: Context, command: String): String? = PrivilegedCommandRouter.run(
+        getMode(ctx),
+        shizuku = {
+            runCatching { if (shizukuUsable()) shizukuExec(ctx, command) else null }
+                .onFailure { Log.w(TAG, "Shizuku command failed: ${it.message}") }.getOrNull()
+        },
+        root = { runSu(command, timeoutMs = 8_000L) },
+    )
 
     /**
      * 本机桥的请求鉴权（v1.2.100）—— **AgentBridge 与 ShizukuHttpBridge 共用**。
@@ -238,7 +212,7 @@ object Privilege {
      *         无可用 su 时返回 null
      */
     fun usableSuPrefix(): List<String>? {
-        // ⚠️ v1.2.112：**必须用 findSu() 的绝对路径**，不能用裸 "su"。
+        // **必须用 findSu() 的绝对路径**，不能用裸 "su"。
         // 裸名走 PATH，而 Magisk 的 su 不在任何 PATH 目录（/sbin/su 或
         // /debug_ramdisk/su）—— 此前 KernelSU 用户正常（其 /system/bin/su 恰在 PATH）、
         // Magisk 用户反馈「root 检测不到」（裸 su → ENOENT → 探针全失败）。
@@ -252,7 +226,7 @@ object Privilege {
             listOf(suBin, "root", "-c"),
         )
         for (f in forms) {
-            // ⚠️ v1.2.109（紧急回归修复）：探针命令必须**同时满足**两个条件：
+            // 探针命令必须**同时满足**两个条件：
             //   ① 只有经 shell 解释才能成功 —— 旧旧探针 `id` 是真实二进制，su 无论
             //      经不经 shell 都会成功，会把「不经 shell 直接 exec」的 su 形式误判
             //      可用，而那种形式下整条启动链（`cd … && export … && exec node …`）
@@ -433,7 +407,7 @@ object Privilege {
     fun dshHomeNeedsOwnershipFix(ctx: Context): Boolean {
         val home = EngineConfig.dshHome(ctx)
         return runCatching {
-            // v1.2.173：改用 runPrivileged（Shizuku 优先）—— Shizuku 模式下 su 是拒绝 shim。
+            // 特权检查遵守所选模式；普通模式只检查本 UID 能访问的条目。
             val engine = java.io.File(home.parentFile, "usr")
             // ① 自己就能判定的部分：实际尝试读取，读不了就是要修
             if (hasUnreadableEntries(ctx, listOf(home, engine))) {
@@ -509,7 +483,7 @@ object Privilege {
      *      这一步让**无 su / 无 Shizuku 的普通设备也能自愈**（旧实现遇到这种情况
      *      直接放弃，把用户推向「删掉重装」）。
      *   ② 再走特权通道 —— 处理自己改不动的（属主已是 root、跨 uid 的目录）。
-     *      用 [runPrivileged]（Shizuku 优先）退回 su，附带 restorecon 修 SELinux 标签。
+     *      用 [runPrivileged] 选择当前授权的 Shizuku 或 Root 通道，附带 restorecon 修 SELinux 标签。
      * 只要①成功就算修好；②失败不影响返回值（属主问题确实需要特权，但不该阻断）。
      */
     fun fixHomeOwnership(ctx: Context): Boolean {

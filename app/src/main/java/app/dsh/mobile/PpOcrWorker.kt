@@ -11,7 +11,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * v1.9.8（提案 P2-8）：常驻 PP-OCRv6 worker。
+ * 常驻 PP-OCRv6 worker。
  *
  * 每次 `/ocr` 冷启 python 要 ~1s（import numpy/scipy + 加载模型），连续操作时纯浪费。
  * 这里保持一个 `ppocr6_worker.py` 子进程：模型只加载一次，之后按 JSON 行喂图片路径，

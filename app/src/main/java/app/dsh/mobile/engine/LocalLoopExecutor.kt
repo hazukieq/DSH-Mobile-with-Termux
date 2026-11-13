@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 /**
  * 本地闭环执行器（v1.2.123）—— 「决策程序」的端侧执行引擎。
  *
- * ## 这是什么（主人设计的架构）
+ * ## 这是什么（设计的架构）
  * 云端大模型把任务**编译**成一份结构化决策程序（JSON DSL），本地拿着它
  * **连续执行**，不再每步往返云端：
  *
@@ -280,7 +280,7 @@ object LocalLoopExecutor {
         val retry = (step.optJSONObject("onFail")?.optInt("retry", 0) ?: 0).coerceIn(0, 2)
         // noop 没有可替换的锚点/动作，重新等一遍同一超时只会把 10s 放大成 20s。
         val effectiveRetry = if (type == "noop" || type == "sleep" || type == "collect") 0 else retry
-        // v1.2.133：默认 3000→4000 再到 5000（AI 实测反馈）——慢页面（设置→关于页）
+        // 默认 3000→4000 再到 5000（AI 实测反馈）——慢页面（设置→关于页）
         // 首次验证实际花 3007ms 踩线失败，触发一次无谓重试（整步 4146ms 里 3s 空等）。
         // 5000ms 覆盖这类慢页面，同时 verify 成功仍立即返回（不增加快页面的耗时）。
         val timeout = verify?.optLong("timeoutMs", 5000L)?.coerceIn(200L, 20_000L) ?: 5000L
@@ -288,7 +288,7 @@ object LocalLoopExecutor {
         var verifyRemaining = waitBudget
         val anchors = anchorTexts(target)
 
-        // v1.2.159：把「当前在做什么」推到悬浮窗（否则 daemon/闭环执行时界面一片空白，
+        // 把「当前在做什么」推到悬浮窗（否则 daemon/闭环执行时界面一片空白，
         // 用户完全看不出 AI 在干什么）。文案取自计划本身（desc / 目标文本），无硬编码文本。
         runCatching {
             val label = step.optString("desc").ifBlank {
@@ -304,7 +304,7 @@ object LocalLoopExecutor {
         var lastScore = 0.0
         var lastPickText = ""
         var candidatePool: JSONArray? = null
-        // v1.2.132：首次选中节点的角色——重试守卫的基准（见 performAction 内校验）
+        // 首次选中节点的角色——重试守卫的基准（见 performAction 内校验）
         var firstRole: String? = null
 
         for (attempt in 0..effectiveRetry) {
@@ -542,7 +542,7 @@ object LocalLoopExecutor {
                     "left" -> listOf(cx + dx, cy, cx - dx, cy)
                     else -> listOf(cx - dx, cy, cx + dx, cy)
                 }
-                // v1.2.149：默认**拟人化**滑动（弧线+变速+起止抖动，用户需求）；
+                // 默认**拟人化**滑动（弧线+变速+起止抖动，用户需求）；
                 // human=false 走精确直线（像素级拖拽场景）。
                 val human = action.optBoolean("human", true)
                 val dur = action.optLong("durationMs", 300L)
@@ -570,7 +570,7 @@ object LocalLoopExecutor {
                 val ok = withTimeout("scroll", 4000) {
                     svc.dispatchSwipeHuman(cx, y1, cx, y2, action.optLong("durationMs", 320L))
                 } ?: false
-                // v1.2.133：滚动后等界面稳定再返回——AI 实测反馈「scroll 未产生
+                // 滚动后等界面稳定再返回——AI 实测反馈「scroll 未产生
                 // 滚动」的真相是：它动作后立刻 dump，滚动动画未完成，看到的还是
                 // 旧内容。等稳定再交还控制权，后续读取/判断才基于新画面。
                 if (ok) settle(svc)
@@ -603,7 +603,7 @@ object LocalLoopExecutor {
                     // 在手势异步未落地时误判到底**（实测滑 1-3 次就退出，而目标需要 8 次），
                     // 已全部回滚。用户实测反馈："平均一秒不到滚一次，整体感觉很流畅"——
                     // 保持可用优先，尾巴那 2 次白滑留待有更稳的到底判据（如滚动位置读数）再动。
-                    // v1.2.159：改用**位置指纹**判"到底"——比整份 dump 稳得多：
+                    // 改用**位置指纹**判"到底"——比整份 dump 稳得多：
                     // 轮播/倒计时/toast 只改文字不改坐标，旧比较会被它们骗得一直划。
                     val fp = if (dump != null) positionFingerprint(dump) else null
                     if (fp != null && fp == lastSnap) {
@@ -1036,7 +1036,7 @@ object LocalLoopExecutor {
         while (nowMs() < deadline) {
             if (Thread.currentThread().isInterrupted) throw InterruptedException("verify interrupted")
             polls++
-            // v1.2.131：toggle 也走 dump 通道——漏掉它时「只有 toggle 的验证」
+            // toggle 也走 dump 通道——漏掉它时「只有 toggle 的验证」
             // 永远不读屏、必然超时（实测：AI 用 toggle 验证切开关，verifyHow=deadline）。
             val needsDump = anyText != null || checkedText != null || toggle != null
             if (needsDump && useScreenEvents) {
@@ -1245,7 +1245,7 @@ object LocalLoopExecutor {
         val out = ArrayList<String>()
         for (line in compact.lineSequence()) {
             val m = COMPACT_LINE.find(line.trim()) ?: continue
-            // v1.2.153：`p:` = 空输入的 placeholder（见 DshAccessibilityService 处说明），
+            // `p:` = 空输入的 placeholder（见 DshAccessibilityService 处说明），
             // 与 `d:` 一样按内容参与匹配
             val text = m.groupValues[2].trim().removePrefix("d:").removePrefix("p:").trim()
             if (text.isNotEmpty() && text != "-") out.add(text)
@@ -1284,7 +1284,7 @@ object LocalLoopExecutor {
     private fun matchesText(node: JSONObject, wants: JSONArray): Boolean {
         val text = node.optString("text")
         val desc = node.optString("desc")
-        val hint = node.optString("hint")     // v1.2.153：空输入的 placeholder 也算内容
+        val hint = node.optString("hint")     // 空输入的 placeholder 也算内容
         return (0 until wants.length()).any { k ->
             val want = wants.optString(k)
             want.isNotBlank() && (text.contains(want, true) || desc.contains(want, true) ||
@@ -1397,7 +1397,7 @@ object LocalLoopExecutor {
      *   慢动画到点放行，正确性由动作后 verify 兜底。
      */
     private fun settle(svc: app.dsh.mobile.DshAccessibilityService) {
-        // v1.2.144：改用**页面状态检测器**（用户实测提出的两个难题）：
+        // 改用**页面状态检测器**（用户实测提出的两个难题）：
         //  ① 持续动态内容（Banner 轮播）让"像素稳定"永远不成立 → 旧逻辑白等满预算；
         //  ② 慢加载（进页面卡 4-5 秒）会在加载页上就执行动作 → 必然失败。
         // 新判据 = **结构签名**（节点数+角色+格位，不含文本）就绪即返回（通常

@@ -42,59 +42,36 @@ import app.dsh.mobile.engine.SceneMemory
  */
 internal class Router(private val bridge: AgentBridge) {
 
-    /**
-     * **不存在「路径级避让表」，也不要再加回来。**
-     *
-     * v2.9.91：上一版把 `OPS_AVOID_PATHS` 清成空集但保留了这张表本身——仍是隐患（有人看到空表
-     * 就会「顺手补两个」）。这里直接删掉机制，只留下显式 opt-in。
-     *
-     * 历史事故（两次，同一个错误）：
-     *   * `/act` 无差别避让 → agent 连续操作时 3Hz 闪烁（2.9.86 修）；
-     *   * `/overlay` 被当成「注入端点」→ 但它是 **agent 的思考进度推送通道**
-     *     （`ActionHandler.overlay` → `ProgressHub.update` / `setA11yAction`），思考时每 ~250ms
-     *     一条，于是每条进度都把窗口 INVISIBLE 一次：真机 30s 内 1154 次 `ops avoid: /overlay`。
-     *
-     * 判断一个端点能不能碰悬浮窗可见性，只看**它会不会注入触摸**，不看名字：
-     *
-     * | 端点 | 性质 | 避让 |
-     * |---|---|---|
-     * | `/act` `/gesture` `/tap` `/tap-id` `/key` `/input` `/scroll-*` `/vision/tap` `/vision/drag` `/pick` `/loop/run` | 注入触摸 | **手势层判**（`DshAccessibilityService.dispatchGestureAvoided`） |
-     * | `/overlay` | 思考进度推送（250ms 级） | **否** |
-     * | `/screenshot` `/ocr` `/frame-wait` `/frame-diff` `/calib` | 截图/识别（已走免闪 composite） | **否** |
-     * | `/open/file` `/open/folder` `/open/share` `/launch` `/notify` `/say` | hand-off / 提示 | **否** |
-     *
-     * 唯一保留：调用方在 body 里显式写 `"avoid": true`（它自己知道为什么要整段藏）。
-     */
-    private fun explicitAvoid(method: String, body: String) =
-        method == "POST" && body.contains("\"avoid\":true")
+    /** 正常路由不触发避让；只读取顶层显式 opt-in，不能按路径或字符串片段判断。 */
+    private fun explicitAvoid(method: String, body: String): Boolean =
+        method == "POST" && runCatching { JSONObject(body).optBoolean("avoid", false) }.getOrDefault(false)
 
     internal fun route(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
         // 正常请求不碰悬浮窗可见性；只有调用方显式写 "avoid":true 才整段隐藏。
         val avoid = explicitAvoid(method, body)
         // 诊断用：谁在让悬浮窗隐藏（vivo 实测出现过 3Hz 的 hide/show 循环，靠这条定位来源）
         if (avoid) Log.i("AgentBridge", "ops avoid: $path")
-        if (avoid) runCatching { StatusOverlay.beginOpsAvoid() }
+        val avoidLease = if (avoid) StatusOverlay.beginOpsAvoid() else null
         try {
             return routeInner(ctx, method, path, query, body)
         } finally {
-            if (avoid) runCatching { StatusOverlay.endOpsAvoid() }
+            StatusOverlay.endOpsAvoid(avoidLease)
         }
     }
-
 
     private fun routeInner(ctx: Context, method: String, path: String, query: String, body: String): Pair<Int, String> {
         with(bridge) {
         // 每次请求都顺手预取一次 OCR（TTL 防刷）：a11y 受限时可直接兜底
         DshAccessibilityService.instance?.let { screen.prefetchOcr(it) }
-        // v1.2.182（用户需求）：AI 进行「一大串」无障碍操作时发一条系统通知，
+        // AI 进行「一大串」无障碍操作时发一条系统通知，
         // 让用户随时知道它真的在干活（而不是界面自己变来变去像 bug）。
         // 只统计**动作类**端点（点击/输入/滑动/按键/启动…），读屏类不计入 ——
         // 否则每看一眼屏幕都算一步，通知会烦人。
         // ⚠️ ACTING_PATHS 只影响通知计数，**不是**无障碍门禁集合（见 docs/A11Y-SCOPE.md）。
         if (method == "POST" && path in ACTING_PATHS) screen.noteA11yOperation(ctx, path)
-        // v1.7.3：无障碍「已启用但未绑定」时先等 1.5s，再给出可区分的错误，
+        // 无障碍「已启用但未绑定」时先等 1.5s，再给出可区分的错误，
         // 避免 Agent 预检/动作拿到笼统的 503 就判定「无障碍没开」。
-        // v2.5.3（事故修复，见 docs/A11Y-SCOPE.md）：门禁**只查 A11Y_DEPENDENT_PATHS**，
+        // 门禁**只查 A11Y_DEPENDENT_PATHS**，
         // 即「读/写无障碍节点树 + 注入手势/按键/文本 + 无障碍截图 + 无障碍事件缓存」的并集；
         // 集合里每个 handler 都必然拿 DshAccessibilityService.instance 才能完成主功能。
         // 反例（v2.5.2 事故）：旧集合把 /launch、/launch-intent、/open、/app-screenshot 也算进去，
@@ -118,7 +95,7 @@ internal class Router(private val bridge: AgentBridge) {
                 }
                 return 503 to JSONObject()
                     .put("ok", false)
-                    // v1.8.0（提案 P1-5）：err 用稳定 code，便于上层一次判断；人读文案放 reason。
+                    // err 用稳定 code，便于上层一次判断；人读文案放 reason。
                     .put("error", if (enabled) "a11y_connecting" else "a11y_off")
                     .put("code", if (enabled) "a11y_connecting" else "a11y_off")
                     .put("endpoint", path)

@@ -40,7 +40,7 @@ restart: the engine will stop/start by itself; do not run another restart
 - `EngineSupervisor` 在 `spawnEngine()` 前、以及健康轮询失败后清理外来监听者：
   `portListenInodes()` 解析 `/proc/net/tcp`、`/proc/net/tcp6` 的 LISTEN 行取 socket inode →
   `pidsForSocketInodes()` 扫 `/proc/<pid>/fd` 反查 PID → `killForeignPortHolders(port)` 杀掉既不是本进程、
-  也不是受管子进程的监听者，并 `waitPortFree(3080, 2000ms)`；最终只有受管引擎占用 3080，WebView 用新
+  也不是受管子进程的监听者，并等待端口释放；最终只有受管引擎占用 3080，WebView 用新
   token 重载。
 
 ## 3. 重启后的 token 与 WebView
@@ -60,25 +60,15 @@ Android 的返回键/返回手势只做两件事，**都不销毁 App**：
 | `webView.canGoBack()` | `webView.goBack()` | 类原生浏览体验：先回上一页 |
 | 没有网页历史 | `moveTaskToBack(true)`：App 退到桌面 | 保住热状态 |
 
-旧实现（≤2.9.96）第二分支走 `super.onBackPressed()` = `finish()`：Activity 被销毁，WebView 跟着回收，
-再从桌面点进来要重新建 WebView、重新加载整个 SPA、重新连引擎——用户看到的是「又从头加载一遍」。
-
-`moveTaskToBack` 只把任务退到后台：进程、WebView、滚动位置、当前会话全保留。真机实测
-（vivo V2520A / Android 17，`input keyevent 4`）：焦点从 `MainActivity` 变为 `com.bbk.launcher2`，
-`pidof com.termux` 前后都是 26416（进程未重启），日志 `I/MainActivity: back at web root: moveTaskToBack instead of finish`；
-再从桌面启动，整屏像素差 `0.02%`（只有状态栏时钟/电量变化），即**没有重新加载**。
-
-注意：本 App 的 SPA 是**状态驱动、不写 URL/hash**（`/json` 里打开会话后地址仍是 `http://127.0.0.1:3080/`），
-所以 `canGoBack()` 在实际使用中基本恒为 false；回到「会话列表」是网页内部左上角 `←` 的职责，不是系统返回键的。
-若将来需要「返回 = 回会话列表」，应让网页侧注册历史（`history.pushState`）或由 App 调 CDP 点那个箭头，
-不要把状态塞进 `onBackPressed` 里猜。
+返回根页时只是把任务移到后台；系统仍可回收后台进程，因此不承诺无限保留热状态。
+WebUI 内部会话导航由网页负责，系统返回键按实际 WebView 历史处理。
 
 ## 4. Agent 应该怎么做
 
 1. 先告诉用户「我将重启引擎，当前回合会中断」；
 2. 执行 `dsh-update restart`（或 `POST /engine/restart`）；
 3. 不要使用插件市场的「立即重启」，不要杀 node 进程；
-4. 重启后验证：`GET /health`（或设置页状态）与 WebUI 可访问，再继续任务。
+4. 重启后验证：`GET /status`（或设置页状态）与 WebUI 可访问，再继续任务。
 
 ## 5. 排障
 

@@ -121,7 +121,7 @@ object ScreenOcr {
                     cached = true, unavailable = l == null, capturedAt = lastShotAt)
             }
         }
-        // v2.9.72：OCR **不避让**悬浮窗（避让 = INVISIBLE = WMS 销毁并重建 surface = 闪），
+        // OCR **不避让**悬浮窗（避让 = INVISIBLE = WMS 销毁并重建 surface = 闪），
         // 改为把落在悬浮窗矩形里的识别块剔掉（与 prefetchOcr 同策略）。
         val shot = runCatching { svc.screenshotArgb(avoidOverlay = false) }.getOrNull()
             ?: return unavailable(t0)

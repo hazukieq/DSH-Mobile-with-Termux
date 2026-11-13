@@ -7,7 +7,7 @@ import org.json.JSONObject
 /**
  * `/runtime/…` 端点（引擎层热更新的 status/stage/pull/apply/rollback）。
  *
- * Phase 2 从 AgentBridge 提出：这组端点只依赖 RuntimeUpdater，与无障碍/屏幕/剪贴板
+ * 这组端点只依赖 RuntimeUpdater，与无障碍/屏幕/剪贴板
  * 毫无关系，独立成对象后 AgentBridge 的 route() 只留一行分发。
  */
 internal object RuntimeHandler {

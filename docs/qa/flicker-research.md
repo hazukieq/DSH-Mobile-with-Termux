@@ -1,5 +1,7 @@
 # 无障碍悬浮窗闪烁 / 截图避让 / 点不到 —— 资料研究
 
+> 历史取证记录：结论仅适用于文中设备、版本和采样范围。当前行为与维护约束见相关使用文档；旧行号和临时文件路径不代表当前工作区。
+
 > 调研时间：2026-11-06。所有 AOSP 源码均取自 `refs/heads/main`（即当时最新 main，介于 Android 16 与 17 之间），
 > 通过 android.googlesource.com 的 `+/refs/heads/main/<path>?format=TEXT`（返回 base64）实际下载后阅读，
 > 报告中的 `文件:行号` 与 §8.1 的 URL 可逐项核对，**行号为抓取当刻的值，上游提交后会漂移**。
@@ -478,76 +480,10 @@ targetSdk 分支）。标【未验证】。
 
 ---
 
-## 6. Q6：最佳实践 —— 「不重建窗口、不摘窗口」前提下让 overlay 不进截图且不闪
+## 后续实现
 
-### 6.1 方案对照
-
-| 方案 | 是否销毁/重建 surface | 截图里是否干净 | 触摸 | 改动量 | 适用 |
-|---|---|---|---|---|---|
-| **A. `takeScreenshotOfWindow`（推荐）** | 否 | 是（官方语义） | 完全不受影响 | 小：截屏改用新 API + 拿目标 window id | API 34+；本项目真机满足 |
-| **B. 自持 SurfaceControl（`attachAccessibilityOverlayToWindow` + `SurfaceControlViewHost`）** | 否（`hide()`/`setAlpha()` 只翻标志） | 是（§2.3 `isHiddenByPolicy`） | 不受影响 | 大：悬浮窗架构从 `WindowManager.addView` 换成 SCSH | API 34+；长期正解 |
-| **C. 截图避让改用 `root.setAlpha(0f)`** | 否（`setAlpha` 不改变 window 可见性 → 不触发 §1 的 destroy 路径） | 是（像素全透明；层仍可见但内容透明） | 仍可点（窗口仍 touchable） | 极小：`beginCaptureAvoid` 里 `root.visibility=INVISIBLE` → `root.setAlpha(0f)` | 当前 2.9.71 架构，**先试这个** |
-| **D. 把 view visibility 只用于「真隐藏」** | 会 | 是 | 隐藏期间穿透（官方允许） | 小：确保截图路径不再用 INVISIBLE | 兜底 |
-| **E. `params.alpha = 0`** | 不销毁（只改 layer alpha） | **源码上应为是**（`color.a > 0` 判据） | 穿透 | 小 | ⚠ 与现场「仍被拍到」矛盾，需复测后再定论 |
-
-### 6.2 方案 C 的依据与风险
-
-**依据**：`View.setAlpha(0)` 改的是 RenderNode 的 alpha，随下一帧绘制**烘进 buffer**，不改 window 的 `viewVisibility`，
-因此 **不会**进入 §1 的 `relayoutWindow(viewVisibility != VISIBLE)` 分支 → 不会 `destroySurface`。
-同时 `LayerSnapshot::getIsVisible()` 用的是 **layer 的 `color.a`**（来自 `SurfaceControl.setAlpha` 或窗口 alpha），
-不是 buffer 里的像素 alpha —— 所以 layer 仍判「可见」，但合成出来的像素是全透明的 → 截图里看不到悬浮窗。
-
-**风险 / 待验证**：
-1. 若悬浮窗有 `elevation` 阴影 / `blur`，`getIsVisible()` 里 `color.a > 0.0f || hasBlur()` 的 blur 分支可能需要额外确认；
-2. `setAlpha(0)` 仍需一次全树重绘（GPU 成本），比「不画」贵，但比销毁重建 surface 便宜得多；
-3. 如果系统在 alpha=0 时把窗口加入「完全透明窗口」例外（§4.1），触摸会穿透 —— 与方案 D 相同的取舍；
-4. **必须真机验证**：`dumpsys SurfaceFlinger --list | grep <你的层名>` 在避让前后应保持存在（不消失、不换名）。
-
-### 6.3 方案 A 的落地细节（API 34+）
-
-```text
-1. 服务 XML 声明 android:canTakeScreenshot="true"
-2. 用 AccessibilityService.getWindows() 找到目标窗口的 AccessibilityWindowInfo.getId()
-   （注意：是"要截的那个 App 窗口"，不是你自己的 overlay）
-3. 调 takeScreenshotOfWindow(windowId, executor, callback)
-4. 用 Bitmap.wrapHardwareBuffer(result.getHardwareBuffer(), result.getColorSpace()) 取图
-5. 全程不需要改悬浮窗可见性 → 零闪烁、零触摸中断
-```
-
-限制（据官方文档语义）：**一次只能截一个窗口**；多个窗口/系统对话框需要拼；某些窗口（如安全窗）不可截。
-本项目若只需「截当前前台 App 内容」，这正好够用。
-
-### 6.4 一个反直觉的提醒
-
-`Thread.sleep(120)` 不解决任何同步问题：截图请求与图层状态之间没有「睡够 120ms 就一致」的契约。
-把它换成「基于回调的帧同步」（如 `Choreographer.postFrameCallback` + 一次 `ViewRootImpl` 的 traversal 完成信号，
-或干脆用方案 A）才有确定语义。若必须用隐藏法，至少改为 `root.post { ... }` 在下一帧开始后截图，而不是盲睡。
-
----
-
-## 7. 对本项目最直接的 3 条可执行建议
-
-1. **先做归因实验（0.5 小时）**：把 `beginCaptureAvoid/endCaptureAvoid` 与所有 `hideRefs` 触发的
-   `root.visibility=INVISIBLE` 全部注释，静置 3 分钟看是否还闪。
-   - 不闪 → 路径 A 确认，§1 机制成立，按 2/3 改；
-   - 仍闪 → 路径 B（系统侧，§3.4），改架构收益有限，优先降级为「接受偶发不可见 + 用 `dumpsys SurfaceFlinger --list`
-     录证据向 HyperOS 反馈」，同时试方案 B（自持 SurfaceControl），它对系统侧可见性异常也更稳。
-   - 同步跑一条 `logcat -v time | grep -iE "Force stopping|accessibility.*(unbind|disable)"`，排除 §4.5 的 HyperOS 杀服务。
-
-2. **把截图避让从「改可见性」改成「不改可见性」（1 小时，改动最小）**：
-   - 首选：截图直接改用 `takeScreenshotOfWindow`（API 34+，真机满足），**彻底删掉截图相关的 hide/show**；
-   - 次选（若截屏路径短期改不动）：`beginCaptureAvoid()` 里把 `root.visibility=INVISIBLE` 换成
-     `root.alpha = 0f`，`endCaptureAvoid()` 里 `root.alpha = 1f`（不要 `requestLayout()`，用 `invalidate()`），
-     并把 `Thread.sleep(120)` 换成 `postFrameCallback` 一次；验证指标是 `dumpsys SurfaceFlinger --list` 里层名不消失。
-
-3. **给「点不到」上护栏（1 小时）**：既然官方允许 INVISIBLE 窗口穿透（§4.1），而 input 表是异步刷新（§4.3），
-   就不要在触摸关键路径上做任何可见性/alpha 抖动：
-   - 若必须临时不可见，同时 `params.flags |= FLAG_NOT_TOUCHABLE` 是**错误方向**（会让点击落到下层）；
-   - 正确方向是**保持窗口 touchable 且像素透明**（方案 C），这样点得到、且截图干净；
-   - 另加一条自检：`root.getWindowVisibility()` 与 `root.isShown()` 变化时打点，确认与「点不到」的时间戳对得上，
-     避免继续猜。
-
----
+研究阶段的 alpha 隐藏试验和实施建议已被后续窗口合成截图方案替代，删除原建议，避免再次作为落地指令。
+当前截图路径和回退约束见 `docs/OVERLAY.md`，本记录保留前面的系统源码证据与参考来源。
 
 ## 8. 参考清单（按可信度分档）
 
@@ -603,11 +539,3 @@ targetSdk 分支）。标【未验证】。
 - https://issuetracker.google.com/issues/35819848 、 https://issuetracker.google.com/issues/35824183 （未抓取）
 
 ---
-
-## 9. 一页纸结论
-
-- `INVISIBLE` 不是「隐藏」，是「销毁」。→ 闪烁的根因在**自己的代码路径**里，不在系统。
-- 截图与图层状态之间没有同步契约 → 任何「先藏后截」的方案都是碰运气；官方已给出 `takeScreenshotOfWindow`。
-- 「点不到」是 `INVISIBLE` 的**官方语义**（允许穿透）+ input 表异步刷新，不是玄学。
-- 真正稳的做法只有两类：**① 不改可见性去截（API 34 API）**，**② 自持 SurfaceControl 翻 `eLayerHidden` 标志（API 34 架构）**。
-- 2.9.71 的最小改动窗口：截图路径改用 `takeScreenshotOfWindow`；短期退路是 `root.alpha=0f`（不碰 window visibility）。

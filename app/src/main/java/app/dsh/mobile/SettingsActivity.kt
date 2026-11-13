@@ -41,7 +41,6 @@ class SettingsActivity : Activity() {
     private var progressA11yValue: TextView? = null
     private var progressKeepaliveValue: TextView? = null
 
-
     /** 屏幕朝向偏好（v1.2.120 三态） */
     private var orientMode: OrientationMode = OrientationMode.PORTRAIT
     private var pageScale = DEFAULT_PAGE_SCALE
@@ -52,7 +51,7 @@ class SettingsActivity : Activity() {
     /** Shizuku 授权结果监听（requestPermission 异步回调后刷新状态行） */
     private val shizukuPermListener =
         rikka.shizuku.Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
-            // v1.2.158：记住用户的选择——拒绝后不再自动弹窗（隐私）
+            // 记住用户的选择——拒绝后不再自动弹窗（隐私）
             if (requestCode == SHIZUKU_REQ) {
                 Privilege.markShizukuDenied(this, grantResult != android.content.pm.PackageManager.PERMISSION_GRANTED)
             }
@@ -66,7 +65,7 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 设置页固定竖屏：即使主界面开了横屏模式，设置页也不跟随旋转
-        // v2.9.110：跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
+        // 跟主界面同一套朝向策略（原来硬编码竖屏，平板横屏进来会突然跳竖屏）。
         OrientationPrefs.applyTo(this)
         setContentView(R.layout.activity_settings)
         addProgressSection()
@@ -79,7 +78,7 @@ class SettingsActivity : Activity() {
 
         // —— 扩展：局域网访问 WebUI（v1.2.160/v1.2.161）——
         // 独立端口 3090 的反向代理，让同网段设备用原生 WebUI 连上本机引擎。
-        // v1.2.161（用户要求）：验证码改为 **6 位数字 + 每次开启重新随机**，
+        // 验证码改为 **6 位数字 + 每次开启重新随机**，
         // 生成后**自动复制到剪贴板**，且**只在应用内显示一次**（退出再进设置不显示）。
         val swLan = findViewById<android.widget.Switch>(R.id.swLanWeb)
         val lanSub = findViewById<android.widget.TextView>(R.id.lanWebSub)
@@ -88,7 +87,7 @@ class SettingsActivity : Activity() {
         // （拉起要 1-3s，停止要等进程回收）→ 点开关的瞬间读到的还是旧状态，
         // 表现正好相反。改为**以开关自身的状态为准**（用户看到的就是他点的那个状态），
         // 地址只在该状态为"开"时展示。
-        // v1.2.162（用户要求）：**行内不再保留验证码** —— 验证码只在开启时的
+        // **行内不再保留验证码** —— 验证码只在开启时的
         // 提示框里显示一次，避免长期驻留。行内只显示说明与访问地址。
         fun lanSubText() {
             val on = swLan.isChecked
@@ -105,7 +104,7 @@ class SettingsActivity : Activity() {
             }
         }
         swLan.isChecked = DshApp.lanWebEnabled(this)
-        // v1.2.162：验证码只在**刚生成时**用提示框展示一次（行内不再保留）。
+        // 验证码只在**刚生成时**用提示框展示一次（行内不再保留）。
         val pendingShown = DshApp.lanWebPwPending(this)
         if (pendingShown && DshApp.lanWebEnabled(this)) {
             val c = DshApp.lanWebPassword(this)
@@ -127,7 +126,7 @@ class SettingsActivity : Activity() {
                         DshApp.setLanWebEnabled(this, true)
                         // 每次开启都重新生成 6 位验证码
                         val code = DshApp.regenerateLanWebPassword(this)
-                        // v1.2.162（用户要求）：改用「提示框」展示 —— 验证码显著、可点复制；
+                        // 改用「提示框」展示 —— 验证码显著、可点复制；
                         // 访问地址紧贴其下（小字、也可复制）；行内不再保留验证码。
                         runCatching {
                             LanAccessDialog.show(
@@ -218,7 +217,6 @@ class SettingsActivity : Activity() {
         }
         refreshNotifRow()
 
-
         // —— 终端（2026-10-18）：原生 PTY 终端页 ——
         findViewById<LinearLayout>(R.id.rowTerminal).setOnClickListener {
             startActivity(app.dsh.mobile.term.TerminalActivity.intent(this))
@@ -269,7 +267,7 @@ class SettingsActivity : Activity() {
                     dlg.dismiss()
                     // 立即生效：本页原地重建（recreate 会重走 attachBaseContext →
                     // 按新语言重新 inflate 布局），用户马上看到文案变化。
-                    //
+
                     // 旧实现是「清任务栈 + 重新拉起 Launcher」——那是跨进程重建，
                     // 用户实测「切换后 UI 不能及时响应」（要等整个应用重开）。
                     // 现在只重建当前页；MainActivity 在 onResume 会检测到语言变化
@@ -704,7 +702,7 @@ class SettingsActivity : Activity() {
 
     /** dp → px 小工具（对话框内边距用） */
     /**
-     * v1.3.68：后台进度提示设置区。
+     * 后台进度提示设置区。
      *
      * 显示方式：关闭 / 通知（默认，无需无障碍）/ 悬浮窗（优先应用悬浮窗，无权限回退通知）。
      * 下面三行只展示权限状态，点击直达对应系统页；「预览一次」用示例进度验证通知是否正常。
@@ -818,6 +816,7 @@ class SettingsActivity : Activity() {
                 ProgressHub.setMode(this, mode)
                 progressModeValue?.text = ProgressHub.modeLabel(this, mode)
                 if (mode == ProgressHub.MODE_OVERLAY &&
+                    DshAccessibilityService.instance == null &&
                     !android.provider.Settings.canDrawOverlays(this)
                 ) {
                     Toast.makeText(this, getString(R.string.progress_not_granted), Toast.LENGTH_LONG).show()
