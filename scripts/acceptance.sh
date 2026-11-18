@@ -31,6 +31,9 @@ run "文档端点/子命令"   python3 scripts/check-doc-endpoints.py
 run "开发文档未随包"    python3 scripts/check-bundled-docs.py
 run "悬浮窗避让边界"    python3 scripts/check-overlay-avoid.py
 run "内置 pnpm 完整性"  python3 scripts/check-bundled-pnpm.py
+run "引擎升级回归"      python3 -m unittest discover -s scripts/tests -p test_engine_upgrade.py
+run "纪律技能布局"      python3 scripts/check-agent-skills.py
+run "纪律提醒回归"      node --test scripts/tests/test-discipline.mjs
 if [ "$STATIC_ONLY" = 0 ]; then
   export ANDROID_HOME=${ANDROID_HOME:-$HOME/Android/Sdk} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}
   run "JVM 单测" flock /tmp/dsh-gradle.lock "$HOME/Projects/common/dsh-android-build/gradle-8.9/bin/gradle" -p . testDebugUnitTest --no-daemon
@@ -50,6 +53,9 @@ if [ ! -f "$APK" ]; then FAIL+=("APK 存在"); echo "  FAIL $APK 不存在"; els
   run "包名/版本/ABI"   bash -c 'set -e; b=$('"$AAPT2"' dump badging '"$APK"'); echo "$b"|grep -q "name=.com.termux"; echo "$b"|grep -q "arm64-v8a"; echo "$b"|grep -q "versionName="'
   run "引擎层资产"      has assets/engine-dsh-aarch64.zip
   run "mobile-ui 已移除"  nothas "assets/android-plugins/mobile-ui/"
+  run "纪律技能资产"    has assets/skills/a11y-tap-discipline/SKILL.md
+  run "任务纪律资产"    has assets/skills/task-execution-discipline/SKILL.md
+  run "纪律提醒插件"    has assets/android-plugins/discipline.mjs
   run "产物文档"        has assets/docs/SECURITY-AUDIT.md
   run "无开发文档"      nothas "assets/docs/(ANDROID-CLI|refactor_guide|code_review|AI_CONTEXT)"
 fi
@@ -57,15 +63,11 @@ fi
 
 if [ -n "$DEVICE" ]; then
 echo "== 4/4 真机冒烟 ($DEVICE)"
-A() { adb -s "$DEVICE" shell "$@"; }
-run "装机" adb -s "$DEVICE" install -r -d "$APK"
-run "引擎就绪(401)" bash -c 'adb -s'"$DEVICE"' shell am force-stop com.termux; adb -s'"$DEVICE"' logcat -c; adb -s'"$DEVICE"' shell am start -n com.termux/app.dsh.mobile.MainActivity >/dev/null; for i in $(seq 1 40); do c=$(adb -s '"$DEVICE"' shell "curl -s -o /dev/null -m 3 -w %{http_code} http://127.0.0.1:3080/"|tr -d "\r"); [ "$c" = 401 ] && exit 0; sleep 2; done; exit 1'
-run "引擎版本文件" bash -c 'adb -s '"$DEVICE"' shell "su -c \"cat /data/user/0/com.termux/files/usr/.dsh-engine-version\""|grep -q "0\.2\."'
-run "冷启动打点" bash -c 'for i in $(seq 1 20); do adb -s '"$DEVICE"' logcat -d -s DshColdStart|grep -q engine.portReady && exit 0; sleep 2; done; exit 1'
+run "装机并启动" android run --device "$DEVICE" --activity app.dsh.mobile.MainActivity "$APK"
+# ContentProvider exec is not exposed by android CLI. This test uses the app UID
+# in Normal mode and never switches privilege mode or invokes su/Shizuku.
+run "真机引擎与隔离升级回归" python3 scripts/test-engine-upgrade-device.py --device "$DEVICE" --require-live-engine
 
-# 交互与特权的完整回归（分享 / 原生窄屏 / 长按菜单 / NORMAL→ROOT→SHIZUKU 模式切换 / Agent 原语）
-run "Shizuku 服务就绪" bash scripts/start-shizuku.sh --device "$DEVICE"
-run "真机交互+特权冒烟" bash scripts/smoke-device.sh --device "$DEVICE" --priv-cycle
 fi
 
 echo

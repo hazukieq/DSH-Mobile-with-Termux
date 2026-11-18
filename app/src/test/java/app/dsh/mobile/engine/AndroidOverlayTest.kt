@@ -9,7 +9,7 @@ class AndroidOverlayTest {
     private val doc = AndroidOverlay.overlayDocument()
 
     private val requiredPlugins = listOf(
-        "mobile-progress", "android-fast-mode",
+        "mobile-progress", "android-fast-mode", "android-discipline",
         "android-priv-mode", "android-bridge-token", "android-plugin-health",
     )
 

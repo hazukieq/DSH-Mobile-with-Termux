@@ -330,7 +330,11 @@ NODE_ARCH=""
 case "$ARCH" in aarch64) NODE_ARCH=arm64 ;; x86_64) NODE_ARCH=x64 ;; esac
 RGP="$NM/@vscode/ripgrep-android-$NODE_ARCH"
 mkdir -p "$RGP/bin"
-cp "$ROOT/bin/rg" "$RGP/bin/rg"
+# A self-contained engine's bin/rg is a relative wrapper; copying it into
+# node_modules would resolve lib/dsh-engine relative to the package instead.
+RG_SOURCE="$ROOT/bin/rg"
+[ ! -x "$ROOT/lib/dsh-engine/rg-bin" ] || RG_SOURCE="$ROOT/lib/dsh-engine/rg-bin"
+cp "$RG_SOURCE" "$RGP/bin/rg"
 chmod 0755 "$RGP/bin/rg"
 printf '%s\n' "{\"name\":\"@vscode/ripgrep-android-$NODE_ARCH\",\"version\":\"1.0.0-android-native\"}" > "$RGP/package.json"
 test -x "$RGP/bin/rg" || { echo "错误：ripgrep 平台包注入失败" >&2; exit 1; }

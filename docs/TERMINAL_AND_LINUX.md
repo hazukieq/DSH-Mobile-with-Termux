@@ -138,57 +138,31 @@ dsh-update howto                         # 打印「自己编译上游 dsh」的
 
 ### 自己编译上游 dsh
 
-引擎层 = Termux 版 node + `@deepseek-ai/dsh` 依赖闭包 + 一组 Android 兼容补丁，所以
-「编译」是在 **x86_64 Linux 主机**上重新组装，不是手机上 gcc（手机上也没有工具链）。
+完整步骤见 ENGINE-BUILD.md §1；手机端见 §1.7。使用上游 `pack.ts --family dsh`
+的本地 tarball，以 `file:` 依赖装出 consumer，再运行 `bash scripts/build-engine-closure.sh`。
+不要直接复制 monorepo 的 `node_modules`。Android 上设置 `TMPDIR="$PREFIX/tmp"`，
+显式通过 Node 运行独立 npm / pnpm CLI，并按所用 pnpm 版本关闭自动切换。
 
-```sh
-# 0) 选上游 tag（不是 npm dist-tag），例如 dsh-v0.2.2-alpha.2
-# 1) 主机依赖：node/npm(>=20)、pnpm、unzip、zip、python3、llvm-readelf（NDK 自带）
-export NPM_REGISTRY=https://registry.npmmirror.com
-export TERMUX_REPO=https://mirror.nju.edu.cn/termux/apt/termux-main
-# 2) 取上游 dsh + 打 bionic 兼容补丁 + 收 Termux 运行时
-DSH_VERSION=0.2.2-alpha.2 scripts/collect-termux-runtime.sh /tmp/rt-arm64.zip aarch64
-# 3) 组装引擎层（同热更新包布局，顺手校验 ABI）
-scripts/build-engine-layer.sh --runtime /tmp/rt-arm64.zip --arch aarch64 \
-    --out /tmp/engine-mine --engine-version "0.2.2-alpha.2+my1"
-# 4) 推进手机并切换（sha256 用 sha256sum 算）
-adb push /tmp/engine-mine/engine-dsh-aarch64.tar.gz /sdcard/Download/
-dsh-update stage /sdcard/Download/engine-dsh-aarch64.tar.gz <sha256>
-dsh-update apply            # 换层 → 等旧引擎退出 → 健康检查；失败自动回滚
-dsh-update rollback         # 不满意随时回上一份
-```
+若需重收 Termux 运行时，先准备 consumer，再设置 `DSH_SOURCE_DIR=<consumer/node_modules>`
+运行 `bash scripts/collect-termux-runtime.sh`，最后用 `bash scripts/build-engine-layer.sh` 组装。
+构建脚本不再从 npm registry 自动安装 dsh。耗时、包数、镜像速度随环境变化。
 
-- **不要跳过第 2 步**：apiproxy / webview-polyfill / koffi 打桩 / session-persistence /
-  flock 等 bionic 兼容补丁都在那里；跳过通常表现为 WebUI 白屏或引擎起不来。
-- **镜像**：Termux 源 NJU 最快（实测 ~521 kB/s），USTC 可用，TUNA/BFSU 的 termux 路径会
-  403；npm 用 npmmirror（~1.5 MB/s）。
-- **引擎 tar 的最小布局**（自己手搓包时必须满足）：`lib/node_modules/**`（dshEntry 按 npm
-  布局解析，缺了就是空壳）+ `.dsh-engine-version`（status/回滚识别）；`bin/node`、`bin/rg`
-  可选，缺了沿用旧引擎/运行时那份。**不要把 runtime.zip 直接 stage**。
-- **手机端自建也可行**（≈10–15 分钟，主要在 `pnpm install` 与构建；完整步骤、内存/存储/换源
-  三个硬约束见 [ENGINE-BUILD.md](ENGINE-BUILD.md) §1.7）：
-  `pkg install nodejs-lts pnpm zip` → `git clone --depth 1 -b dsh-v0.2.2-alpha.2
-  https://github.com/deepseek-ai/deepseek-harness.git` → `pnpm install --frozen-lockfile` →
-  `pnpm build:official` → 把 `lib/node_modules` 闭包 + `.dsh-engine-version` 打 tar 后
-  `stage`/`apply`。内存吃紧时给 node 加 `--max-old-space-size=4096`。
-- 想验证自己的包：`dsh-update stage` 后先 `apply`，`status` 里看引擎版本与健康检查结果。
-
-
-- 版本按 `@deepseek-ai/dsh` 判断，不按 APK 版本。
-- `apply` 把旧层移到 `$PREFIX/.engine-prev`，换入后重启引擎，用
-  `http://127.0.0.1:3080/` 做健康检查（120 s）；新树不健康自动回滚。
-- 只换引擎层，所以更新引擎不会破坏 `pkg`/`apt`。
+引擎 tar 必须包含 `lib/node_modules/@deepseek-ai/dsh/lib/bin.js` 与 `.dsh-engine-version`。
+核对 SHA-256 后 `dsh-update stage <path> <sha256>`，再手动 `dsh-update apply`；
+失败可用 `dsh-update rollback` 恢复。不要把 runtime.zip 当成引擎热更新 tar。
 
 ### feed 与手动发布
 
-- 默认 feed：本仓库 release `dsh-engine-latest/engine-manifest.json`
-  （`{dsh_version, engine_version, assets.<arch>.{url,sha256,size}}`）。
-- `check` 只走 GitHub，分两路：上游 `deepseek-ai/deepseek-harness` 的 `dsh-v*` release，
-  与本仓库是否已发布带 `engine-manifest.json` 的适配引擎包；没有就走 `feed: unavailable`
-  并如实说明「上游有新版但适配包未发布」，不拿 npm 冒充。
-- `scripts/build-engine-bundle.sh` 产出 `engine-dsh-*.tar.gz` 与 manifest，发布到
-  滚动 release `dsh-engine-latest`，并归档到 `dsh-runtime-<dsh 版本>`。
-  （v2.9.112 起本仓库**已移除全部 GitHub Actions 工作流**，这些产物改为本地手动构建/发布。）
+- 默认来源：`hazukieq/DSH-Mobile-with-Termux` 的 `dsh-engine-latest/engine-manifest.json`。
+  这是发布约定，不保证已经有热更新包；v3.0 的 APK 溯源清单不能作为引擎 feed。
+- 清单必须包含 `dsh_version`、`engine_version`、`assets.<arch>.{url,sha256}`；
+  `check` 验证结构与当前 ABI，没有有效包就报告 `feed: unavailable` / `update: unknown`。
+  上游版本只供参考，不等于 Android 适配包可下载。
+- `--manifest <URL或路径>` 优先于 `DSH_ENGINE_MANIFEST` 环境变量；显式来源失败时不回落其他来源。
+- `bash scripts/build-engine-closure.sh --download-base <资产目录URL> ...` 可生成 tar 与
+  `<out>.manifest.json`；全量入口 `bash scripts/build-engine-bundle.sh ...` 也生成 feed。
+  这些命令仅构建，需手动上传 tar 和清单后才可供 `pull` 使用。完整流程见 ENGINE-BUILD.md。
+
 
 ## 五、WebUI 侧边栏终端（node-pty 桥）
 

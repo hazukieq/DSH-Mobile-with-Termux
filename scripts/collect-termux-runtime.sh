@@ -19,12 +19,15 @@ ARCH="${2:-aarch64}"
 case "$ARCH" in aarch64|x86_64) ;; *) echo "不支持的架构: $ARCH" >&2; exit 1;; esac
 # 提前转为绝对路径：后面子 shell 会 cd 进 WORK，相对路径会写错位置
 OUT_ZIP="$(realpath -m "$OUT_ZIP")"
-WORK="$(mktemp -d)"
+[ -n "${DSH_SOURCE_DIR:-}" ] && [ -d "$DSH_SOURCE_DIR/@deepseek-ai/dsh" ] || {
+  echo "需要 DSH_SOURCE_DIR=<pack.ts 本地 tarball consumer 的 node_modules>；见 ENGINE-BUILD.md §1.3" >&2; exit 2;
+}
+DSH_SOURCE_DIR="$(realpath "$DSH_SOURCE_DIR")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/dsh-runtime.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 TERMUX_REPO="${TERMUX_REPO:-https://packages.termux.dev/apt/termux-main}"
 # 国内构建可换源：TERMUX_REPO=https://mirrors.ustc.edu.cn/termux/apt/termux-main
-NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 ROOT="$WORK/root"
 
 mkdir -p "$ROOT" "$WORK/lists/partial" "$WORK/cache/archives/partial"
@@ -93,43 +96,11 @@ fi
 cp -a "$USR_DIR/." "$ROOT/"
 rm -rf "$ROOT/data"
 
-# ---- 3.5 集成 dsh 引擎（平台无关 JS 依赖闭包）----
-# 用 runner 自带 npm 在 x64 环境解析整棵依赖树（JS 文件与运行架构无关）；
-# --ignore-scripts 禁掉 postinstall，防Linux-x64 native 构建/二进制混入。
-# 若未来引入真 native 依赖（如 better-sqlite3），需针对 bionic 十字编译，
-# 到时按报错在此处做平台裁剪或替换实现。
-# 锁定版本。浮动 latest 曾撞上上游重构（0.1.5-rc.1 时 session-persistence-jsonl
-# 从依赖树移除 → 补丁断言失败 → CI 全挂）。
-# v1.2.28 升级到 0.2.0-rc.2：已逐包核验补丁目标——session-persistence 的
-# fs/promises import 多了 lstat；sandbox-local 的 landlock import 已被上游移除
-# （补丁正则自然 no-op）；fs-local 的 linkFile 调用、web-frontend 的 polyfill
-# 锚点均未变；koffi/node-pty 改为存在才打桩。
-DSH_VERSION="${DSH_VERSION:-0.2.0-rc.2}"
+# ---- 3.5 集成上游本地 pack 产出的发布形态 consumer ----
+SRC="$(realpath "$DSH_SOURCE_DIR")"
 mkdir -p "$ROOT/lib/node_modules"
-if [ -n "${DSH_SOURCE_DIR:-}" ]; then
-  # 从上游 GitHub 源码构建的闭包（不访问 npm 的 @deepseek-ai/dsh 发布包）。
-  # 用法：
-  #   git clone --depth 1 -b dsh-v<ver> https://github.com/deepseek-ai/deepseek-harness
-  #   pnpm install && pnpm build:official
-  #   apps/runtime-bundle 的依赖改成 workspace:* 后
-  #     pnpm --filter dsh-runtime-bundle deploy --prod --legacy \
-  #          --node-linker=hoisted --config.allowUnusedPatches=true <out>
-  #   DSH_SOURCE_DIR=<out>/node_modules … collect-termux-runtime.sh
-  # 这样后面 3.6 的 bionic 补丁照常打在源码构建产物上。
-  SRC="$(realpath "$DSH_SOURCE_DIR")"
-  [ -d "$SRC" ] || { echo "DSH_SOURCE_DIR 不存在: $SRC" >&2; exit 2; }
-  [ -d "$SRC/@deepseek-ai/dsh" ] || { echo "DSH_SOURCE_DIR 里没有 @deepseek-ai/dsh（要先 deploy 出闭包）" >&2; exit 2; }
-  echo "使用本地源码构建的闭包: $SRC ($(du -sh "$SRC" | cut -f1))"
-  cp -a "$SRC/." "$ROOT/lib/node_modules/"
-else
-  mkdir -p "$WORK/bundle" && cd "$WORK/bundle"
-  printf '{"name":"dsh-runtime","private":true,"dependencies":{"@deepseek-ai/dsh":"%s"}}' \
-    "$DSH_VERSION" > package.json
-  # dsh 依赖闭包巨大，npm 理想树解析默认堆会 OOM（SIGABRT/134），放开到 5.5GB
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=5632"
-  npm install --registry "$NPM_REGISTRY" --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error
-  cp -a "$WORK/bundle/node_modules/." "$ROOT/lib/node_modules/"
-fi
+echo "使用本地发布形态闭包: $SRC ($(du -sh "$SRC" | cut -f1))"
+cp -a "$SRC/." "$ROOT/lib/node_modules/"
 
 # 体积修剪：README/TS 类型/sourcemap 可安全删除；LICENSE 一律保留（分发合规）
 find "$ROOT/lib/node_modules" \( -name '*.md' -o -name '*.map' \) -not -iname 'LICENSE*' -delete 2>/dev/null || true
@@ -161,10 +132,12 @@ rm -rf "$ROOT/lib/node_modules/sherpa-onnx-linux-x64" \
        "$ROOT/lib/node_modules/node-addon-require-builtin-linux-x64-gnu" 2>/dev/null || true
 
 # ---- 4.5 依赖审计门（每次编译必跑；FAIL 直接中断，避免发出「read_image 坏」这类包）----
-if [ -x "$SCRIPT_DIR/check-engine-deps.sh" ]; then
+if [ -f "$SCRIPT_DIR/check-engine-deps.sh" ]; then
   echo "[deps] 依赖审计：$ROOT/lib/node_modules"
-  "$SCRIPT_DIR/check-engine-deps.sh" --root "$ROOT/lib/node_modules" || {
+  bash "$SCRIPT_DIR/check-engine-deps.sh" --root "$ROOT/lib/node_modules" || {
     echo "错误：依赖审计未通过，停止打包（豁免见 scripts/check-engine-deps.allow）" >&2; exit 1; }
+else
+  echo "missing dependency gate: $SCRIPT_DIR/check-engine-deps.sh" >&2; exit 1
 fi
 
 # ---- 5. 打 zip ----

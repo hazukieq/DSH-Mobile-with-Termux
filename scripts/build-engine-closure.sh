@@ -1,35 +1,22 @@
 #!/usr/bin/env bash
 # 只换 JS 闭包、复用现有引擎骨架，产出一个可被 `dsh-update stage/apply` 的引擎 tar。
 #
-# 为什么只换闭包：Termux 运行时（node/bash/rg + lib/*.so）在 App 里是稳定的，
-# 每次升级 dsh 只变 lib/node_modules。重抓 apt、重编运行时既慢又容易把环境弄脏
-# （2026-10 v2.5.48 实测：collect 全流程 2 分钟且会牵动宿主 apt）。
-#
-# 输入闭包必须是「发布形态」：上游 `scripts/release/pack.ts --family dsh` 打出的
-# tarball 用 `file:` 装出来的 node_modules，或官方 npm 发布闭包；
-# 直接塞 monorepo 的 node_modules 会残留 workspace: 且缺 cosmokit，引擎起不来。
-#
-# 用法：
-#   scripts/build-engine-closure.sh \
-#     --engine app/src/main/assets/engine-dsh-aarch64.zip \
-#     --closure /tmp/release-consumer/node_modules \
-#     --version 0.2.2-alpha.2+src1 \
-#     --out /tmp/engine-dsh-aarch64-closure.tar.gz
-#
-# 输出 tar 只含 `lib/node_modules/**` 与 `.dsh-engine-version`（dsh-update 约定的最小布局）。
+# 输入必须来自上游 pack.ts --family dsh 的本地 tarball consumer，不能复制 monorepo。
+# --download-base <HTTP(S)目录URL> 另产 <out>.manifest.json；生成不代表已经发布。
 set -euo pipefail
 
-ENGINE="" CLOSURE="" VERSION="" OUT="" ARCH="aarch64" SKIP_PATCH=0 KEEP_TREE=""
+ENGINE="" CLOSURE="" VERSION="" OUT="" ARCH="aarch64" SKIP_PATCH=0 KEEP_TREE="" DOWNLOAD_BASE="${DSH_ENGINE_DOWNLOAD_BASE:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --engine) ENGINE="$2"; shift 2 ;;
     --closure) CLOSURE="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
+    --download-base) DOWNLOAD_BASE="$2"; shift 2 ;;
     --arch) ARCH="$2"; shift 2 ;;
     --skip-patch) SKIP_PATCH=1; shift ;;
     --keep-tree) KEEP_TREE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) echo "usage: $0 --engine <zip|dir> --closure <node_modules> --version <ver> --out <tar.gz> [--arch aarch64|x86_64] [--download-base <URL>] [--skip-patch] [--keep-tree <dir>]"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -39,8 +26,8 @@ done
 }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-WORK="$(mktemp -d /tmp/dsh-engclosure.XXXXXX)"
-trap '[ -n "${KEEP_TREE:-}" ] || rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/dsh-engclosure.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
 ROOT="$WORK/root"
 mkdir -p "$ROOT"
 
@@ -74,7 +61,7 @@ COSMOKIT=$(ls "$NM_DIR/@deepseek-ai" 2>/dev/null | grep -c '^cosmokit' || true)
 [ "$COSMOKIT" -gt 0 ] || { echo "错误：闭包缺 @deepseek-ai/cosmokit（monorepo 直出？）" >&2; exit 4; }
 WS=$(grep -c 'workspace:' "$NM_DIR/@deepseek-ai/cordis/package.json" 2>/dev/null || true)
 [ "$WS" = "0" ] || { echo "错误：cordis/package.json 里还有 workspace: 协议" >&2; exit 5; }
-node -e "require('$NM_DIR/@deepseek-ai/cordis/lib/index.js')" >/dev/null 2>&1 \
+node -e 'require(process.argv[1])' "$NM_DIR/@deepseek-ai/cordis/lib/index.js" >/dev/null 2>&1 \
   || { echo "错误：require cordis 失败" >&2; exit 6; }
 echo "      cosmokit=$COSMOKIT workspace:$WS cordis=require-ok"
 
@@ -82,12 +69,15 @@ echo "[5/6] 写版本标记: $VERSION"
 printf '%s\n' "$VERSION" > "$ROOT/.dsh-engine-version"
 
 echo "[6/6] 打包（lib/node_modules + lib/dsh-engine/lib + .dsh-engine-version）"
-rm -f "$OUT"
+mkdir -p "$(dirname "$OUT")"
+rm -f "$OUT" "$OUT.manifest.json"
 # ---- 4.4 依赖审计门（每次编译必跑；FAIL 直接中断，避免发出「read_image 坏」这类包）----
-if [ -x "$SCRIPT_DIR/check-engine-deps.sh" ]; then
+if [ -f "$SCRIPT_DIR/check-engine-deps.sh" ]; then
   echo "[deps] 依赖审计：$ROOT/lib/node_modules"
-  "$SCRIPT_DIR/check-engine-deps.sh" --root "$ROOT/lib/node_modules" || {
+  bash "$SCRIPT_DIR/check-engine-deps.sh" --root "$ROOT/lib/node_modules" || {
     echo "错误：依赖审计未通过，停止打包（豁免见 scripts/check-engine-deps.allow）" >&2; exit 1; }
+else
+  echo "missing dependency gate: $SCRIPT_DIR/check-engine-deps.sh" >&2; exit 1
 fi
 
 NATIVE_DIR=""
@@ -105,4 +95,10 @@ echo "  sha256=$SHA"
 if [ -n "${KEEP_TREE:-}" ]; then
   mkdir -p "$KEEP_TREE"; cp -a "$ROOT/." "$KEEP_TREE/"; echo "  解包树保留在 $KEEP_TREE"
 fi
-echo "下一步：adb push $OUT /sdcard/Download/ && dsh-update stage <path> $SHA && dsh-update apply"
+if [ -n "$DOWNLOAD_BASE" ]; then
+  DSH_VERSION=$(node -p 'require(process.argv[1]).version' "$NM_DIR/@deepseek-ai/dsh/package.json")
+  python3 "$SCRIPT_DIR/make-engine-feed.py" --artifact "$OUT" --arch "$ARCH" \
+    --dsh-version "$DSH_VERSION" --engine-version "$VERSION" \
+    --download-base "$DOWNLOAD_BASE" --out "$OUT.manifest.json"
+fi
+echo "核对产物后：dsh-update stage <设备内路径> $SHA；再手动 apply"

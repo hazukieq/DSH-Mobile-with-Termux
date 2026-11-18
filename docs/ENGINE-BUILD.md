@@ -7,8 +7,9 @@ App 里的「引擎层」是两块拼起来的：
 | **Termux 运行时** | `node` / `bash` / `rg` + 14 个 bionic `.so` + `etc/tls` | `$PREFIX/{bin,lib,etc}` | 换 node 版本、加原生库、换 Termux 包 |
 | **JS 闭包** | `lib/node_modules/**`（dsh 及其依赖） | `$PREFIX/lib/node_modules` | 每次升级 dsh |
 
-`dsh-update` 只交换第二层（`lib/node_modules` + `$PREFIX/.dsh-engine-version`），
-第一层由 APK 内置、装机时铺好，日常升级不需要重编。这也决定了本篇的顺序：
+`dsh-update` 交换包内提供的 `lib/node_modules`、版本标记，以及可选的
+`lib/dsh-engine/lib`、`bin/node`、`bin/rg`；其他 Termux 文件不在交换范围。
+日常升级可复用已有运行时。这也决定了本篇的顺序：
 **先看能不能只换闭包（§1），不行再重收运行时（§3）**；两者都要打同一套 Android 补丁（§1.3）。
 
 
@@ -16,10 +17,10 @@ App 里的「引擎层」是两块拼起来的：
 
 每次重打引擎层 / runtime，都必须跑一次依赖审计——它会检查「声明了但没装」的依赖、
 Android 上装不起来的原生模块（含 sharp addon 的 RUNPATH/架构/NEEDED）、以及
-`read_image` 的 sharp 后端是否可用。历史上 `read_image` 坏掉、`node-pty` 装不上、
+sharp 的静态后端布局；只有加 `--runtime` 才会实际加载、编解码。历史上 `read_image` 坏掉、`node-pty` 装不上、
 架构不符的 `.node` 混进包，都是这一步能提前抓到的。
 
-三个构建脚本已经内置这道门（FAIL 直接中断打包，不会再产出坏包）：
+三个构建脚本已经内置这道静态门禁（FAIL 中断打包；通过不代表真机功能全部正常）：
 
 - `scripts/collect-termux-runtime.sh`（步骤 4.5）
 - `scripts/build-engine-layer.sh`（步骤 4.5；同时用 `VIPS_LIBS_DIR` 自动捆绑 libvips）
@@ -33,15 +34,14 @@ scripts/check-engine-deps.sh --root /tmp/consumer/node_modules
 scripts/check-engine-deps.sh --root /tmp/engine/engine-tree/lib/node_modules --strict
 ```
 
-设备上跑运行时探针（权威结论：真实 dlopen + sharp 编解码）：
+设备上在 App 普通模式终端运行探针（真实 dlopen + sharp 编解码，仍需另测 read_image 工具链）：
 
 ```bash
-# 把审计脚本推到设备，用引擎的 node 跑（--prefix 指向 Termux 前缀）
-adb push scripts/full-check-deps.mjs /data/local/tmp/
-adb shell "input text 'node /data/local/tmp/full-check-deps.mjs --root \$PREFIX/lib/node_modules --prefix \$PREFIX'"
+# 将本仓库 scripts/ 放到 App 可读目录后，在 App 终端执行；不使用 su。
+node ~/dshm/scripts/full-check-deps.mjs --root "$PREFIX/lib/node_modules" --prefix "$PREFIX"
 ```
 
-设备侧只做**验收**，不做门禁：门禁放在上面三个构建脚本里，PC 上跑，坏了就不出包。
+构建脚本在主机或手机上均运行静态门禁；真机运行时探针与实际工具调用是额外验收。
 
 豁免：只允许「已确认是宿主专属、Android 永不加载」的**声明缺失**，逐条写在
 `scripts/check-engine-deps.allow` 并附原因（格式 `包名<TAB>依赖名<TAB>原因`）；
@@ -61,76 +61,66 @@ adb shell "input text 'node /data/local/tmp/full-check-deps.mjs --root \$PREFIX/
 
 ### 1.1 前置
 
-- Node 24 + pnpm（`corepack enable pnpm`）
-- 国内源：`NPM_REGISTRY=https://registry.npmmirror.com`、`TERMUX_REPO=https://mirrors.ustc.edu.cn/termux/apt/termux-main`（TUNA 的 termux 路径 403）
-- 不需要 Android NDK（闭包是纯 JS + 少量 `.node`，补丁会改成纯 JS 兜底）
+- Node 24、与所选源码兼容的 pnpm、独立可用的 npm CLI、Python 3、Bash、tar、unzip。
+- 显式选 registry，例如 `https://registry.npmjs.org`；按网络情况换镜像并核对包来源。
+- 下面主机示例用 `/tmp`，手机必须使用 `$PREFIX/tmp`（见 §1.7）。
+- 原生 addon 的构建与验证另见 §2；JS 闭包打包成功不证明原生功能可用。
 
-### 1.2 从 GitHub 源码构建（不要拉 npm 上的 dsh 发布包）
+### 1.2 从 GitHub 源码构建
+
+选定上游 tag 后构建并执行上游发布打包脚本；不要把源码树的 `node_modules` 当引擎闭包。
+以下 `dsh-v0.2.2-rc.4` 是版本示例，升级其他版本时需重新核对工具版本和补丁目标。
 
 ```sh
-git clone --depth 1 -b dsh-v0.2.2-alpha.2 https://github.com/deepseek-ai/deepseek-harness /tmp/dhsrc
-cd /tmp/dhsrc && pnpm install --frozen-lockfile && pnpm build:official
-# 上游自己的发布打包：产出该版本全部可发布包的 tarball
+git clone --depth 1 -b dsh-v0.2.2-rc.4 https://github.com/deepseek-ai/deepseek-harness /tmp/dhsrc
+cd /tmp/dhsrc
+pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org
+pnpm build:official
 pnpm exec tsx scripts/release/pack.ts --family dsh --out /tmp/npmpack
 ```
 
-### 1.3 用这些 tarball 装出「发布形态闭包」
+`--ignore-scripts` 跳过 koffi 等依赖的安装期原生构建；若所选版本需要额外构建步骤，
+应单独审阅执行。手机上的 pnpm 版本切换和 registry 配置见 §1.7。
 
-`/tmp/npmpack` 里是 370 个 `.tgz`。把它们当 `file:` 依赖装一次，得到的 `node_modules`
-与官方发布闭包同形（有 `cosmokit`、无 `workspace:`）。平台不符的包（darwin/arm64 等）放
-`optionalDependencies` 并 `--omit=optional`，否则 `npm` 会 `EBADPLATFORM` 中断。
+### 1.3 用本地 tarball 装出发布形态闭包
+
+上游 npm registry 可能没有同步发布全部同版本子包；本流程统一使用 `pack.ts` 的本地 tarball。
+包数量随 tag 变化，不以固定数量作为完整性证明。consumer 的包名来自 tar 内的
+`package/package.json`，全部根依赖指向绝对 `file:` 路径；平台筛选按构建主机 OS/CPU
+及包的 `os`、`cpu` 声明处理。非本机包放入 `optionalDependencies`，安装时省略。
+
+在本仓库执行：
 
 ```sh
-python3 - <<'PY'
-import json, os, re, subprocess
-pack, out = '/tmp/npmpack', '/tmp/release-consumer'
-os.makedirs(out, exist_ok=True)
-deps, opt = {}, {}
-pat = re.compile(r'^deepseek-ai-(.+)-(\d+\.\d+\.\d+[^/]*?)\.tgz$')
-def compatible(man):
-    oses, cpus = man.get('os') or [], man.get('cpu') or []
-    return ((not oses or 'linux' in oses or 'any' in oses)
-            and (not cpus or 'x64' in cpus or 'any' in cpus))
-for f in sorted(os.listdir(pack)):
-    m = pat.match(f)
-    if not m:
-        continue
-    path = os.path.abspath(os.path.join(pack, f))
-    man = json.loads(subprocess.run(['tar', '-xzOf', path, 'package/package.json'],
-                                    capture_output=True, text=True).stdout)
-    (deps if compatible(man) else opt)[man['name']] = 'file:' + path
-json.dump({'name': 'dsh-release-consumer', 'private': True,
-           'dependencies': deps, 'optionalDependencies': opt},
-          open(os.path.join(out, 'package.json'), 'w'), indent=2)
-print(len(deps), 'deps', len(opt), 'optional')
-PY
-
+python3 scripts/prepare-engine-consumer.py --pack /tmp/npmpack --out /tmp/release-consumer
 cd /tmp/release-consumer
 npm install --ignore-scripts --no-audit --no-fund --package-lock=false \
-  --omit=optional --registry https://registry.npmmirror.com
+  --omit=optional --registry=https://registry.npmjs.org
 ```
 
-> 为什么不用 `pnpm deploy` monorepo：那份 `node_modules` 会残留 `workspace:` 协议、
-> 缺打包期注入的 `cosmokit`，装到手机上引擎 `exit=1`（v2.5.48 踩过这个坑）。
+使用全新的 consumer 目录，不复用旧 `node_modules`。后续 Android 补丁负责平台适配，
+依赖审计检查实际依赖解析；不把 `pnpm deploy` 或直接复制 monorepo 作为替代。
 
-### 1.4 换闭包 + 打补丁 + 打包（一条命令）
+### 1.4 换闭包、打补丁和打包
+
+在本仓库执行：
 
 ```sh
-scripts/build-engine-closure.sh \
+bash scripts/build-engine-closure.sh \
   --engine app/src/main/assets/engine-dsh-aarch64.zip \
   --closure /tmp/release-consumer/node_modules \
-  --version 0.2.2-alpha.2+src1 \
+  --version 0.2.2-rc.4+local1 \
   --out /tmp/engine-dsh-aarch64-closure.tar.gz
 ```
 
-脚本做六件事：解包骨架 → 换 `lib/node_modules` → 调 `scripts/patch-engine-closure.sh`
-打 bionic 补丁 → 三道自检 → 写 `.dsh-engine-version` →
-打只含 `lib/node_modules/**` 与 `.dsh-engine-version` 的 tar。
-实测 x86_64 主机 20 秒出包（142 MB、378 个 `@deepseek-ai` 包）。
+脚本复用骨架、替换闭包、打 Android 补丁、检查 cosmokit / cordis、运行依赖审计并写版本标记。
+产物包含 `lib/node_modules`、`.dsh-engine-version`，骨架存在原生库时也包含 `lib/dsh-engine/lib`。
+缺失依赖审计脚本或审计失败会中断；`--skip-patch` 仅适用于已适配的闭包与隔离测试。
+补丁目标发生变化时需要审阅日志和实际产物，不能把 WARN 当作适配成功。
 
-补丁全部「按存在性自适应」，上游变了不会炸：目标文件不在只 WARN。
-已覆盖的差异：`dsh-host-apiproxy` 0.2.2 已删、`corepack` 0.2.2 不带、
-`libhistory` 缺失、`lib/` 与 `lib/dsh-engine/lib/` 两种布局。
+可选加 `--download-base https://<host>/<release-directory>`，生成 `<out>.manifest.json`。
+其中 URL 指向 tar 的文件名，含 ABI、版本、SHA-256、大小；上传 tar 和清单之后才可使用 feed。
+生成清单不会上传或发布任何内容。
 
 ### 1.4.1 sharp 的 wasm 回退（不打这层，`read_image` 在 Android 上不可用）
 
@@ -161,7 +151,7 @@ NM=/tmp/eng/lib/node_modules DRY=1 bash scripts/patch-sharp-wasm.sh   # 只报�
   `node -e "require('sharp').versions"` → `sharp 0.35.5 / vips 8.18.7`（宿主机没有平台二进制时
   正好走 wasm 分支）；
 - **原生 addon（可选，更快）**：`scripts/build-sharp-native.sh` 在设备上用 clang 直编（不跑
-  node-gyp：0.2.2 引擎没 corepack，`npm` 包装器会炸；Android 的 `/tmp` 只读，要用 `$PREFIX/tmp`）。
+  node-gyp：没有 npm 后端时按 §1.7 配置 `DSH_NPM_CLI`；Android 临时目录用 `$PREFIX/tmp`）。
   产物约 **340 KB**，放到 `<NM>/sharp/src/build/Release/sharp-android-arm64-<ver>.node` 即 sharp
   加载器的首选路径。实测 103–127 ms（wasm 202–254 ms）。
   ⚠️ 它动态依赖 Termux 的 `libvips`（`RUNPATH=$PREFIX/lib`）；没有 libvips 的设备 dlopen 失败后
@@ -230,53 +220,100 @@ dsh-update rollback   # 出问题回上一个引擎
 
 ---
 
-### 1.7 没有主机？在手机上自建（Termux 内，10–15 分钟）
+### 1.7 手机端自建（App 普通模式终端）
 
-App 自带的就是完整 Termux，手机端能直接 build，不需要 root 也不需要电脑——但需要联网 `git clone`（约 300 MB）与约 3 GB 空闲存储：
+不使用 Root。需要联网下载源码和依赖，并为源码、pnpm store、consumer、临时树与回滚包
+预留空间；耗时和内存占用取决于版本与设备，不保证固定分钟数或固定存储量。
+不要安装 Termux `nodejs` / `pnpm` 来覆盖 App 运行时。以下 npm、pnpm 均解到独立目录，
+由现有 Node 显式运行，不依赖 `/usr/bin/env` 或 corepack。
 
-```sh
-# 只装这三样。⚠️ 不要 pkg install nodejs / pnpm / python3：
-#    App 已经拥有 $PREFIX/bin/{node,pnpm,npm,npx,corepack}（都是 wrapper），
-#    Termux 包会把它们覆盖掉，之后终端里的 node 版本与 App 私有 lib 约定不一致。
-#    万一被覆盖：重启 App 会重写 wrapper；仍不对就 `dsh-update rollback` 或重装 App。
-pkg update && pkg install -y git zip tar
+```bash
+export TMPDIR="$PREFIX/tmp"
+mkdir -p "$TMPDIR"
+pkg install -y git tar zip unzip python
+export REGISTRY=https://registry.npmjs.org
+export BUILD_HOME="$HOME/dsh-engine-build-rc4"
+mkdir -p "$BUILD_HOME/tools/npm" "$BUILD_HOME/tools/pnpm"
 
-cd ~ && git clone --depth 1 --branch dsh-v0.2.2-alpha.2 \
-    https://github.com/deepseek-ai/deepseek-harness.git dhs
-# 打补丁的脚本在「本仓库」里，不在 App 里，所以还要拉一份本仓库（仅取 scripts/）：
-git clone --depth 1 --filter=blob:none --sparse \
-    https://github.com/hazukieq/DSH-Mobile-with-Termux.git dshm
-cd dshm && git sparse-checkout set scripts && cd ~
+curl -fL "$REGISTRY/npm/-/npm-11.6.2.tgz" -o "$BUILD_HOME/tools/npm.tgz"
+tar -xzf "$BUILD_HOME/tools/npm.tgz" -C "$BUILD_HOME/tools/npm" --strip-components=1
+curl -fL "$REGISTRY/pnpm/-/pnpm-11.28.5.tgz" -o "$BUILD_HOME/tools/pnpm.tgz"
+tar -xzf "$BUILD_HOME/tools/pnpm.tgz" -C "$BUILD_HOME/tools/pnpm" --strip-components=1
+export DSH_NPM_CLI="$BUILD_HOME/tools/npm/bin/npm-cli.js"
+export DSH_PNPM_CLI="$BUILD_HOME/tools/pnpm/bin/pnpm.mjs"
+node "$DSH_NPM_CLI" --version
+node "$DSH_PNPM_CLI" --version
 
-cd dhs
-pnpm config set registry https://registry.npmmirror.com      # 不改会卡在 npmjs
-NODE_OPTIONS=--max-old-space-size=4096 \
-  pnpm install --frozen-lockfile && pnpm build:official
+# 本仓库提供补丁与 consumer 生成器；上游仓库提供源码与 pack.ts。
+git clone --depth 1 --branch dev --filter=blob:none --sparse \
+  https://github.com/hazukieq/DSH-Mobile-with-Termux.git "$BUILD_HOME/dshm"
+git -C "$BUILD_HOME/dshm" sparse-checkout set scripts
+git clone --depth 1 --branch dsh-v0.2.2-rc.4 \
+  https://github.com/deepseek-ai/deepseek-harness.git "$BUILD_HOME/upstream"
+cd "$BUILD_HOME/upstream"
+
+# pnpm 11.28.5 使用 pmOnFail；旧 managePackageManagerVersions 配置已移除。
+# 显式禁用自动切换，避免下载另一份不适用 Android 的 pnpm 可执行文件。
+export PNPM_CONFIG_PM_ON_FAIL=ignore
+export PNPM_CONFIG_REGISTRY="$REGISTRY"
+# 上游构建脚本若再调用 pnpm，也使用同一份 JS CLI；兼容尚未更新的 App wrapper。
+mkdir -p "$BUILD_HOME/tools/bin"
+cat > "$BUILD_HOME/tools/bin/pnpm" <<'SH'
+#!/system/bin/sh
+exec "$PREFIX/bin/node" "$DSH_PNPM_CLI" --pm-on-fail=ignore --config.registry="$REGISTRY" "$@"
+SH
+chmod 755 "$BUILD_HOME/tools/bin/pnpm"
+export PATH="$BUILD_HOME/tools/bin:$PATH"
+pnpm_build() {
+  node "$DSH_PNPM_CLI" --pm-on-fail=ignore --config.registry="$REGISTRY" "$@"
+}
+pnpm_build config get registry
+pnpm_build install --frozen-lockfile --ignore-scripts
+pnpm_build build:official
+pnpm_build exec tsx scripts/release/pack.ts --family dsh --out "$BUILD_HOME/pack"
+
+python3 "$BUILD_HOME/dshm/scripts/prepare-engine-consumer.py" \
+  --pack "$BUILD_HOME/pack" --out "$BUILD_HOME/consumer" --os linux --cpu arm64
+cd "$BUILD_HOME/consumer"
+node "$DSH_NPM_CLI" install --ignore-scripts --no-audit --no-fund \
+  --package-lock=false --omit=optional --registry="$REGISTRY"
+
+# 只复制复用骨架必需的文件；不要把整个 $PREFIX（含 tmp）复制到自己的临时子目录。
+mkdir -p "$BUILD_HOME/skeleton/bin" "$BUILD_HOME/skeleton/lib/dsh-engine"
+cp -a "$PREFIX/bin/bash" "$BUILD_HOME/skeleton/bin/bash"
+cp -a "$PREFIX/lib/dsh-engine/rg-bin" "$BUILD_HOME/skeleton/bin/rg"
+cp -a "$PREFIX/lib/dsh-engine/lib" "$BUILD_HOME/skeleton/lib/dsh-engine/"
+bash "$BUILD_HOME/dshm/scripts/build-engine-closure.sh" \
+  --engine "$BUILD_HOME/skeleton" --closure "$BUILD_HOME/consumer/node_modules" \
+  --arch aarch64 --version 0.2.2-rc.4+local1 --out "$BUILD_HOME/engine-rc4.tar.gz"
+sha256sum "$BUILD_HOME/engine-rc4.tar.gz"
 ```
 
-构建完只是源码树，还要把「发布形态闭包」挑出来并打 Android 补丁（否则引擎起不来）：
+示例针对 arm64 设备，其他架构需调整 consumer CPU 和构建 ABI。堆内存不足时再按设备余量
+设置 `NODE_OPTIONS`，不要把固定大堆配置当作保证。上游 tag 的工具链要求变化时先核对版本。
+两个工具包的入口和 Node 要求可查对应的 npm registry 元数据；上述 pnpm 入口为 `.mjs`。
 
-```sh
-# 1) 组装闭包：只保留 @deepseek-ai/* 与其运行期依赖（别整包 node_modules 打进去）
-mkdir -p ~/eng/lib && cp -a node_modules ~/eng/lib/node_modules
-# 2) 打补丁（脚本来自上面 clone 的 dshm/scripts，不在 App 里）
-ROOT=~/eng ARCH=aarch64 bash ~/dshm/scripts/patch-engine-closure.sh
-# 3) 只打最小布局：lib/node_modules/** + 版本标记
-tar -C ~/eng -czf ~/engine-mine.tar.gz lib .dsh-engine-version
-dsh-update stage ~/engine-mine.tar.gz "$(sha256sum ~/engine-mine.tar.gz | cut -d' ' -f1)"
-dsh-update apply
-```
+核对 tar 内容和 SHA-256 后，再手动 `dsh-update stage <path> <sha256>`、`dsh-update apply`。
+重启会中断当前引擎会话，保留构建日志与旧引擎回滚点。验收包括冷启动、工具调用、图片附件、
+实际 `read_image`、终端与回滚；仅 `require('sharp')` 成功不能证明图片工具端到端可用。
 
-手机端的三个硬约束：
+### 1.8 热更新 feed 与 APK 溯源清单
 
-| 约束 | 说明 |
-| --- | --- |
-| 内存 | 默认 node 堆会 OOM，必须 `NODE_OPTIONS=--max-old-space-size=4096`；构建时别开别的 App |
-| 存储 | 源码 + `node_modules` + 构建产物约需 3 GB，先 `df -h $_PREFIX` 看一眼 |
-| 网络 | `pnpm` 与 `git` 都要换国内源（`registry.npmmirror.com` / `ghproxy` 或用 App 内已有的代理） |
+默认 feed 地址属于 `hazukieq/DSH-Mobile-with-Termux` 的 `dsh-engine-latest` 滚动 Release，
+但地址存在于代码不代表已经发布。`check` 只接受含当前 ABI tar URL 和 SHA-256 的 feed，
+并在候选 Release 中跳过 APK 溯源清单。v3.0 APK 附带的 `engine-manifest.json` 描述 APK 与载荷，
+没有引擎 tar 下载地址，不能作为 feed。没有可用 feed 时会报告 unavailable / unknown。
 
-> 手机端自建的意义是「完全离线可控」，不是更快：同样一步在 PC 上 20 秒，手机上 10–15 分钟。
-> 只是换闭包而不改代码时，优先用 §1.4 的一条命令（复用现有骨架）。
+- 临时指定：`dsh-update check --manifest <URL或本地路径>`。
+- 环境配置：`DSH_ENGINE_MANIFEST=<URL或路径> dsh-update pull`。
+- 参数优先于环境变量；显式来源出错时不切到其他 feed。
+- `pull <version>` 校验所请求版本与 feed 的 dsh 或引擎版本一致；不查询历史版本目录。
+- 版本不同仅表示有另一个包可用，不推断版本升降顺序。
+- `pull` 下载并校验 SHA-256 后暂存；`--apply` 才会切换运行中的引擎。
+
+标准清单由 `scripts/make-engine-feed.py` 生成，结构为
+`{kind: "dsh-engine-feed", schema_version: 1, dsh_version, engine_version, assets.<arch>.{url,sha256,size}}`。
+旧版无 kind / schema_version 的清单若具备这些必需版本和资产字段仍可读取。
 
 ## 2. Android 独有库的交叉编译（bionic 与 glibc 的坑）
 
@@ -423,11 +460,11 @@ Termux 的 `nodejs-lts` 才是正确的二进制来源。
 
 ```sh
 export TERMUX_REPO=https://mirrors.ustc.edu.cn/termux/apt/termux-main   # 国内源
-export NPM_REGISTRY=https://registry.npmmirror.com
-scripts/collect-termux-runtime.sh /tmp/rt-arm64.zip aarch64
+export DSH_SOURCE_DIR=/tmp/release-consumer/node_modules
+bash scripts/collect-termux-runtime.sh /tmp/rt-arm64.zip aarch64
 ```
 
-x86_64 主机实测 ~2 分钟出包（450 MB，含 JS 闭包）。
+先完成 §1.3 的本地 consumer；未提供 `DSH_SOURCE_DIR` 会在下载运行时前报错。
 
 ### 3.3 脚本做了哪些事
 
@@ -440,8 +477,8 @@ x86_64 主机实测 ~2 分钟出包（450 MB，含 JS 闭包）。
 3. **`dpkg-deb -x` 解包后平铺**：Termux deb 用绝对路径打包（`data/data/com.termux/files/usr/…`），
    脚本定位真实 `usr` 再平铺成 zip 根，与 Android 端 `PATH=$PREFIX/bin`、
    `LD_LIBRARY_PATH=$PREFIX/lib`、`dshEntry=$PREFIX/lib/node_modules/@deepseek-ai/dsh/lib/bin.js` 对齐；
-4. **集成 JS 闭包**：默认用 npm 装 `@deepseek-ai/dsh`；设 `DSH_SOURCE_DIR=<发布形态闭包>` 则直接
-   拷 GitHub 源码构建出来的闭包（见 §1.3），不发 npm 请求；
+4. **集成 JS 闭包**：必须提供 `DSH_SOURCE_DIR=<发布形态 consumer/node_modules>`，
+   复制上游本地 pack 组装的闭包（见 §1.3），不从 registry 安装 dsh；
 5. **打补丁**：`scripts/patch-engine-closure.sh`（koffi inert、node-pty shim、session-persistence、
    fs-local、flock、SONAME 别名、ripgrep 平台包注入、pnpm/curl wrapper）；
 6. **清平台残留**：删 `*.a`、`*.map`、`*-linux-x64` 的 optional 包；
@@ -462,26 +499,13 @@ x86_64 主机实测 ~2 分钟出包（450 MB，含 JS 闭包）。
 ```sh
 # 1) 运行时 → 引擎层（结构化校验 + manifest）
 scripts/build-engine-layer.sh --runtime /tmp/rt-arm64.zip --arch aarch64 \
-    --out /tmp/engine-mine --engine-version "0.2.2-alpha.2+my1"
+    --out /tmp/engine-mine --engine-version "0.2.2-rc.4+local1"
 # 2) 产物自检
 tar -tzf /tmp/engine-mine/engine-dsh-aarch64.tar.gz | grep -c 'lib/node_modules/@deepseek-ai/dsh'
 llvm-readelf -d /tmp/engine-mine/engine-tree/lib/dsh-engine/lib/libreadline.so.8 | head -5
 # 3) 装机（见 §1.5）
 ```
 
-### 3.6 实测记录（2026-10-28，Ubuntu 24.04 / NDK 28 / rustc 1.98）
-
-| 步骤 | 命令 | 结果 |
-| --- | --- | --- |
-| 收运行时 | `collect-termux-runtime.sh /tmp/rt-verify.zip aarch64`（USTC 源 + `DSH_SOURCE_DIR`） | 9 秒下完 29.2 MB 依赖（3.27 MB/s）；`runtime.zip` **220 MB**（解包 756 MB / 70,127 文件 / 66 个 `.so`）；`bin/node` 为 ELF aarch64；补丁 7 个 corepack shim + 28 个 shebang |
-| 建引擎 tar | `build-engine-closure.sh --engine /tmp/eng0 --closure … --version 0.2.2-alpha.2+verify1` | **19 秒**；142,605,127 B；378 包；自检 `cosmokit=1 workspace:0 cordis=require-ok`；tar 只含 `.dsh-engine-version` + `lib/node_modules/**` |
-| C 库十字编 | `clang -shared -Wl,-soname,libfoo.so.1` | ELF ARM aarch64；`NEEDED` = `libdl/libc`；`SONAME` = `libfoo.so.1` |
-| C++ 十字编 | `clang++ -stdlib=libc++` | `NEEDED` = `libc++_shared/libm/libdl/libc` |
-| Rust 十字编 | `cargo build --target aarch64-linux-android` | ELF ARM aarch64；`NEEDED` = `libdl/libc` |
-| N-API 插件 | 用 Termux 头文件编 `addon.node` | 手机端 `require()` 成功输出 `hello-android` |
-
-> 判断该走哪条路：**只升 dsh 版本 → §1（换闭包，20 秒）；换 node / 加原生库 / 改 Termux 包
-> → §3（重收运行时，2 分钟）**。两条路最后都产同样布局的引擎 tar，`stage/apply/rollback` 完全一致。
 
 ---
 
@@ -506,7 +530,7 @@ llvm-readelf -d /tmp/engine-mine/engine-tree/lib/dsh-engine/lib/libreadline.so.8
 # 2) 构建引擎层时一起打
 VIPS_LIBS_DIR=/tmp/termlibs \
   scripts/build-engine-layer.sh --runtime /tmp/rt.zip --arch aarch64 \
-    --out /tmp/engine-vips --engine-version "0.2.2-alpha.2+sharp1"
+    --out /tmp/engine-vips --engine-version "0.2.2-rc.4+sharp1"
 ```
 
 要点：

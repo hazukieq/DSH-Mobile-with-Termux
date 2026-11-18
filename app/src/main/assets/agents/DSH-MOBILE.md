@@ -619,7 +619,10 @@ See `docs PROGRESS_OVERLAY` and `docs OVERLAY` for the current details and scree
 
 Icon-only buttons (search/back/more) often have no text. Do not guess centers: read
 `GET /screen?format=json` (each node has `bounds` and `center`) or `GET /scene` (merged a11y+OCR with
-bounds), then tap the reported center and use `expect` to verify.
+bounds); use its actionable `tapPoint` or container geometry. Verify the requested target state,
+not merely dispatch. For absent/stale nodes, original screenshot pixels are a fallback only after
+confirming the image-to-display mapping; never estimate from a scaled preview. See the preloaded
+`a11y-tap-discipline` and `docs ACCESSIBILITY` §7–11.
 
 
 **You are the cloud predictor and takeover operator; the local loop is the executor.** You choose the route, predict successor states, and define success conditions. The local loop performs matching → action → verification → retry. Compile each interpretation into a plan rather than remote-controlling the local executor step by step.

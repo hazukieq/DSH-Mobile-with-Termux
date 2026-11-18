@@ -151,11 +151,12 @@ scr calib --list   # 看已存的分桶参数
 | 自家悬浮窗的**透明区域**，下方是第三方 App | 悬浮窗吃掉且不响应 | 手势被吞、页面无变化 | 改用节点动作，或先收起悬浮窗 |
 | 第三方 App 普通区域 | 第三方 App | 正常 | 直接用坐标手势 |
 
-三步判定：① 点完立刻 `scr changed`，`{"changed":false}` 就是没生效；② 读回执的 `ownOverlay` /
-`window.all` / `staleFullScreenNode` —— `window.all` 里同时出现 `com.termux/TYPE_ACCESSIBILITY_OVERLAY`
-与前台 App 就优先怀疑自家悬浮窗；③ 绕行（按代价从低到高）：节点语义
-`POST /act {"steps":[{"tap":"<屏上文字>"}]}`、收起悬浮窗 `POST /overlay {"show":false}` /
-`scr status-hide`、自家悬浮条/球上的按钮用 `scr status --action` 或 `POST /overlay`。
+先区分动作目标：用户只要一次点击/交接时按回执结束；若要达到某个状态，等界面稳定后读取一次
+目标文本或选中状态。`scr changed` 只说明画面是否变化，不能单独证明目标达成或点击被吞。
+结合 `ownOverlay` / `window.all` / `staleFullScreenNode` 判断是否有遮挡；手势层会按几何相交自动避让，
+所以落点涉及悬浮窗不等于失败。确有遮挡时改节点语义
+`POST /act {"steps":[{"tap":"<屏上文字>"}]}`，或收起悬浮窗 `POST /overlay {"show":false}` /
+`scr status-hide`。不要为绕过遮挡禁用无障碍或按接口路径隐藏所有悬浮窗。
 
 注意：屏幕上看得见的字多是 TextView（文本节点），按 `tap-desc` 可能报 `target not found`，
 要按 text 匹配或直接点容器中心。
@@ -212,13 +213,16 @@ scr calib --list   # 看已存的分桶参数
 
 - 任何 bridge 调用（`/act`、`/gesture`、`/tap`、`/share`、`/launch`、`/open` …）都必须立即读回执，
   检查 `ok` / `error` / `verified` / `changed` / `opened` / `handoff` / `ownOverlay` / `window`。
-- `ok:false`、`verified:false`、`changed:false`、`opened:false` 一律按失败处理，不得当成成功。
+- `ok:false`、`verified:false`、`opened:false` 不得当成操作成功；`changed:false` 只表示画面未变，
+  仍需按任务的目标状态判断，不代表目标一定未满足。
 - 禁止 `command >/dev/null` 静默丢弃回执；需要精简时用摘要封装（例如 `actq`）。
 - `handoff:true` 的动作（share / open / launch）不得重试，重试会产生重复副作用。
 
 ### 11.2 坐标来源
 
 - 坐标只能来自当前屏幕的 `/scene` 或 `/screen?format=json` 的 `bounds`/`center`，或上一次成功
-  点击的回执；**禁止目测、按比例估算、复用旧页面坐标**。
+  点击的回执（且布局仍未变化）；**禁止目测、按预览图比例估算、复用旧页面坐标**。
+- 目标无可用节点或 `staleFullScreenNode` 提示几何过期时，可以使用原始截图像素定位，
+  但必须先确认实际像素尺寸与裁剪/旋转到显示坐标的映射；无法可靠映射时不要发送猜测坐标。
 - 截图预览（如 581×1280）与真实屏幕（1080×2376）比例不同，禁止在预览图上手算坐标。
 - 需要系统级注入时才用 `scr tap --shell`（Shizuku/Root）；普通点击优先节点语义或 `/act` 事务。

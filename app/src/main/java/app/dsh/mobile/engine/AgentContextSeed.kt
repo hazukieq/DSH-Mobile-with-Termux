@@ -4,27 +4,14 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 
-/**
- * Agent 上下文种子（m1.35）：把「Android 环境说明书」预写入 `$DSH_HOME/AGENTS.md`。
- *
- * 动机：dsh Agent 冷启动到一个陌生沙箱时，会花大量 token 自行探索环境
- * （uname、which、ls /、试探 apt…），且探索结论常常错误（把 bionic 当 glibc、
- * 试图 apt install）。dsh-agent-instructions 原生发现 `$DSH_HOME/AGENTS.md`
- * （user-global 层，无条件注入每个会话），故在此预置一份高密度环境事实，
- * 让 Agent 从第一轮就带着正确世界观干活。
- *
- * 幂等策略（保护用户/AI 的手工编辑）：
- *  - 文件不存在           → 写入最新模板
- *  - 存在且含本种子标记    → 版本旧则升级覆盖
- *  - 存在但无标记（被改过）→ 绝不覆盖
- */
+/** App-owned environment and preloaded discipline skills, followed by a preserved user section. */
 object AgentContextSeed {
 
     private const val TAG = "AgentContextSeed"
     private const val FILE_NAME = "AGENTS.md"
     private const val MARKER_PREFIX = "<!-- dsh-android AGENTS seed v"
-    /** 当前模板版本：改文案必须同步递增，旧版才会被升级覆盖 */
-    private const val SEED_VERSION = 119
+    /** Seed format version; managed text is also reconciled on each startup. */
+    private const val SEED_VERSION = 120
 
     /**
      * 用户段起始标记（v1.3.2，issue #19）。
@@ -49,10 +36,11 @@ object AgentContextSeed {
         val existing = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
 
         deploySkills(ctx)
+        val expected = render(ctx)
 
         // ① 文件不存在 → 写入完整模板（含空的用户段）
         if (existing == null) {
-            write(file, render(ctx) + userSection(null))
+            write(file, expected + userSection(null))
             Log.i(TAG, "AGENTS.md seeded (v$SEED_VERSION)")
             return
         }
@@ -61,12 +49,12 @@ object AgentContextSeed {
         //    App 段补在上方 —— 既能升级环境说明，也不丢用户内容。
         if (!existing.contains(MARKER_PREFIX)) {
             Log.i(TAG, "AGENTS.md without seed marker; preserved as user section")
-            write(file, render(ctx) + userSection(existing))
+            write(file, expected + userSection(existing))
             return
         }
 
         // ③ 版本最新 → 只在用户段缺失时补占位
-        if (containsVersion(existing, SEED_VERSION)) {
+        if (containsVersion(existing, SEED_VERSION) && appSectionOf(existing).trimEnd() == expected.trimEnd()) {
             if (!existing.contains(USER_SECTION_BEGIN)) {
                 write(file, existing.trimEnd() + "\n" + userSection(null))
             }
@@ -75,7 +63,7 @@ object AgentContextSeed {
 
         // ④ 需要升级 → 只替换 App 段，用户段原样保留
         val userContent = extractUserSection(existing)
-        write(file, render(ctx) + userSection(userContent))
+        write(file, expected + userSection(userContent))
         Log.i(TAG, "AGENTS.md upgraded to v$SEED_VERSION (user section preserved, ${userContent?.length ?: 0} chars)")
     }
 
@@ -95,23 +83,34 @@ object AgentContextSeed {
         Log.i(TAG, "AGENTS.md user section saved (${content?.length ?: 0} chars)")
     }
 
-    /** 取 App 段（用户段之前的部分）；没有用户段就是全文。 */
-    /** 把 assets/skills 下的内置技能复制到 `$DSH_HOME/skills`（缺什么补什么，不覆盖）。 */
+    /** Update known bundled copies; unrelated or edited skills remain user-owned. */
     private fun deploySkills(ctx: Context) {
-        runCatching {
-            val root = File(EngineConfig.dshHome(ctx), "skills")
-            for (name in ALWAYS_ON_SKILLS) {
-                val dst = File(File(root, name), "SKILL.md")
-                if (dst.isFile) continue
-                dst.parentFile?.mkdirs()
-                ctx.assets.open("skills/$name/SKILL.md").use { input ->
-                    dst.outputStream().use { input.copyTo(it) }
+        val home = EngineConfig.dshHome(ctx)
+        val root = File(home, "skills")
+        val state = File(home, ".bundled-skill-state")
+        for (name in BundledAgentSkills.names) {
+            runCatching {
+                val text = ctx.assets.open("skills/$name/SKILL.md").use { it.readBytes().toString(Charsets.UTF_8) }
+                if (!BundledAgentSkills.deploy(root, state, name, text)) {
+                    Log.w(TAG, "edited skill preserved: $name; APK rules remain preloaded")
                 }
-                Log.i(TAG, "skill deployed: $name")
+            }.onFailure { Log.w(TAG, "skill deployment failed ($name): ${it.message}") }
+        }
+        // Supporting files are app-owned only when the entrypoint still belongs to this bundle.
+        val name = "task-execution-discipline"
+        runCatching {
+            val text = ctx.assets.open("skills/$name/SKILL.md").use { it.readBytes().toString(Charsets.UTF_8) }
+            if (File(root, "$name/SKILL.md").readText() == text) {
+                val path = "references/step-reminder.md"
+                val reminder = ctx.assets.open("skills/$name/$path").use { it.readBytes().toString(Charsets.UTF_8) }
+                if (!BundledAgentSkills.deploy(root, state, name, reminder, path)) {
+                    Log.w(TAG, "edited skill reference preserved: $name/$path")
+                }
             }
-        }.onFailure { Log.w(TAG, "deploySkills failed: ${it.message}") }
+        }.onFailure { Log.w(TAG, "skill reference deployment failed: ${it.message}") }
     }
 
+    /** App-owned content before the user section. */
     private fun appSectionOf(text: String): String {
         val i = text.indexOf(USER_SECTION_BEGIN)
         return if (i < 0) text.trimEnd() + "\n" else text.substring(0, i)
@@ -155,20 +154,17 @@ object AgentContextSeed {
         text.contains("$MARKER_PREFIX$v ")
 
     /** 随包内置、且会话一开就必须生效的技能（正文直接注入 AGENTS.md）。 */
-    private val ALWAYS_ON_SKILLS = listOf("evidence-discipline")
+    private val ALWAYS_ON_SKILLS = BundledAgentSkills.names
 
     private fun alwaysOnSkillBlock(ctx: Context): String = buildString {
         for (name in ALWAYS_ON_SKILLS) {
             val body = runCatching {
                 ctx.assets.open("skills/$name/SKILL.md").use { it.readBytes().toString(Charsets.UTF_8) }
             }.getOrNull() ?: continue
-            // 去掉 frontmatter：注入的是规则正文，不是技能元数据
-            val text = if (body.startsWith("---")) {
-                body.substringAfter("\n---", body).substringAfter('\n', body)
-            } else body
-            append("\n\n## Always-on skill: ").append(name).append("\n\n")
-            append("This skill is preloaded because the user requires it for every diagnosis/delivery.\n")
-            append("Follow it literally; do not wait for a skill-tool call.\n\n")
+            val text = BundledAgentSkills.body(body)
+            append("\n\n## Preloaded discipline skill: ").append(name).append("\n\n")
+            append("Apply these rules within the current user task; no skill-tool call is required.\n")
+            append("Discovery copy: ${'$'}DSH_HOME/skills/").append(name).append("/SKILL.md\n\n")
             append(text.trim()).append('\n')
         }
     }
@@ -236,7 +232,7 @@ object AgentContextSeed {
             ""
         }
         val rendered = body.replace("{{SHIZUKU_LINE}}", shz).replace("\n\n\n", "\n\n")
-        return "$MARKER_PREFIX$SEED_VERSION — managed by DSH Mobile. Edits below this line are preserved until the app upgrades this seed.\n" +
+        return "$MARKER_PREFIX$SEED_VERSION — managed by DSH Mobile. App section is managed; only the user section is preserved.\n" +
             rendered + alwaysOnSkillBlock(ctx)
     }
 }

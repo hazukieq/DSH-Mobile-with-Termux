@@ -25,10 +25,11 @@
 #         <out>/engine-dsh-<arch>.tar.gz、<out>/engine-manifest.json
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-RUNTIME=""; ARCH=aarch64; OUT=""; ENGINE_VERSION=""
+RUNTIME=""; ARCH=aarch64; OUT=""; ENGINE_VERSION=""; DOWNLOAD_BASE="${DSH_ENGINE_DOWNLOAD_BASE:-https://github.com/hazukieq/DSH-Mobile-with-Termux/releases/download/dsh-engine-latest}"
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--runtime) RUNTIME="$2"; shift 2 ;;
+		--download-base) DOWNLOAD_BASE="$2"; shift 2 ;;
 		--arch) ARCH="$2"; shift 2 ;;
 		--out) OUT="$2"; shift 2 ;;
 		--engine-version) ENGINE_VERSION="$2"; shift 2 ;;
@@ -134,37 +135,29 @@ rm -f "$OUT/engine-dsh-$ARCH.zip" "$OUT/engine-dsh-$ARCH.tar.gz"
 # sharp 的原生 addon 需要 Termux 的 libvips；打包时把 vips 依赖闭包塞进引擎层 lib，
 # 设备上就不必 `pkg install libvips` 也能走原生（否则回落 wasm）。
 # VIPS_LIBS_DIR 指向 PC 上的 libvips .so 目录（见 build-sharp-native-pc.sh 头注释）。
-if [ -n "${VIPS_LIBS_DIR:-}" ] && [ -x "$REPO_DIR/scripts/pack-engine-vips.sh" ]; then
+if [ -n "${VIPS_LIBS_DIR:-}" ] && [ -f "$REPO_DIR/scripts/pack-engine-vips.sh" ]; then
   echo "[engine] 捆绑 libvips: $VIPS_LIBS_DIR"
-  "$REPO_DIR/scripts/pack-engine-vips.sh" --libs "$VIPS_LIBS_DIR" --tree "$TREE" || {
+  bash "$REPO_DIR/scripts/pack-engine-vips.sh" --libs "$VIPS_LIBS_DIR" --tree "$TREE" || {
     echo "warning: libvips 捆绑失败，原生 sharp 将在无 libvips 的设备上回落 wasm" >&2; }
 fi
 
 # ---- 4.5 依赖审计门（每次编译必跑；FAIL 直接中断，避免发出「read_image 坏」这类包）----
-if [ -x "$REPO_DIR/scripts/check-engine-deps.sh" ]; then
+if [ -f "$REPO_DIR/scripts/check-engine-deps.sh" ]; then
   echo "[deps] 依赖审计：$TREE/lib/node_modules"
-  "$REPO_DIR/scripts/check-engine-deps.sh" --root "$TREE/lib/node_modules" || {
+  bash "$REPO_DIR/scripts/check-engine-deps.sh" --root "$TREE/lib/node_modules" || {
     echo "错误：依赖审计未通过，停止打包（豁免见 scripts/check-engine-deps.allow）" >&2; exit 1; }
+else
+  echo "missing dependency gate: $REPO_DIR/scripts/check-engine-deps.sh" >&2; exit 1
 fi
 
 ( cd "$TREE" && zip -q -r "$OUT/engine-dsh-$ARCH.zip" . && tar -czf "$OUT/engine-dsh-$ARCH.tar.gz" . )
 SHA="$(sha256sum "$OUT/engine-dsh-$ARCH.tar.gz" | cut -d' ' -f1)"
 SIZE="$(stat -c%s "$OUT/engine-dsh-$ARCH.tar.gz")"
-cat > "$OUT/engine-manifest.json" <<JSON
-{
-  "abi": "$ARCH",
-  "dsh_version": "$DSH_VERSION",
-  "engine_version": "$ENGINE_VERSION",
-  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "assets": {
-    "$ARCH": {
-      "url": "https://github.com/Soodok/Deepseek-Harness-Local-Android/releases/download/dsh-engine-latest/engine-dsh-$ARCH.tar.gz",
-      "sha256": "$SHA",
-      "size": $SIZE
-    }
-  }
-}
-JSON
+python3 "$REPO_DIR/scripts/make-engine-feed.py" \
+  --artifact "$OUT/engine-dsh-$ARCH.tar.gz" --arch "$ARCH" \
+  --dsh-version "$DSH_VERSION" --engine-version "$ENGINE_VERSION" \
+  --download-base "$DOWNLOAD_BASE" --out "$OUT/engine-manifest.json"
+
 echo "[engine] $OUT/engine-dsh-$ARCH.zip  $(sha256sum "$OUT/engine-dsh-$ARCH.zip" | cut -d' ' -f1)"
 echo "[engine] $OUT/engine-dsh-$ARCH.tar.gz $SHA"
 echo "[engine] dsh=$DSH_VERSION engine=$ENGINE_VERSION"

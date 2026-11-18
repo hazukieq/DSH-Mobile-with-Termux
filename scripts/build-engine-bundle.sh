@@ -12,4 +12,4 @@
 #   <out>/engine-dsh-<arch>.tar.gz / .zip / engine-manifest.json
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec "$REPO_DIR/scripts/build-engine-layer.sh" "$@"
+exec bash "$REPO_DIR/scripts/build-engine-layer.sh" "$@"

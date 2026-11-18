@@ -1,83 +1,33 @@
 #!/system/bin/sh
 # [dsh-android] dsh-update: 热更新 **dsh 引擎层**（不重装 APK、不动 Termux 基础环境）。
 #
-# 背景（2026-10-18 包名切到 com.termux 之后，架构是两层的）：
-#   <files>/usr            = Termux 官方 bootstrap（apt/dpkg/bash/coreutils…）
-#   <files>/usr/lib/node_modules/@deepseek-ai/dsh   = 适配版 dsh 引擎
-#   <files>/usr/bin/node、bin/rg                    = 引擎依赖
-#
-# 所以「热更新」= 换掉 **引擎层那几项**（lib/node_modules / bin/node / bin/rg /
-# .dsh-engine-version），bootstrap 一个文件都不碰。跟老版本一样按 **dsh 版本**判断，
-# 不按 APK 版本；产物是预先打好 Android 适配补丁的 engine tar.gz。
+# 更新范围：lib/node_modules、.dsh-engine-version，以及包内提供的
+# lib/dsh-engine/lib、bin/node、bin/rg。版本按 dsh 与引擎标记识别。
+# 产物必须预先打好 Android 补丁；上游新版不等于已有可下载的适配包。
 #
 # 用法:
 #   dsh-update status                       本地 dsh/node/引擎版本、暂存与回滚状态
-#   dsh-update check [--manifest URL]       本地 dsh 版本 vs **GitHub** 上的最新引擎（不经 npm）
+#   dsh-update check [--manifest URL|path]  验证 feed，比较本地与 feed 版本
 #   dsh-update pull [dsh-version] [--apply] 下载最新引擎包并暂存（--apply 直接切换）
 #   dsh-update stage <url|path> [sha256]    暂存指定引擎包（离线测试用）
 #   dsh-update apply                        备份当前引擎 → 换入暂存 → 重启 + 健康检查
 #   dsh-update rollback                     回滚到上一份引擎
 #   dsh-update restart                      只重启引擎
 #   dsh-update version                      同 status
-#   dsh-update howto                        打印「自己编译上游 dsh」的完整步骤
+#   dsh-update howto                        打印构建流程与完整文档位置
 #
-# 自己编译 / 自建引擎层（想用比 Release 更新的 dsh，或自己改引擎代码时）：
-#   本 App 的引擎层 = Termux 版 node + 上游 dsh 的依赖闭包 + 一组 Android 兼容
-#   补丁。所以「编译」= 在主机上重新组装，不是手机上 gcc；**但手机自己也能装
-#   （手机端自建 ≈2–3 分钟，见下面 6)）**。
-#
-#   0) 选版本：必须是上游 tag，例如 dsh-v0.2.2-alpha.2（不是 npm 的 dist-tag）。
-#   1) 主机准备：node/npm(>=20)、pnpm、unzip、zip、python3、llvm-readelf（NDK）
-#        export NPM_REGISTRY=https://registry.npmmirror.com        # npm 换源
-#        export TERMUX_REPO=https://mirror.nju.edu.cn/termux/apt/termux-main
-#      ⚠️ Termux 源：NJU 最快（实测 ~521 kB/s），USTC 可用，TUNA/BFSU 的 termux
-#         路径会 403。npmmirror 约 1.5 MB/s。
-#   2a) 【快路】只换 JS 闭包、复用现有运行时（升级 dsh 版本首选，20 秒出包）：
-#        先按上游 packaging 产「发布形态闭包」（详见 docs/ENGINE-BUILD.md §1）：
-#          pnpm exec tsx scripts/release/pack.ts --family dsh --out /tmp/npmpack
-#          npm install --ignore-scripts --omit=optional ...（tarball 走 file: 依赖）
-#        然后：
-#          scripts/build-engine-closure.sh \
-#              --engine app/src/main/assets/engine-dsh-aarch64.zip \
-#              --closure /tmp/release-consumer/node_modules \
-#              --version "0.2.2-alpha.2+src1" --out /tmp/engine-closure.tar.gz
-#        它会换 lib/node_modules → 调 scripts/patch-engine-closure.sh 打补丁 →
-#        三道自检（cosmokit / 无 workspace: / require cordis）→ 打最小布局 tar。
-#      ⚠️ 闭包必须是发布形态：monorepo 的 node_modules 会留 workspace: 且缺
-#         cosmokit，装上后引擎 exit=1。
-#   2b) 【全量路】连运行时一起收（首次或换 Termux 包时；会打 koffi 打桩 /
-#      session-persistence / flock 等 bionic 兼容补丁）：
-#        DSH_VERSION=0.2.2-alpha.2 scripts/collect-termux-runtime.sh /tmp/rt-arm64.zip aarch64
-#      ⚠️ 跳过这一步 = 白屏或引擎起不来，不要试图用 npm 包替代。
-#   3) 组装引擎层（产物布局与热更新包一致，可直接 stage）：
-#        scripts/build-engine-layer.sh --runtime /tmp/rt-arm64.zip --arch aarch64 \
-#            --out /tmp/engine-mine --engine-version "0.2.2-alpha.2+my1"
-#      产物：/tmp/engine-mine/engine-dsh-aarch64.tar.gz（另有 .zip 与 manifest）；
-#      脚本会顺手用 scripts/verify-runtime-abi.py 校验 ABI。
-#   4) 引擎 tar 的**最小可用布局**（自己手搓包时必须满足）：
-#        lib/node_modules/**          必须（dshEntry 走 npm 布局解析）
-#        .dsh-engine-version          必须（status/回滚识别）
-#        bin/node、bin/rg             可选；缺了会沿用旧引擎/运行时的那份
-#      ⚠️ 不要把 runtime.zip 直接当引擎包 stage —— 它没有 lib/node_modules，只会
-#         把引擎换成「空壳」。
-#   5) 推进手机：
-#        adb push /tmp/engine-mine/engine-dsh-aarch64.tar.gz /sdcard/Download/
-#        sha256sum /tmp/engine-mine/engine-dsh-aarch64.tar.gz   # 取哈希
-#        dsh-update stage /sdcard/Download/engine-dsh-aarch64.tar.gz <sha256>
-#        dsh-update apply        # 换引擎 → 等旧进程退出 → 健康检查；失败自动回滚
-#        dsh-update rollback     # 随时回上一份
-#      apply 现在会先确认「旧引擎 pid 已消失/已换新 pid」再判健康，避免旧引擎的
-#      401 冒充健康导致回滚不触发。
-#   6) 手机端自建（可选，适合没有主机时；需 Termux 内 php? 不需要）：
-#        pkg install -y git zip tar              # 别装 nodejs/pnpm：会覆盖 App 的 wrapper
-#        （被打补丁脚本在仓库 scripts/ 里，需要 git clone 本仓库）
-#        cd ~ && git clone --depth 1 --branch dsh-v0.2.2-alpha.2 \
-#            https://github.com/deepseek-ai/deepseek-harness.git dhs
-#        cd dhs && pnpm install --frozen-lockfile && pnpm build:official
-#        # 再把 lib/node_modules 闭包 + .dsh-engine-version 打 tar 后 stage/apply
-#      手机端慢在 pnpm install 与构建（10–15 分钟，内存吃紧时给 node 加
-#      --max-old-space-size=4096），好处是完全离线可控。
-#   7) 版本号只用于 status/回滚识别，建议 "<上游版本>+<你的标记>"。
+# 自己编译上游 dsh：
+#   完整流程见随包文档 ENGINE-BUILD.md §1（手机端见 §1.7）。
+#   从选定 tag 构建 → scripts/release/pack.ts --family dsh → 本地 tarball
+#   以 file: 依赖装出 consumer/node_modules → bash scripts/build-engine-closure.sh。
+#   不要复制 monorepo/node_modules，也不要用 npm 上不完整的 dsh 发布包代替。
+#   Android 上先 export TMPDIR="$PREFIX/tmp" 并 mkdir -p "$TMPDIR"。
+#   手机自建用独立 npm JS CLI 和锁定的 pnpm JS CLI；不要覆盖 App 的 node。
+#   下载依赖时显式指定 registry；安装时禁用 scripts，并单独验收原生能力。
+#   本地包：dsh-update stage <tar.gz> <sha256>，核对后 dsh-update apply。
+#   自建 feed：构建时传 --download-base <资产目录URL>，上传 tar 与生成的清单，
+#   再 DSH_ENGINE_MANIFEST=<清单URL或路径> dsh-update check|pull。
+#   APK 发布的溯源 engine-manifest.json 不包含热更新包，不能用作 feed。
 #
 # 退出码: 0 成功 / 1 失败或被拒 / 2 用法错误 / 3 环境错误
 #
@@ -92,11 +42,12 @@ DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 P="${PREFIX:-$(cd "$DIR/.." 2>/dev/null && pwd)}"
 STAGED="$P/.engine-staged"
 PREV="$P/.engine-prev"
-MANIFEST_DEFAULT="https://github.com/Soodok/Deepseek-Harness-Local-Android/releases/download/dsh-engine-latest/engine-manifest.json"
+ENGINE_REPO="hazukieq/DSH-Mobile-with-Termux"
+MANIFEST_DEFAULT="https://github.com/$ENGINE_REPO/releases/download/dsh-engine-latest/engine-manifest.json"
 HEALTH_URL="http://127.0.0.1:3080/"
 
 _die() { echo "dsh-update: $*" >&2; exit "${_EXIT:-3}"; }
-_usage() { sed -n '3,80p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+_usage() { sed -n '3,/^# 自己编译上游 dsh/p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # ── 版本读取 ────────────────────────────────────────────────────────────────
 _dsh_version() {
@@ -115,17 +66,41 @@ _node_version() { [ -x "$P/bin/node" ] && "$P/bin/node" --version 2>/dev/null ||
 _ABI=unknown
 case "$(uname -m)" in aarch64|arm64) _ABI=aarch64 ;; x86_64|amd64) _ABI=x86_64 ;; arm*) _ABI=arm ;; esac
 
-_jget() {  # $1=json $2=key → 第一个字符串值（只适用于我们自己的扁平面量）
-  printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1
+# Node is part of every engine; parse JSON without depending on formatting or key order.
+_json() {
+  printf '%s' "$1" | "$P/bin/node" -e '
+const fs = require("node:fs");
+try {
+  const j = JSON.parse(fs.readFileSync(0, "utf8"));
+  const [op, abi, key] = process.argv.slice(1);
+  if (op === "releases") {
+    if (!Array.isArray(j)) throw Error("invalid release list");
+    for (const r of j) if (!r.draft) for (const a of r.assets || []) {
+      if (["engine-manifest.json", "engine-feed.json"].includes(a.name) &&
+          /^https?:\/\//.test(a.browser_download_url || "")) console.log(a.browser_download_url);
+    }
+  } else if (op === "get") {
+    if (typeof j[key] === "string") process.stdout.write(j[key]);
+  } else {
+    if (j.apk || j.payloads) throw Error("APK provenance manifest is not an engine feed");
+    if (j.kind && j.kind !== "dsh-engine-feed") throw Error("unsupported manifest kind");
+    if (j.schema_version !== undefined && j.schema_version !== 1) throw Error("unsupported feed schema");
+    if (!j.dsh_version || !j.engine_version || typeof j.dsh_version !== "string" ||
+        typeof j.engine_version !== "string") throw Error("missing engine/dsh version");
+    const asset = j.assets && j.assets[abi];
+    if (!asset) throw Error("no artifact for abi " + abi);
+    if (!/^https?:\/\//.test(asset.url || "")) throw Error("invalid artifact URL");
+    if (!/^[0-9a-f]{64}$/i.test(asset.sha256 || "")) throw Error("missing or invalid sha256");
+    if (op === "asset") process.stdout.write(asset[key]);
+  }
+} catch (e) { console.error("dsh-update: " + e.message); process.exit(1); }
+' "$2" "$_ABI" "${3:-}"
 }
-_jabi() {  # 取 assets 里本 abi 的 url/sha（格式固定：先 url 后 sha256）
-  printf '%s' "$1" | tr ',' '\n' | sed -n "/\"$_ABI\"/,/sha256/p" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
-}
-_jabisha() {
-  printf '%s' "$1" | tr '}' '\n' | sed -n "/\"$_ABI\"/p" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
-}
+_jget() { _json "$1" get "$2"; }
+_jabi() { _json "$1" asset url; }
+_jabisha() { _json "$1" asset sha256; }
 
-_GH_API="https://api.github.com/repos/Soodok/Deepseek-Harness-Local-Android"
+_GH_API="https://api.github.com/repos/$ENGINE_REPO"
 # 上游 dsh 项目本体（官方 GitHub）：release tag 形如 dsh-v0.2.1-rc.2
 _GH_UPSTREAM_API="https://api.github.com/repos/deepseek-ai/deepseek-harness"
 
@@ -145,29 +120,32 @@ _fetch_manifest() {  # $1=url|path → 内容
   esac
 }
 
-# 官方 feed 只走 GitHub（不查 npm）：
-#   1. 滚动 release 的直链 engine-manifest.json（dsh-engine-latest）
-#   2. 直链还没同步/还没发布时，用 GitHub Releases API 在最近 30 个 release 里
-#      找一个挂了 engine-manifest.json 资产的，按 API 给的 browser_download_url 取
+# Explicit feeds never fall back to a different publisher.
 _feed_manifest() {
-  local json url
-  json=$(_fetch_manifest "$MANIFEST_DEFAULT" 2>/dev/null) && { printf '%s' "$json"; return 0; }
-  command -v curl >/dev/null 2>&1 || return 1
+  local source="${1:-${DSH_ENGINE_MANIFEST:-}}" json url candidates
+  if [ -n "$source" ]; then
+    json=$(_fetch_manifest "$source") || return 1
+    _json "$json" validate || return 1
+    printf '%s' "$json"; return 0
+  fi
+  if json=$(_fetch_manifest "$MANIFEST_DEFAULT" 2>/dev/null) && _json "$json" validate 2>/dev/null; then
+    printf '%s' "$json"; return 0
+  fi
   json=$(curl -fsSL -m 30 -H 'Accept: application/vnd.github+json' "$_GH_API/releases?per_page=30" 2>/dev/null) || return 1
-  url=$(printf '%s' "$json" | tr ',' '\n' | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*engine-manifest\.json\)".*/\1/p' | head -1)
-  [ -n "$url" ] || return 1
-  _fetch_manifest "$url"
+  candidates=$(_json "$json" releases) || return 1
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    if json=$(_fetch_manifest "$url" 2>/dev/null) && _json "$json" validate 2>/dev/null; then
+      printf '%s' "$json"; return 0
+    fi
+  done <<< "$candidates"
+  return 1
 }
 
 # ── 引擎层操作 ───────────────────────────────────────────────────────────────
 _restart_engine() {
   local delay_ms="${1:-400}"
-  # v1.7.1：优先调用 **App 提供的受控重启**（AgentBridge POST /engine/restart
-  # → EngineSupervisor.restart()）。旧实现直接 pkill，属于非受控重启：token/WebView
-  # 重载时序不可控，也容易和外部进程抢端口。
-  #
-  # 关键：重启会杀掉**调用方自己**（门脚本跑在引擎进程里），所以这里让 App
-  # 延迟执行重启（默认 8s），命令先把结果打印出来、agent 先回复，再真正停引擎。
+  # The supervisor restarts the caller too; delay_ms lets the response leave first.
   local helper="$DIR/_dsh_http.sh"
   if [ -r "$helper" ]; then
     # shellcheck disable=SC1090
@@ -239,64 +217,53 @@ _cmd_status() {
 }
 
 _cmd_check() {
-  local manifest="$MANIFEST_DEFAULT" json local_v feed_v feed_e local_e
-  while [ $# -gt 0 ]; do case "$1" in --manifest) manifest="$2"; shift 2 ;; *) _usage ;; esac; done
+  local manifest="" json local_v feed_v feed_e local_e up
+  while [ $# -gt 0 ]; do
+    case "$1" in --manifest) [ $# -ge 2 ] || _usage; manifest="$2"; shift 2 ;; *) _usage ;; esac
+  done
   local_v=$(_dsh_version); local_e=$(_engine_version)
-  local up
   echo "dsh: $local_v"
   echo "engine: $local_e"
   echo "abi: $_ABI"
-  up=$(_upstream_latest || true)
-  echo "upstream_github: ${up:-unknown} (deepseek-ai/deepseek-harness)"
-  local up_new=""
-  [ -n "$up" ] && [ "$up" != "$local_v" ] && up_new=1
-  if [ "$manifest" = "$MANIFEST_DEFAULT" ]; then json=$(_feed_manifest || true); else json=$(_fetch_manifest "$manifest" 2>/dev/null || true); fi
-  if [ -n "${json:-}" ]; then
+  if json=$(_feed_manifest "$manifest"); then
     feed_v=$(_jget "$json" dsh_version); feed_e=$(_jget "$json" engine_version)
-    if [ "$manifest" = "$MANIFEST_DEFAULT" ]; then echo "feed: github (dsh-engine-latest)"; else echo "feed: $manifest"; fi
-    echo "feed_dsh: ${feed_v:-?}"
-    echo "feed_engine: ${feed_e:-?}"
-    if [ -n "$feed_e" ] && [ "$feed_e" = "$local_e" ]; then
-      echo "update: no (already $local_e)"; exit 0
+    echo "feed: ${manifest:-${DSH_ENGINE_MANIFEST:-$MANIFEST_DEFAULT}}"
+    echo "feed_dsh: $feed_v"
+    echo "feed_engine: $feed_e"
+    if [ "$feed_v" = "$local_v" ] && [ "$feed_e" = "$local_e" ]; then
+      echo "update: no (already $local_e)"
+    else
+      echo "update: available ($local_v/$local_e -> $feed_v/$feed_e; version ordering not inferred)"
     fi
-    if [ -n "$feed_v" ] && [ "$feed_v" = "$local_v" ] && [ "${feed_e:-}" = "$local_e" ]; then
-      echo "update: no (already $local_v / $local_e)"; exit 0
-    fi
-    echo "update: yes ($local_v/$local_e -> ${feed_v:-?}/${feed_e:-?})"
     exit 0
   fi
-  # 官方 GitHub 上还没有带引擎包的 release：如实报告，不拿 npm 冒充
-  echo "feed: unavailable (no release with engine-manifest.json on our repo yet)"
-  if [ -n "$up_new" ]; then
-    echo "update: yes upstream ($local_v -> $up; Android 适配引擎包尚未发布)"
-    echo "hint: 上游已发新版，但本仓库的 dsh-engine-latest 还没有该版本；"
-    echo "      可等 CI 构建，或直接用包含新引擎的 APK 升级。"
-  else
-    echo "hint: 引擎热更新包由 scripts/build-engine-bundle.sh 构建并发布到 dsh-engine-latest；"
-    echo "      在它发布之前，升级引擎 = 安装包含新引擎的 APK。"
-    echo "update: no (local $local_v matches upstream ${up:-unknown}; no adapted engine published)"
-  fi
+  echo "feed: unavailable (no valid engine feed for $_ABI)"
+  echo "update: unknown (no downloadable Android engine verified)"
+  echo "hint: APK provenance manifests are not feeds; use DSH_ENGINE_MANIFEST or --manifest with an engine feed."
+  [ -z "$manifest${DSH_ENGINE_MANIFEST:-}" ] || exit 1
+  up=$(_upstream_latest || true)
+  echo "upstream_github: ${up:-unknown} (informational; not an Android update artifact)"
+  echo "hint: build a local engine using ENGINE-BUILD.md; no automatic build or publication is implied."
   exit 0
 }
 
 _cmd_stage() {
-  local src="$1" sha="${2:-}" tmp="$P/tmp/engine-dsh.tar.gz"
+  local src="${1:-}" sha="${2:-}" tmp="$P/tmp/engine-dsh.tar.gz"
   [ -n "$src" ] || _usage
   mkdir -p "$P/tmp"
   case "$src" in
     http://*|https://*) echo "stage: downloading $src"; curl -fL --retry 3 -m 900 -o "$tmp" "$src" || _die "download failed" ;;
-    *) [ -f "$src" ] || _die "artifact not found: $src"; cp -f "$src" "$tmp" ;;
+    *) [ -f "$src" ] || _die "artifact not found: $src"; [ "$src" -ef "$tmp" ] || cp -f "$src" "$tmp" || _die "copy failed" ;;
   esac
   if [ -n "$sha" ]; then
     local got; got=$(sha256sum "$tmp" | cut -d' ' -f1)
-    [ "$got" = "$sha" ] || _die "sha256 mismatch (want $sha got $got)"
+    [ "$got" = "${sha,,}" ] || _die "sha256 mismatch (want $sha got $got)"
   fi
   rm -rf "$STAGED.new"; mkdir -p "$STAGED.new"
   tar -xzf "$tmp" -C "$STAGED.new" || _die "extract failed"
-  [ -f "$STAGED.new/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || [ -f "$STAGED/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || _die "artifact is not a dsh engine bundle"
-  # v2.5.62：引擎层现在有两块可换 —— JS 闭包(lib/node_modules) 与原生库(lib/dsh-engine/lib)。
-  # 原生库缺了会让 sharp 回落 wasm，不致命；但如果包里有，就必须一起换，否则「换了引擎但
-  # libvips 还是旧的」这种半更新状态最难查。
+  [ -f "$STAGED.new/lib/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || _die "artifact is not a dsh engine bundle"
+  [ -s "$STAGED.new/.dsh-engine-version" ] || _die "artifact has no engine version"
+  # Native libraries, when supplied, must travel with the JS closure.
   if [ -d "$STAGED.new/lib/dsh-engine/lib" ]; then
     echo "stage: native libs: $(ls "$STAGED.new/lib/dsh-engine/lib" | wc -l) files"
   fi
@@ -380,30 +347,29 @@ _cmd_rollback() {
 }
 
 _cmd_pull() {
-  local manifest="$MANIFEST_DEFAULT" apply="" want="" json url sha tmp
+  local manifest="" apply="" want="" json url sha tmp
   while [ $# -gt 0 ]; do
     case "$1" in
-      --manifest) manifest="$2"; shift 2 ;;
+      --manifest) [ $# -ge 2 ] || _usage; manifest="$2"; shift 2 ;;
       --apply) apply=1; shift ;;
       -*) _usage ;;
-      *) want="$1"; shift ;;
+      *) [ -z "$want" ] || _usage; want="$1"; shift ;;
     esac
   done
-  if [ "$manifest" = "$MANIFEST_DEFAULT" ]; then
-    json=$(_feed_manifest) || _die "feed unavailable: no GitHub release with engine-manifest.json yet"
-  else
-    json=$(_fetch_manifest "$manifest") || _die "manifest fetch failed: $manifest"
+  json=$(_feed_manifest "$manifest") || _die "feed unavailable: supply a valid engine feed via --manifest or DSH_ENGINE_MANIFEST"
+  if [ -n "$want" ] && [ "$want" != "$(_jget "$json" dsh_version)" ] && [ "$want" != "$(_jget "$json" engine_version)" ]; then
+    _die "requested version $want does not match feed"
   fi
   url=$(_jabi "$json"); sha=$(_jabisha "$json")
-  [ -n "$url" ] || _die "no artifact for abi $_ABI in manifest"
   echo "pull: $(_jget "$json" dsh_version) from $url"
   tmp="$P/tmp/engine-dsh.tar.gz"; mkdir -p "$P/tmp"
   curl -fL --retry 3 -m 900 -o "$tmp" "$url" || _die "download failed"
-  [ -n "$sha" ] && { [ "$(sha256sum "$tmp" | cut -d' ' -f1)" = "$sha" ] || _die "sha256 mismatch"; }
-  "$0" stage "$tmp" "$sha"
-  [ -n "$apply" ] && "$0" apply
-  echo "pull: staged; run 'dsh-update apply' (or --apply)"
-  exit 0
+  "$BASH" "$0" stage "$tmp" "$sha" || _die "staging failed"
+  if [ -n "$apply" ]; then
+    "$BASH" "$0" apply || return $?
+  else
+    echo "pull: staged; run dsh-update apply"
+  fi
 }
 
 case "${1:-status}" in

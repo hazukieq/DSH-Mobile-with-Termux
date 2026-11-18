@@ -58,7 +58,7 @@ fi
 
 fetch_tgz() {  # <url> <destdir> <label>
   local url="$1" dest="$2" label="$3" tmp
-  tmp="$(mktemp -d)"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/dsh-sharp.XXXXXX")"
   say "下载 $label"
   curl -fsSL --retry 3 --max-time 300 "$url" -o "$tmp/pkg.tgz" || { rm -rf "$tmp"; die "下载失败：$url"; }
   rm -rf "$dest"; mkdir -p "$dest"
@@ -98,12 +98,12 @@ sz=$(stat -c%s "$wasm_blob" 2>/dev/null || stat -f%z "$wasm_blob")
 if command -v node >/dev/null 2>&1; then
   node -e "
     const fs=require('fs'),path=require('path');
-    const dir='$top_wasm';
+    const dir=process.argv[1];
     const pkg=JSON.parse(fs.readFileSync(path.join(dir,'package.json'),'utf8'));
     const tgt=pkg.exports && pkg.exports['./sharp.node'];
     if(!tgt) { console.error('exports[\"./sharp.node\"] 缺失'); process.exit(1); }
     if(!fs.existsSync(path.join(dir,tgt))) { console.error('exports 指向的文件不存在: '+tgt); process.exit(1); }
-  " || die "exports 自检失败"
+  " "$top_wasm" || die "exports 自检失败"
 fi
 for d in "$top_wasm" "$top_emnapi" "$nested_wasm" "$nested_emnapi"; do
   [ -d "$d" ] || die "缺目录 $d"

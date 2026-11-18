@@ -154,64 +154,37 @@ dsh-update howto                         # print the "build upstream dsh yoursel
 
 ### Building upstream dsh yourself
 
-The engine layer = Termux node + the `@deepseek-ai/dsh` dependency closure + a set of
-Android (bionic) patches, so "building" means reassembling it on an **x86_64 Linux host**,
-not compiling on the phone.
+See ENGINE-BUILD.md §1 for the complete workflow, or §1.7 for on-device builds.
+Build the selected tag, run upstream `pack.ts --family dsh`, install its local tarballs
+as `file:` dependencies in a fresh consumer, then invoke `bash scripts/build-engine-closure.sh`.
+Do not copy monorepo `node_modules`. On Android, set `TMPDIR="$PREFIX/tmp"`, run independent
+npm / pnpm JS CLIs through Node, and disable automatic pnpm version switching with the
+setting supported by that version.
 
-```sh
-# 0) pick an upstream tag (not an npm dist-tag), e.g. dsh-v0.2.2-alpha.2
-# 1) host deps: node/npm (>=20), pnpm, unzip, zip, python3, llvm-readelf (with the NDK)
-export NPM_REGISTRY=https://registry.npmmirror.com
-export TERMUX_REPO=https://mirror.nju.edu.cn/termux/apt/termux-main
-# 2) fetch upstream dsh + apply bionic patches + collect the Termux runtime
-DSH_VERSION=0.2.2-alpha.2 scripts/collect-termux-runtime.sh /tmp/rt-arm64.zip aarch64
-# 3) assemble the engine layer (same layout as the hot-update bundle, ABI-checked)
-scripts/build-engine-layer.sh --runtime /tmp/rt-arm64.zip --arch aarch64 \
-    --out /tmp/engine-mine --engine-version "0.2.2-alpha.2+my1"
-# 4) push to the phone and switch
-adb push /tmp/engine-mine/engine-dsh-aarch64.tar.gz /sdcard/Download/
-dsh-update stage /sdcard/Download/engine-dsh-aarch64.tar.gz <sha256>
-dsh-update apply            # swap -> wait for the old engine to exit -> health check; auto-rollback
-dsh-update rollback         # go back any time
-```
+To rebuild the Termux runtime, first prepare the consumer and set
+`DSH_SOURCE_DIR=<consumer/node_modules>` before `bash scripts/collect-termux-runtime.sh`,
+then assemble with `bash scripts/build-engine-layer.sh`. The collector no longer installs
+dsh automatically from the npm registry. Build time, package counts and mirror speeds vary.
 
-- **Do not skip step 2**: apiproxy / webview-polyfill / koffi stubs / session-persistence /
-  flock patches live there; skipping usually means a blank WebUI or an engine that won't boot.
-- **Mirrors**: NJU Termux is the fastest (~521 kB/s), USTC works, TUNA/BFSU termux paths
-  return 403; use npmmirror for npm (~1.5 MB/s).
-- **Minimum engine tarball layout**: `lib/node_modules/**` (dshEntry resolves through the npm
-  layout; without it the layer is an empty shell) + `.dsh-engine-version`; `bin/node` and
-  `bin/rg` are optional (the previous engine/runtime copies are reused). **Never stage a
-  runtime.zip directly.**
-- **Building on the phone is possible** (~10–15 min, mostly `pnpm install` + build; full steps plus
-  the memory/storage/registry constraints are in [ENGINE-BUILD.md](ENGINE-BUILD.md) §1.7):
-  `pkg install nodejs-lts pnpm zip` -> clone `dsh-v0.2.2-alpha.2` -> `pnpm install
-  --frozen-lockfile` -> `pnpm build:official` -> tar `lib/node_modules` + `.dsh-engine-version`
-  -> `stage`/`apply`. Use `--max-old-space-size=4096` when memory is tight.
-- The version string is only used for `status`/rollback bookkeeping — use
-  `<upstream version>+<your tag>`.
-
-
-- The version is judged by `@deepseek-ai/dsh`, not by the APK version.
-- `apply` moves the old layer to `$PREFIX/.engine-prev`, swaps in the staged one, restarts the
-  engine and runs a health check against `http://127.0.0.1:3080/` (120 s); an unhealthy tree
-  rolls back automatically.
-- Only the engine layer changes, so updating the engine never breaks `pkg`/`apt`.
+The engine tar must contain `lib/node_modules/@deepseek-ai/dsh/lib/bin.js` and
+`.dsh-engine-version`. Verify its SHA-256, run `dsh-update stage <path> <sha256>`, then
+`dsh-update apply` manually. Use `dsh-update rollback` to restore the previous engine.
+A runtime.zip is not a hot-update engine tar.
 
 ### Feed and manual publishing
 
-- Default feed: this repository's release
-  `dsh-engine-latest/engine-manifest.json`
-  (`{dsh_version, engine_version, assets.<arch>.{url,sha256,size}}`).
-- `check` only talks to GitHub, along two paths: upstream `deepseek-ai/deepseek-harness`
-  releases tagged `dsh-v*`, and whether this repository has published an adapted engine bundle
-  with `engine-manifest.json`. When it has not, it reports `feed: unavailable` and states
-  plainly that upstream has a newer version while the adapted bundle is not published — it
-  never pretends npm is the feed.
-- `scripts/build-engine-bundle.sh` produces `engine-dsh-*.tar.gz` plus the manifest,
-  publishing to the rolling release `dsh-engine-latest` and to the immutable
-  `dsh-runtime-<dsh version>` archive. (Since v2.9.112 this repo has **no GitHub Actions
-  workflows**; build and publish these artifacts locally by hand.)
+- Default source: `hazukieq/DSH-Mobile-with-Termux`, rolling release
+  `dsh-engine-latest/engine-manifest.json`. This is a publishing convention, not a guarantee
+  that a hot-update bundle exists. The v3.0 APK provenance manifest is not an engine feed.
+- A feed must supply `dsh_version`, `engine_version`, and `assets.<arch>.{url,sha256}`.
+  `check` validates its structure and ABI; without a valid bundle it reports
+  `feed: unavailable` / `update: unknown`. An upstream version does not prove an Android bundle exists.
+- `--manifest <URL-or-path>` overrides `DSH_ENGINE_MANIFEST`. Explicit sources never fall back
+  to a different feed when unavailable or invalid.
+- `bash scripts/build-engine-closure.sh --download-base <asset-directory-URL> ...` generates
+  a tar and `<out>.manifest.json`; `bash scripts/build-engine-bundle.sh ...` also generates a feed.
+  Upload the tar and manifest manually before using `pull`. See ENGINE-BUILD.md for the build workflow.
+
 
 ## 5. WebUI sidebar terminal (node-pty bridge)
 

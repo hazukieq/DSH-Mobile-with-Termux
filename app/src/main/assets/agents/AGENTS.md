@@ -69,15 +69,16 @@ off. The per-endpoint list and the "service is off" ladder are in "Accessibility
   Overwriting them can break the engine itself.
 - `pkg upgrade` is fine for ordinary packages, but do not remove `bash`, `termux-tools` or
   `libandroid-support`: the shell and Termux scripts depend on them.
-- Scripts starting with `#!/data/data/com.termux/files/usr/bin/bash` or `#!/usr/bin/env bash`
-  run as written; `sh` is real bash, so `=~`, arrays and `[[ ]]` work.
+- Invoke Bash scripts as `bash script.sh`; Android has no `/usr/bin/env` at the usual Unix path.
+  Do not depend on that shebang or run Bash arrays through `/system/bin/sh`.
 - If `/sdcard` is not readable, ask the user to grant storage permission in the app rather than
   looping on `termux-setup-storage`.
 
 ## Toolchain (app-provided, already on PATH)
 
 - `node` — the binary the engine runs on; `bash` — real Termux bash; `rg` — native ripgrep
-  (prefer over `grep -r`); `pnpm` / `corepack` — offline package tooling.
+  (prefer over `grep -r`); `pnpm` — bundled package tooling; npm/corepack backends vary by engine.
+  Missing-backend errors identify the relevant `DSH_*_CLI` override; see `docs ENGINE-BUILD`.
 - `curl` — binary-safe wrapper over node fetch (`-s/-sS/-I/--json/-L/-X/-H/-d/-o/--max-time`);
   `-o` writes raw bytes.
 - `pgrep -x <name>` / `pkill -x <name>` — list/kill by command **name (comm)** only
@@ -108,133 +109,23 @@ Use a controlled restart only; never kill the engine process yourself.
 - A restart ends the current turn. Tell the user before restarting; the assistant message produced
   after the restart usually cannot be delivered to the session.
 
-## UI Automation Workflow (role and continuation protocol)
+## UI Automation Workflow
 
-### Time windows: plan slow, execute fast
+Three bundled skills are preloaded below; apply their bodies without waiting to call `skill`:
 
-Some controls disappear in a few seconds (video seek bars ~3s, toasts 2–3s, dropdowns). A
-"tap -> dump -> think -> tap" loop takes 1.5–3s and loses the window; the second tap lands on the
-page instead of the control. For anything with a time window:
+- `task-execution-discipline`: current goal, continuation after steering, two-failure recovery,
+  hand-off boundaries and completion.
+- `a11y-tap-discipline`: current app/layer, fresh actionable geometry, visual fallback,
+  tap semantics and receipts. Do not infer Canvas from a sparse first read.
+- `evidence-discipline`: read original receipts, consult the relevant docs before experiments,
+  distinguish verification from inference, and honor the user's stop/correction.
 
-- read the screen once, plan the whole sequence, then execute it **without intermediate dumps or
-  reasoning**;
-- prefer one transaction over hand-written shell sleeps:
-  `POST /act {"steps":[{"tapXY":[540,350]},{"sleepMs":400},
-   {"swipe":{"x1":520,"y1":656,"x2":60,"y2":656,"durationMs":1200}},
-   {"tapXY":[69,656]}],"onFail":"stop"}`
-  (steps support tap/doubleTap/swipe with durationMs/tapXY/listId+itemIndex/input/key/sleepMs/expect)
-- verify **once at the end** (one `expect`/dump), not between every action;
-- measured baseline on a phone: `scr dump` ~0.22s, `scr tap` ~0.16s, `loop pick` exact ~11ms.
-
-### Transient overlays: screenshot timing is part of the plan (measured)
-
-Measured end-to-end on a phone (2026-11-07, v2.9.92):
-
-| call | latency | note |
-|---|---|---|
-| `scr shot --save` | **0.3–0.6s** | accessibility capture + PNG encode |
-| `scr tap x y` | **0.5–0.8s** (2.9.93+) | was 2.6s before: the receipt screenshot used the legacy display+hide path, which also flashed the overlay |
-| `scr tap --no-shot x y` | **0.03–0.1s** | v2.9.93: receipt screenshot skipped |
-| `POST /act` (tap + sleep 450) | **0.45–0.5s** | one transaction, no screenshot |
-| `/act` with a `{"shot":true}` step | **~0.55s** | this is the number that matters for overlays |
-
-A video seek bar or toast lives 2–4s, and the player control bar needs ~400–500ms to animate in
-after the tap. Therefore **`scr tap` followed by `scr shot` in two calls will miss it** (and the old
-2.6s `scr tap` made that certain) — a timing budget problem, not "it cannot be captured". Rules:
-
-- To capture something that auto-hides, NEVER tap and then screenshot in two calls. Put the shot
-  **inside** the same transaction and let the reply carry the path:
-  `POST /act {"steps":[{"tapXY":[540,420]},{"sleepMs":450},{"shot":true}]}`
-  -> `steps[2].shot` + `steps[2].capturedAt`; or add `"afterShot":true` to get one extra frame right
-  after the last step (path in `afterShot`).
-- Decide "did I capture it" with a **target feature** (progress-bar pixels in a known band, OCR text
-  of the timestamp), never with "the screen looks unchanged".
-- `/screenshot` returns `capturedAt` (epoch ms of the capture) and `latencyMs`; `/ocr` returns
-  `capturedAt` too, and `cached:true` means the blocks came from an **earlier** frame — check
-  `capturedAt` before using OCR output for a timing judgement.
-- If you only need to know "did the UI react", use `/screen-changed` or `scr changed`, not a
-  screenshot.
-
-### Self-drawn controls (the target area has no a11y node)
-
-Some apps draw their player controls / canvas widgets themselves, so `scr dump` shows nothing there
-(Bilibili 9.17 player: 0 player nodes in the tree, controls auto-hide). Do not assume a node exists,
-and do not conclude "the control is not rendered":
-
-1. confirm with `scr dump` that the region really has no node (do not assume);
-2. find a **stable state** that does expose nodes (paused player, mini/docked player bar, fullscreen
-   menu) and read geometry from there;
-3. calibrate geometry from one successful capture (which y is the control bar, x range of the seek
-   track, position of the "more" button) and write it into a case doc / memory;
-4. put the composite gesture in **one** `/act` transaction (tap content -> sleep 450ms -> tap control),
-   never a blind step-by-step loop;
-5. cross-check with an objective external signal when one exists (e.g. Bilibili
-   `x/v2/history` -> `progress` seconds) instead of eyeballing the screenshot.
-
-### Reading channels: a11y / OCR / screenshot
-
-Pick the channel by the question, and know its cache/timeout semantics before you rely on it:
-
-| channel | cost | good for | traps |
-|---|---|---|---|
-| a11y (`/scene`, `scr dump`, `scr find`) | ~0.2s | semantics, clickable nodes, text, bounds | self-drawn UI is absent; stale after a fast transition |
-| OCR (`/ocr`) | 0–0.6s | text that the tree does not expose (webview canvas, images) | `cached:true` = old frame; needs a screenshot underneath |
-| screenshot (`/screenshot`, `scr shot --save`) | 0.5–0.6s | pixels: color, layout, "is it really gone" | slow; a transient overlay may be gone by the time you look |
-
-Escalation: a11y first (cheap, semantic) -> OCR when the text is missing from the tree -> screenshot
-when you need pixels or proof. On failure, switch channel or parameters; do not repeat the same plan.
-
-### Execution protocol (the whole loop, in five lines)
-
-1. **Analyse**: what state do I need, and which channel gives it? What are that channel's latency and
-   cache semantics?
-2. **Design the chain**: write actions + timings (ms per step) + the success criterion up front, plus
-   a plan B ("if it misses, switch channel / re-calibrate").
-3. **Execute once**: one `/act` transaction, no thinking in the middle.
-4. **Read the reply**: raw JSON first, parse second; on failure change parameters or channel, never
-   re-run an identical plan.
-5. **Verify once at the end** (an `expect` or one dump); read the screen again only when a new
-   decision is needed.
-
-### Gesture parameters matter more than coordinates
-
-- drag a slider/seekbar: `durationMs >= 800–1200` slow swipe; a short swipe over a long distance is
-  treated as a fling (the gesture reply now returns a `warning` for that case);
-- double tap: two taps with `gapMs <= 150` (use `/act {"doubleTap":[x,y],"gapMs":90}`); 0.4s apart is
-  two single taps;
-- list scrolling: 400–600px per swipe, verify between scrolls instead of one huge fling;
-- coordinates are only valid for the current layout: re-read before acting, never reuse coordinates
-  from an earlier dump;
-- a11y node centers and screenshot pixels are 1:1, so OCR boxes can be tapped directly.
-
-### /scene paging and tap forms
-
-`GET /scene` is paginated by default (`limit` 80, `offset` 0; the server auto-shrinks a page to keep it under 18KB) because tool output has a ~20KB cap and
-an unpaginated merged scene could exceed it. The reply always includes `total`, `offset`, `limit` and
-`nextOffset` (`null` = last page); fetch the next page with `&offset=<nextOffset>` when needed. Nodes
-are compact (text/desc/bounds/center/source/clickable/flags); pass `&verbose=1` only when you need
-cls/rid/x/y/w/h. `&region=0` disables incremental OCR, `&engine=mlkit` forces ML Kit.
-
-`POST /act` step forms are normalized: `{"tap":"搜索文字"}` taps by text, while
-`{"tap":[834,189]}` / `{"tapXY":[834,189]}` tap coordinates (an object `{"x":..,"y":..}` also works);
-`tapDesc`/`tapId`/`listId+itemIndex` select by other attributes.
-
-### Prefer bounds over guessing icons
-
-Coordinates come only from `/scene` (or `/screen?format=json`) `bounds`/`center`, or from the
-receipt of the last successful tap. Never estimate from a preview image: its size is not the
-screen's. Anti-patterns and the full bounds workflow are in `docs --section "Prefer bounds
-over guessing icons" DSH-MOBILE`.
-
-### Anti-patterns
-
-- Prefer short plans. A 20–22 step plan takes longer to generate, the screen can change during execution, and later steps may become invalid.
-- Avoid dumping the screen after every step: the `loop` report already contains per-step results. Use `scr changed` when only a change signal is needed, and dump when the next decision genuinely needs it.
-- Before adding work, check whether the step is already `ok` or covered by the active or queued frontier.
-- Do not treat a matching `verify` anchor as proof that the plan is complete when that text was already present on the source page.
-- Do not treat `yielded` as failure; inspect the new screen before deciding whether to wait again.
-- When a plan is blocked, change the anchor, action, or route using the failure evidence instead of repeating the same plan unchanged.
-- Once the goal is proven, stop operating unless the user has a new goal.
+Read only the relevant detailed reference: `docs ACCESSIBILITY` (§7–11),
+`docs CLICK_CHAIN_UPGRADE` (/scene, tapPoint, /act), or `docs DSH-MOBILE` (UI layers, CDP,
+hand-off). Time-sensitive controls need one planned `/act` transaction with shot/expect inside
+it; intermediate dumps may lose the control. Verify the requested target state after settling,
+not every intermediate dispatch. Previews are not a coordinate system: prefer fresh scene
+geometry, and use original pixels only when their mapping is established and nodes are unavailable/stale.
 
 ## Building Android apps on-device
 
@@ -469,9 +360,8 @@ semantics") links back to this section and adds the mobile-specific endpoints.
 
 ## Working agreements
 
-- Start with the user's task; this file has already answered "where am I". When the target surface
-  is ambiguous (native layer / WebUI / terminal), ask one clarifying question first; after two
-  failed probes switch layer or ask instead of continuing in the wrong one.
+- Start with the user's task; this file has already answered "where am I". Use the preloaded
+  task-execution discipline to retain the goal, select the right layer and recover from repeated failures.
 - Do not install glibc/native binaries (`npm rebuild`, linux-x64 prebuilts) — they cannot run
   here. Prefer pure-JS packages or `pkg install`ed Termux binaries.
 - If a tool is missing: `pkg search <name>` → `pkg install -y <name>`; state plainly when the

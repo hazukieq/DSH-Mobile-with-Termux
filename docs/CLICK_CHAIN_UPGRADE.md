@@ -114,10 +114,10 @@ CLI。同一屏热调用约 1.2s，区域增量命中约 93ms，截图缓存命�
 
 ### 为什么需要两层补丁
 
-无障碍节点树只覆盖「原生控件」这一种界面：
+无障碍节点树可以覆盖原生控件和提供语义的 WebView，具体以当前目标区域的节点为准：
 
 - 原生界面：`TextView` / `Button` / `RecyclerView` 行都在树里，带 `bounds`/`center`/`clickable`，直接可点；
-- **WebView / Canvas / 自绘界面没有可点节点**：图 1 的 WebView 聊天页整屏 41 个节点里，可点的多是
+- **部分 WebView / Canvas / 自绘区域没有可点节点**：图 1 的 WebView 聊天页整屏 41 个节点里，可点的多是
   「整条消息行」，真正的按钮是 CSS 画的、连节点都不存在；**纯文字按钮 `clickable=false`**，文字节点在
   树里但点文字不触发——真正可点的是它的容器，按坐标点字很容易点到不可点的子节点上；
 - **图标按钮没有文字**：`clickable=true` 但 `text`/`desc` 全空——能点，却不知道那是「搜索」还是「更多」。
@@ -164,7 +164,7 @@ CLI。同一屏热调用约 1.2s，区域增量命中约 93ms，截图缓存命�
 | 字段 | 含义 |
 |---|---|
 | `text` / `desc` | 文本；`desc` 非空才出现 |
-| `bounds` / `center` | `[left,top,right,bottom]` 与 `[x,y]`，屏幕像素、与截图 1:1；`center` 取节点**可见区域**中心 |
+| `bounds` / `center` | `[left,top,right,bottom]` 与 `[x,y]`，显示坐标；截图缩放/裁剪时需核对映射，`center` 取节点**可见区域**中心 |
 | `source` / `conf` | `a11y` / `ocr` / `icon` 说明这一条是谁看见的；`conf` 仅 icon 节点有（合并前已滤 `<0.45`） |
 | `clickable` | 是否可点；OCR 行落在可点节点内会继承 `true` |
 | `role` / `tapSource` / `tapPoint` | 见下，`annotateTapPoints` 之后加 |
