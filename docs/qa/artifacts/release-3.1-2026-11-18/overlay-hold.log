@@ -1,0 +1,8 @@
+INSTRUMENTATION_STATUS: stream=window checks passed; holding for visual inspection
+
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_RESULT: appUid=10278
+INSTRUMENTATION_RESULT: privMode=normal
+INSTRUMENTATION_RESULT: stream=PASS: attach, expand, final frame, overlapping avoidance, callback cleanup, content restore, preview, off, exit/resume
+
+INSTRUMENTATION_CODE: -1

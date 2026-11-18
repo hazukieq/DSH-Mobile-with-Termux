@@ -20,6 +20,7 @@ Die APK enthält kein großes Sprachmodell für Unterhaltungen. Lokale OCR und o
 | Funktion | Verwendung |
 |---|---|
 | Unterhaltungen und Werkzeuge | Eingebettete WebUI mit Sitzungen, Werkzeugen und Plugins; die Engine liefert das Layout für schmale Bildschirme |
+| Ausführungsregeln | Integrierte Skills für Aufgabenfortsetzung, Klickziele und Nachweise; kurze Erinnerungen bei neuen Anweisungen und während längerer Abläufe |
 | Smartphone-Steuerung | Oberfläche lesen, tippen, wischen, Text eingeben und Screenshots aufnehmen – über den autorisierten Bedienungshilfedienst und die lokale Gerätebrücke |
 | Oberflächenerkennung | Mitgeliefertes ML Kit als Standard, optional PP-OCRv6 im App-Prozess und Symbolerkennung; OCR benötigt keine Python-Installation |
 | Terminal und Dateien | PTY-Terminal in derselben Termux-Umgebung wie die Engine, Paketverwaltung mit `pkg` / `apt`, Dateibearbeitung und Teilen |

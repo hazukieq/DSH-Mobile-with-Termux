@@ -19,6 +19,7 @@ the APK does not include a conversational large language model. Local OCR and op
 | Capability | What it provides |
 |---|---|
 | Conversations and tools | Embedded WebUI with sessions, tools, and plugins; narrow-screen layout comes from the engine WebUI |
+| Execution discipline | Bundled task-continuation, tap-targeting and evidence skills, with brief reminders on new input and during continued execution |
 | Phone control | Read UI, tap, swipe, type, and capture screenshots through an authorized accessibility service and the local device bridge |
 | UI recognition | Bundled ML Kit by default, optional in-process PP-OCRv6 and icon detection; OCR needs no Python installation |
 | Terminal and files | PTY terminal sharing the engine's Termux environment, `pkg` / `apt` package management, file handling and sharing |
