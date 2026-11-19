@@ -3,6 +3,7 @@ package app.dsh.mobile.engine
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * Termux 默认 dotfiles（v1.3.8）。
@@ -38,6 +39,55 @@ object TermuxDotfiles {
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
     private val ASSET_VERSION = Regex("""DSH Mobile default config \(v(\d+)\)""")
+
+    /**
+     * 首启自动补装 zsh（2026-11-20）。
+     *
+     * ## 为什么
+     * zshrc 与插件（autosuggestions / syntax-highlighting）是**随包资产**，但 zsh
+     * 本体属于 Termux 软件包：新设备上没有 `$PREFIX/bin/zsh`，`ShellProfiles` 会
+     * 回落 bash —— 用户看到的就是「zshrc 没生效、没有高亮」。这里在后台补装，
+     * 让新装机器也能得到同一套交互体验，而不必手动 `pkg install zsh`。
+     *
+     * ## 幂等与退避
+     * - 已有可执行 zsh → 什么都不做。
+     * - 失败（离线/镜像不可达）写时间戳，7 天内不重试，避免每次启动都联网等待。
+     * - 全程在 DshApp 的 asset-sync 后台线程，不阻塞首帧、不影响引擎启动。
+     */
+    fun ensureZsh(ctx: Context) {
+        val root = EngineConfig.engineRoot(ctx)
+        val zsh = File(root, "bin/zsh")
+        if (zsh.isFile && zsh.canExecute()) return
+        val bash = File(root, "bin/bash")
+        val pkg = File(root, "bin/pkg")
+        if (!bash.isFile || !pkg.isFile) return
+
+        val stamp = File(EnginePaths.dshHome(ctx), ".dsh-zsh-install")
+        val now = System.currentTimeMillis()
+        val last = runCatching { stamp.readText().trim().toLong() }.getOrDefault(0L)
+        if (now - last < 7L * 24 * 3600 * 1000) return
+        runCatching { stamp.parentFile?.mkdirs(); stamp.writeText(now.toString()) }
+
+        runCatching {
+            val env = mapOf(
+                "PATH" to "${root.absolutePath}/bin:/system/bin:/system/xbin",
+                "PREFIX" to root.absolutePath,
+                "HOME" to EnginePaths.dshHome(ctx).absolutePath,
+                "TMPDIR" to EnginePaths.tmpDir(ctx).absolutePath,
+                "TERM" to "dumb",
+            )
+            val p = ProcessBuilder(bash.absolutePath, "-lc", "pkg install -y zsh zsh-completions")
+                .redirectErrorStream(true)
+                .also { it.environment().putAll(env) }
+                .start()
+            val out = p.inputStream.bufferedReader().readText()
+            val done = p.waitFor(180, TimeUnit.SECONDS)
+            if (!done) p.destroyForcibly()
+            Log.i(TAG, "zsh auto-install: installed=${zsh.isFile && zsh.canExecute()} " +
+                "rc=${if (done) p.exitValue() else -1}")
+            if (out.isNotBlank()) Log.d(TAG, out.takeLast(600))
+        }.onFailure { Log.w(TAG, "zsh auto-install failed: ${it.message}") }
+    }
 
     fun ensure(ctx: Context) {
         val body = runCatching {

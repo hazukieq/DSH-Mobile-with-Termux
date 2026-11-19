@@ -58,6 +58,9 @@ class DshApp : Application() {
         // 自述文档、dsh-mobile 助手与 dotfiles。后台线程做，避免阻塞首帧。
         Thread({
             runCatching { app.dsh.mobile.engine.TermuxDotfiles.ensure(this) }
+            // zsh 本体不在 APK 里（Termux pkg 包）；新设备上后台补装一次，否则终端回落 bash、
+            // 用户看不到随包的 zshrc/高亮插件。失败退避 7 天，不阻塞首帧。
+            runCatching { app.dsh.mobile.engine.TermuxDotfiles.ensureZsh(this) }
             runCatching { app.dsh.mobile.engine.EngineConfig.ensureAgentArtifacts(this) }
         }, "dsh-asset-sync").start()
         supervisor = EngineSupervisor(this)
