@@ -1103,7 +1103,7 @@ usage (CDP subcommands also accept the shorter "dsh-mobile <sub>" form):
 
 CDP quick start:
   dsh-mobile cdp on && (ask the user to reopen the app)
-  nohup dsh-mobile cdp serve 9222 >/tmp/cdp.log 2>&1 &
+  nohup dsh-mobile cdp serve 9222 >"${TMPDIR:-/tmp}/cdp.log" 2>&1 &
   curl -s 127.0.0.1:9222/json/list
   dsh-mobile cdp eval 'document.title'`);
       if (cmd) process.exit(1);

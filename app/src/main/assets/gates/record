@@ -37,12 +37,12 @@ case "${1:-}" in
       su -c "nohup $cmd >/dev/null 2>&1 &" >/dev/null 2>&1 && { echo "recording (root, ${secs}s): $out"; exit 0; }
     fi
     if [ "$has_shz" = 1 ]; then
-      nohup shz "$cmd" >/tmp/dsh-record.log 2>&1 &
+      nohup shz "$cmd" >"${TMPDIR:-/tmp}/dsh-record.log" 2>&1 &
       sleep 1
       if pgrep -f "screenrecord --time-limit" >/dev/null 2>&1; then
         echo "recording (shizuku, ${secs}s): $out"
       else
-        echo "record: shizuku screenrecord did not start (see /tmp/dsh-record.log)" >&2
+        echo "record: shizuku screenrecord did not start (see ${TMPDIR:-/tmp}/dsh-record.log)" >&2
         exit 1
       fi
       exit 0

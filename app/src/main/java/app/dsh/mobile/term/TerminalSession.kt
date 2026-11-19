@@ -305,7 +305,7 @@ object TerminalSessions {
             add(File("/system/bin"))
             add(File("/system/xbin"))
         }.filter { it.path.startsWith("/system") || it.isDirectory }
-        return listOf(
+        val base = listOf(
             "HOME=" + home.absolutePath,
             "PWD=" + home.absolutePath,
             "TMPDIR=" + tmp.absolutePath,
@@ -320,6 +320,10 @@ object TerminalSessions {
             "SHELL=/system/bin/sh",
             "DSH_TERMINAL=1",
         )
+        // /tmp 映射层兜底：正常路径由 EngineEnvBuilder 注入；这里防止 buildEnv 失败时
+        // 会话退化成「/tmp 不可写」的旧行为。
+        val preload = appCtx?.let { ctx -> app.dsh.mobile.engine.PathMap.ensure(ctx) }
+        return if (preload != null) base + "LD_PRELOAD=$preload" else base
     }
 
     /**

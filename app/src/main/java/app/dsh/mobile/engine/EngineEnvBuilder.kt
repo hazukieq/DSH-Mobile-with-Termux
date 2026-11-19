@@ -84,6 +84,8 @@ internal object EngineEnvBuilder {
             "HOME=${EnginePaths.dshHome(ctx)}",
             "DSH_HOME=${EnginePaths.dshHome(ctx)}",
             "TMPDIR=${EnginePaths.tmpDir(ctx)}",
+            // 路径映射层的目标目录（dsh_pathmap.c 读它）；与 TMPDIR 同源，便于单独覆盖。
+            "DSH_TMPDIR=${EnginePaths.tmpDir(ctx)}",
             "PORT=$port",
             "NODE_ENV=production",
             // 冷启动提速：V8 把 ESM/CJS 的编译产物缓存到磁盘，第二次启动少做一遍解析+编译
@@ -121,6 +123,21 @@ internal object EngineEnvBuilder {
             "DSH_PERMISSION_MODE=danger-full-access",
             *(bootId?.let { arrayOf("DSH_ANDROID_BOOT_ID=$it") } ?: emptyArray()),
         )
+        // /tmp 透明映射（2026-11-20）：Android 的 /tmp 属 shell:shell(0771)，App 写会 EACCES。
+        // 预载 dsh_pathmap.so 把 /tmp、/var/tmp、/dev/shm、/run 重写到 $DSH_TMPDIR；
+        // 再把 Termux 的 libtermux-exec 串在同一 LD_PRELOAD 链上，修 `#!/bin/sh` 解释器。
+        // 失败（APK 无该 ABI 条目等）就不注入 —— 行为退回原样，不影响启动。
+        run {
+            val tmp = EnginePaths.tmpDir(ctx)
+            File(tmp, "shm").mkdirs()
+            File(tmp, "run").mkdirs()
+            PathMap.ensure(ctx)?.let { pm ->
+                val chain = listOf(pm, File(root, "lib/libtermux-exec.so").absolutePath)
+                    .filter { File(it).isFile }
+                    .joinToString(":")
+                if (chain.isNotEmpty()) env += "LD_PRELOAD=$chain"
+            }
+        }
         // 包管理器镜像（2026-10-05，Issue 反馈「pnpm 连不上 GitHub」）：
         // runtime 内没有任何 .npmrc，corepack/npm 默认走 registry.npmjs.org —— 国内直连常
         // 超时或被重置。三个变量覆盖三条路径，缺一不可：

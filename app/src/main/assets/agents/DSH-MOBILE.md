@@ -592,6 +592,18 @@ Notes:
   `origin: http://127.0.0.1:3080`. An `application:"applied"` result means HMR took it;
   `restart-required` means the engine must be restarted.
 
+### Temporary files: literal `/tmp` works
+
+Android's `/tmp` is a shell-owned tmpfs (mode 0771): writing to it as this app fails with
+`EACCES`, and `/var/tmp`, `/dev/shm`, `/run` usually do not exist. **Do not burn attempts on
+`/data/local/tmp` or hand-built `$PREFIX/tmp` fallbacks**: the engine, terminals and gate shells
+export `DSH_TMPDIR` and preload a path-mapping layer, so literal `/tmp/x`, `/var/tmp/x`,
+`/dev/shm/x` and `/run/x` transparently resolve inside `$TMPDIR` (the engine's `tmp/`), where
+they are writable. This applies to every dynamically linked process (bash, node, python, git…).
+The same preload chain includes Termux's `libtermux-exec`, so `#!/bin/sh` and
+`#!/usr/bin/env bash` scripts run even though those absolute paths do not exist on Android.
+Only static binaries and raw syscalls bypass the mapping.
+
 ### Background progress (notification / floating window)
 
 Settings → 后台进度提示 selects off, notifications, or overlay (default).

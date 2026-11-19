@@ -56,6 +56,7 @@ if [ ! -f "$APK" ]; then FAIL+=("APK 存在"); echo "  FAIL $APK 不存在"; els
   run "纪律技能资产"    has assets/skills/a11y-tap-discipline/SKILL.md
   run "任务纪律资产"    has assets/skills/task-execution-discipline/SKILL.md
   run "纪律提醒插件"    has assets/android-plugins/discipline.mjs
+  run "路径映射预载层"  has lib/arm64-v8a/libdshpathmap.so
   run "产物文档"        has assets/docs/SECURITY-AUDIT.md
   run "无开发文档"      nothas "assets/docs/(ANDROID-CLI|refactor_guide|code_review|AI_CONTEXT)"
 fi
@@ -67,6 +68,7 @@ run "装机并启动" android run --device "$DEVICE" --activity app.dsh.mobile.M
 # ContentProvider exec is not exposed by android CLI. This test uses the app UID
 # in Normal mode and never switches privilege mode or invokes su/Shizuku.
 run "真机引擎与隔离升级回归" python3 scripts/test-engine-upgrade-device.py --device "$DEVICE" --require-live-engine
+run "真机 /tmp 映射"    python3 scripts/test-pathmap-device.py --device "$DEVICE"
 
 fi
 
