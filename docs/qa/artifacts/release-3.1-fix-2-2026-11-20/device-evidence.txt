@@ -1,0 +1,5 @@
+[+5687ms] [android-discipline] pre-step reminders registered {"mode":"trigger"}
+{
+  "mode": "trigger"
+}
+http=401, exit=0, truncated=false}]
