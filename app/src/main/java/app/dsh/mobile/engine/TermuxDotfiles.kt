@@ -36,7 +36,7 @@ object TermuxDotfiles {
     private const val CDP_HELPER_MARKER = "DSH Mobile helper"
     private const val FILE_NAME = ".zshrc"
     private const val MARKER = "# ~/.zshrc - DSH Mobile default config (v"
-    private const val VERSION = 69
+    private val ASSET_VERSION = Regex("""DSH Mobile default config \(v(\d+)\)""")
 
     fun ensure(ctx: Context) {
         val body = runCatching {
@@ -45,6 +45,10 @@ object TermuxDotfiles {
             Log.w(TAG, "zshrc asset missing: ${it.message}")
             return
         }
+        // Read the version from the shipped asset: a constant drifted (asset v7 vs VERSION 69)
+        // and rewrote the file on every launch, discarding marker-preserving edits.
+        val version = ASSET_VERSION.find(body)?.groupValues?.get(1)
+        if (version == null) Log.w(TAG, "zshrc asset has no version marker; rewriting on each launch")
         val plugin = runCatching {
             ctx.assets.open(PLUGIN_ASSET).use { it.readBytes() }
         }.getOrNull()
@@ -91,10 +95,10 @@ object TermuxDotfiles {
                     !existing.contains(MARKER) -> {
                         Log.i(TAG, "zshrc exists and is user-managed at ${dst.absolutePath}; left alone")
                     }
-                    existing.contains("$MARKER$VERSION)") -> Unit
+                    version != null && existing.contains("$MARKER$version)") -> Unit
                     else -> {
                         writeSafe(dst, body.toByteArray())
-                        Log.i(TAG, "zshrc upgraded to v$VERSION at ${dst.absolutePath}")
+                        Log.i(TAG, "zshrc updated to v${version ?: "?"} at ${dst.absolutePath}")
                     }
                 }
             }.onFailure { Log.w(TAG, "deploy zshrc failed: ${it.message}") }
