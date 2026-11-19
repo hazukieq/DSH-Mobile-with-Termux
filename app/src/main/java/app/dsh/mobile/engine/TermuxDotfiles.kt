@@ -30,7 +30,8 @@ object TermuxDotfiles {
     private const val TRASH_CLI_MARKER = "DSH Mobile trash-cli"
     private const val APP_DOC_ASSET = "agents/DSH-MOBILE.md"
     private const val APP_DOC_MARKER = "dsh-mobile app doc v"
-    private const val APP_DOC_MARKER_VERSION = "dsh-mobile app doc v81 "
+    /** 版本号不再写死：直接从资产首行取，避免「常量 v81 / 资产 v80」漂移后每次启动重写。 */
+    private val APP_DOC_VERSION_RE = Regex("""dsh-mobile app doc (v\d+)""")
     private const val CDP_HELPER_ASSET = "termux/webview-cdp.mjs"
     private const val CDP_WRAPPER_ASSET = "termux/dsh-mobile.sh"
     private const val CDP_HELPER_MARKER = "DSH Mobile helper"
@@ -181,8 +182,10 @@ object TermuxDotfiles {
             if (existing != null) {
                 // 不是我们生成的（用户自己写的说明）→ 不动
                 if (!existing.startsWith("<!-- " + APP_DOC_MARKER)) return
-                // 同一版本已部署 → 不动（避免每次启动重写）
-                if (existing.contains("<!-- " + APP_DOC_MARKER_VERSION)) return
+                // 同一版本已部署 → 不动（避免每次启动重写）；版本取自资产正文，避免常量漂移
+                val assetVersion = APP_DOC_VERSION_RE.find(body)?.groupValues?.get(1)
+                val existingVersion = APP_DOC_VERSION_RE.find(existing)?.groupValues?.get(1)
+                if (assetVersion != null && existingVersion == assetVersion) return
             }
             writeSafe(dst, body.toByteArray())
             Log.i(TAG, "app doc deployed at ${dst.absolutePath}")
