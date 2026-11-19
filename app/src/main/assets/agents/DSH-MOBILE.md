@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v79 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v80 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -488,15 +488,14 @@ components instead of a fake `ok`; `/settings` masks secrets and reports `restar
     stays `/`; it is **not** a `/settings` route, so opening that URL never worked (now the engine
     serves index.html for extensionless client routes as a fallback, but the entry is still the menu).
   - **Native settings** = the top-bar gear → Android `SettingsActivity` (permission centre, plugin
-    centre, engine restart, terminal font, mobile-UI rollback).
+    centre, engine restart, terminal font).
 - When the layer is unclear, **ask the user**: "do you mean the WebUI settings (account menu) or the
   gear/native settings?" — then act. Blindly trying layers costs many steps.
 - `dsh-mobile ui` prints this layer map (add `--json` for machine use).
 
 ## Driving the WebUI over CDP — the correct way
 
-The mobile UI replaces the engine app bar: the engine's own "打开侧边栏" button sits off-screen
-(x ≈ -308) and must not be clicked. Use the mobile-ui app bar and real pointer events.
+The engine's WebUI provides the app bar; use real pointer events (never synthetic clicks).
 
 1. Open the drawer: `dsh-mobile cdp click 'button[aria-label="菜单"]'` (top-left, aria-label 菜单).
 2. Drawer entries are buttons with these aria-labels: `新建会话`, `插件`,
@@ -531,15 +530,13 @@ Rules for reliable WebUI automation:
   When the user says "顶部胶囊/把手" they mean this handle and the toolbar it restores.
 - **Native Settings page** (gear): display (orientation, page zoom), permission centre (privilege
   mode, root, Shizuku, accessibility, all-files access, TTS), plugin centre, terminal font size,
-  engine restart, and the mobile-UI rollback switch.
+  engine restart.
 - **Onboarding asks for file access**: on Android 11+ the first-run flow requests "All files
   access" (`MANAGE_EXTERNAL_STORAGE`) before entering the app (skippable; later in Settings →
   权限中心). Android 10 and below gets the legacy READ/WRITE_EXTERNAL_STORAGE runtime prompt.
-- **Web UI mobile layer** (`dsh-mobile-ui`): on tablets it is enabled **only in portrait**;
-  rotating to landscape reloads the page into the stock desktop WebUI (and back). Phones keep
-  the mobile layer in both orientations. The layer has an app bar with ☰ drawer, conversation title,
-  right-pane toggle and ⓘ info button; drawer lists new session, plugins, automations, memory and
-  workspace sessions; the right pane opens full-screen with its own tab strip.
+- **Web UI layout**: the engine WebUI itself supplies the narrow-screen layout. The drawer,
+  account menu, settings dialog and right pane are the engine's own components; wide screens
+  fall back to the stock desktop layout without the mobile-specific app bar.
 - **Right pane** (engine dock): tabs for document preview / terminal / guide, `+` to add a tab,
   split and collapse buttons. Its terminal is the engine PTY (bash), separate from the native
   terminal.
@@ -817,8 +814,8 @@ before deep app work. Quick map:
   accessibility service. Do not use CDP screenshots: they can be blank/stale.
 - The UI map (top toolbar, the capsule handle that restores it, native Settings, mobile drawer,
   right pane, native terminal tabs/keys) is documented in `$DSH_HOME/DSH-MOBILE.md`, section
-  "App UI map". On tablets the mobile UI layer is portrait-only - in landscape the stock desktop
-  WebUI is used, so the mobile app bar/drawer will be absent there. Read it before explaining the app to the user or automating it.
+  "App UI map". On wide screens the engine uses the stock desktop WebUI (no mobile app bar).
+  Read it before explaining the app to the user or automating it.
 - The rest of the native API (60+ endpoints: screen, screenshot, gesture, key, input, launch,
   launch-intent, ocr, vision, memory, notif, plugin list/install, diag, pty, runtime) lives on
   `127.0.0.1:3083` and is reachable as
@@ -873,7 +870,7 @@ pnpm.
 
 ## Driving the WebUI correctly (CDP)
 
-The mobile UI replaces the engine app bar; the engine's "打开侧边栏" button is off-screen. Use:
+The engine WebUI provides the app bar and drawer; drive them with real pointer events:
 
 1. `dsh-mobile cdp drawer` opens the drawer **idempotently** (the 菜单 button is a toggle — clicking it
    twice closes the drawer, and then `click-text` matches page text instead of a nav item).

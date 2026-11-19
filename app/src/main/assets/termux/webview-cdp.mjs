@@ -981,7 +981,7 @@ function cmdUi(args) {
     layers: {
       native: {
         what: 'Android activities + the native top-bar overlay (engine status / restart / hide / gear)',
-        entries: ['top-bar gear -> SettingsActivity (permission centre, plugin centre, engine restart, font, mobile-UI rollback)', 'top-bar hide -> capsule handle (drag it, tap to restore the toolbar)', 'terminal activity (native terminal)'],
+        entries: ['top-bar gear -> SettingsActivity (permission centre, plugin centre, engine restart, font)', 'top-bar hide -> capsule handle (drag it, tap to restore the toolbar)', 'terminal activity (native terminal)'],
         automation: 'accessibility taps / dsh-mobile appshot. CDP cannot see this layer. Do NOT `am start` the app\'s own activities: Android may block the background start and still exit 0.',
       },
       web: {
