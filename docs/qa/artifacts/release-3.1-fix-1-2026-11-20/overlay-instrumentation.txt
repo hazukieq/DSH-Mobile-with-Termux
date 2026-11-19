@@ -1,0 +1,5 @@
+INSTRUMENTATION_RESULT: appUid=10487
+INSTRUMENTATION_RESULT: privMode=normal
+INSTRUMENTATION_RESULT: stream=PASS: attach, expand, final frame, overlapping avoidance, callback cleanup, content restore, preview, off, exit/resume
+
+INSTRUMENTATION_CODE: -1

@@ -1,0 +1,2 @@
+PASS uid=10487 tmpdir=/data/user/0/com.termux/files/usr/tmp
+PASS pathmap: /tmp is writable through $TMPDIR
