@@ -34,7 +34,7 @@ import tarfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 CATALOG = os.path.join(ROOT, "app", "src", "main", "assets", "extensions", "catalog.json")
-DEFAULT_MIRROR = "https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main"
+DEFAULT_MIRROR = "https://mirrors.aliyun.com/termux/termux-main"
 
 # Termux 前缀：deb 内路径 ./data/data/com.termux/files/usr/...
 TERMUX_DATA_PREFIX = "data/data/com.termux/files/"

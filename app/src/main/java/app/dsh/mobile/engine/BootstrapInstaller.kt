@@ -38,6 +38,10 @@ object BootstrapInstaller {
     const val ENGINE_ASSET = "engine-dsh-aarch64.zip"
     const val ENGINE_VERSION = "dsh-engine-0.2.1-rc.2-20261019"
     private const val STAMP = ".bootstrap-version"
+    /** sources.list 归 App 管的标记；用户删掉这行即视为自管，不再重写。 */
+    private const val APT_MARKER = "DSH Mobile writes this once"
+    /** 2026-11-20 实测（host + vivo）最快的 Termux 镜像。 */
+    private const val APT_MIRROR = "https://mirrors.aliyun.com/termux/termux-main"
     private const val ENGINE_STAMP = ".dsh-engine-version"
     const val DSH_PKG = "lib/node_modules/@deepseek-ai/dsh/lib/bin.js"
 
@@ -82,20 +86,35 @@ object BootstrapInstaller {
     }
 
     /**
-     * 默认 apt 源写国内镜像（清华 TUNA），避免首启访问国外 bootstrap 默认源。
-     * 只在文件缺失时写一次，之后用户可以自己改。
+     * 默认 apt 源写国内镜像，避免首启访问国外 bootstrap 默认源。
+     *
+     * ## 选型（2026-11-20 实测，host + vivo 双端，取 Packages.gz 5 轮中位）
+     * - 阿里云  ~4.2–5.3 MB/s（两地都最快）
+     * - 中科大  ~1.5–2.1 MB/s
+     * - 南大    ~0.7–1.7 MB/s
+     * - 上交    ~0.3–1.5 MB/s
+     * - 清华/北外  403（本网络被拒），故不再默认 TUNA
+     * 用阿里云做默认；中科大/南大在下方注释里留作手动替代。
+     *
+     * ## 迁移
+     * 旧版本写过 TUNA 的 sources.list 带我们的 marker：带 marker → 覆盖成新默认；
+     * 用户自己改过（无 marker）→ 绝不碰。
      */
     private fun writeChinaAptSources(root: File) {
         runCatching {
             val f = File(root, "etc/apt/sources.list")
-            if (f.isFile && f.readText().contains("tuna.tsinghua.edu.cn")) return
+            val existing = runCatching { if (f.isFile) f.readText() else null }.getOrNull()
+            if (existing != null && !existing.contains(APT_MARKER)) return
+            val desired = buildString {
+                append("# DSH Mobile writes this once; edit freely afterwards.\n")
+                append("# Alternatives: https://mirrors.ustc.edu.cn/termux/termux-main\n")
+                append("#               https://mirrors.nju.edu.cn/termux/apt/termux-main\n")
+                append("deb $APT_MIRROR stable main\n")
+            }
+            if (existing == desired) return
             f.parentFile?.mkdirs()
-            f.writeText(
-                "# The main termux repository (China mirror: TUNA).\n" +
-                "# DSH Mobile writes this once; edit freely afterwards.\n" +
-                "deb https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main stable main\n"
-            )
-            Log.i(TAG, "bootstrap: apt sources set to TUNA mirror")
+            f.writeText(desired)
+            Log.i(TAG, "bootstrap: apt sources set to $APT_MIRROR")
         }
     }
 
