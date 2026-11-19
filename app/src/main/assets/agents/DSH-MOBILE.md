@@ -1,4 +1,4 @@
-<!-- dsh-mobile app doc v81 — managed by DSH Mobile; rewritten on app updates -->
+<!-- dsh-mobile app doc v82 — managed by DSH Mobile; rewritten on app updates -->
 # DSH Mobile — the app you are running inside
 
 > This build is **DSH Mobile with Termux**, a fork of
@@ -603,6 +603,22 @@ they are writable. This applies to every dynamically linked process (bash, node,
 The same preload chain includes Termux's `libtermux-exec`, so `#!/bin/sh` and
 `#!/usr/bin/env bash` scripts run even though those absolute paths do not exist on Android.
 Only static binaries and raw syscalls bypass the mapping.
+
+### Discipline reminders
+
+The three bundled discipline skills are preloaded in `AGENTS.md`. A short reminder is also
+injected before model steps; the strategy is read once per engine start from
+`$DSH_HOME/.dsh-discipline.json`:
+
+- `{"mode":"trigger"}` (default): inject at the first step of a turn or a user interjection,
+  after a failure receipt (`ok:false`, `verified:false`, `staleFullScreenNode`), and as a
+  safety net every 20 steps — using the compact three-line version.
+- `{"mode":"every"}`: legacy behaviour — turn start plus every 6 steps, full-length text.
+- `{"mode":"off"}`: never inject.
+
+Every injection logs
+`[android-discipline] reminder injected {"mode":...,"reason":...,"turn":...,"step":...,"chars":...}`,
+so cost and trigger reasons are auditable in `$DSH_HOME/logs/engine.log`.
 
 ### Background progress (notification / floating window)
 

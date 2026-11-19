@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { installReminders, REMINDER_INTERVAL } from '../../app/src/main/assets/android-plugins/discipline.mjs';
 
-function fixture() {
+function fixture(options) {
   let hook;
   const ctx = { on(event, callback) { assert.equal(event, 'agent/pre-step'); hook = callback; } };
   const create = input => Object.freeze({ ...input, id: randomUUID(), role: 'user' });
-  installReminders(ctx, create, 'Follow the current goal; read receipts.');
+  installReminders(ctx, create, 'Follow the current goal; read receipts.', options);
   const agent = {};
   const user = { id: 'user-task', role: 'user', content: [{ type: 'text', text: 'select the checkbox' }], source: { kind: 'user' } };
   const enter = { kind: 'enter', messages: [user], startsRequestSeries: true };
@@ -79,4 +79,33 @@ test('fresh user steering is reminded immediately within the interval and remain
   assert.equal(result.messages.length, 2);
   assert.equal(result.messages[0], steering);
   assert.equal(await f.invoke({ step: 4 }, decision), decision);
+});
+
+test('trigger mode injects at turn start, then stays silent until the safety interval', async () => {
+  const f = fixture({ mode: 'trigger', shortReminder: 'SHORT INCREMENT' });
+  const first = await f.invoke({});
+  assert.equal(first.messages.length, 2);
+  assert.match(first.messages[1].content[0].text, /SHORT INCREMENT/);
+  for (let step = 2; step < 21; step++) assert.equal(await f.invoke({ step }), f.enter);
+  const safety = await f.invoke({ step: 21 });
+  assert.equal(safety.messages.length, 2);
+});
+
+test('trigger mode injects on a failure receipt without a fresh user message', async () => {
+  const f = fixture({ mode: 'trigger', shortReminder: 'SHORT INCREMENT' });
+  await f.invoke({});
+  const failure = {
+    id: 'tool-1', role: 'user', source: { kind: 'tool' },
+    content: [{ type: 'text', text: '{"ok":false,"verified":false}' }],
+  };
+  const decision = { kind: 'enter', messages: [failure] };
+  const result = await f.invoke({ step: 2 }, decision);
+  assert.equal(result.messages.length, 2);
+  assert.equal(result.messages[0], failure);
+});
+
+test('off mode never injects', async () => {
+  const f = fixture({ mode: 'off' });
+  assert.equal(await f.invoke({}), f.enter);
+  assert.equal(await f.invoke({ step: 7 }), f.enter);
 });

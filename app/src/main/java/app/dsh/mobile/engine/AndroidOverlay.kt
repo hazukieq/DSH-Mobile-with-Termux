@@ -196,6 +196,15 @@ internal object AndroidOverlay {
             val reminder = ctx.assets.open("skills/task-execution-discipline/references/step-reminder.md")
                 .use { it.readBytes().toString(Charsets.UTF_8) }
             deployOne(File(f.parentFile, "android-plugins/discipline-reminder.md"), reminder, "discipline-reminder.md")
+            // 提醒注入策略（2026-11-20，issue: 每轮摘要收益/开销不成正比）：
+            // 只在缺失时写默认值，之后归用户所有（改完重启引擎生效）。
+            val reminderConfig = File(EngineConfig.dshHome(ctx), ".dsh-discipline.json")
+            if (!reminderConfig.isFile) {
+                runCatching {
+                    reminderConfig.parentFile?.mkdirs()
+                    reminderConfig.writeText("{\n  \"mode\": \"trigger\"\n}\n")
+                }.onFailure { Log.w("AndroidOverlay", "discipline config seed failed: ${it.message}") }
+            }
             // 目录形式的客户端插件包（v1.2.175+）：引擎按 package.json 的 name 索引
             // 浏览器端 bundle，所以 index.js / client.js / package.json 三个文件
             // 必须同目录且完整。缺任何一个 → client-modules 抛
